@@ -1,33 +1,17 @@
 /*
- * Copyright (c) 2017 Kurt Jung (Gmail: kurt.w.jung)
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
-/*
-Package cgi implements the common gateway interface (CGI) for Caddy, a modern,
-full-featured, easy-to-use web server.
+Package cgi implements the common gateway interface (CGI) for
+Caddy, a modern, full-featured, easy-to-use web server.
 
 This plugin lets you generate dynamic content on your website by means of
 command line scripts. To collect information about the inbound HTTP request,
-examine certain environment variables such as PATH_INFO and QUERY_STRING. Then,
-to return a dynamically generated web page to the client, simply write content
-to standard output. In the case of POST requests, you read additional inbound
-content by means of the standard input.
+examine certain environment variables such as PATH_INFO and QUERY_STRING.
+Then, to return a dynamically generated web page to the client, simply write
+content to standard output. In the case of POST requests, you read additional
+inbound content by means of the standard input.
 
 The advantage of CGI is that you do not need to fuss with persistent server
 startup, long term memory management, sockets, and crash recovery. Your script
-is called when a request matches one the patterns you specify in your
+is called when a request matches one the patterns that you specify in your
 Caddyfile. As soon as your script completes its response it terminates. This
 simplicity makes CGI a perfect complement to the straightforward operation and
 configuration of Caddy. The benefits of Caddy, including HTTPS by default,
@@ -42,6 +26,12 @@ scripts take a long time to respond. However, in many cases, such as using a
 pre-compiled CGI application like fossil or a Lua script, the impact will
 generally be insignificant.
 
+Important: CGI scripts should be located outside of Caddy's document root.
+Otherwise, an inadvertent misconfiguration could result in Caddy delivering
+the script as an ordinary static resource. At best, this could merely confuse
+the site visitor. At worst, it could expose sensitive internal information
+that should not leave the server.
+
 Basic Syntax
 
 The cgi directive lets you associate one or more patterns with a particular
@@ -50,17 +40,16 @@ the basic syntax:
 
 	cgi match exec [args...]
 
-Here is an example:
+For example:
 
-	cgi /report {root}/cgi-bin/report
+	cgi /report /usr/local/cgi-bin/report
 
 When a request such as https://example.com/report or
 https://example.com/report/weekly arrives, the cgi middleware will detect the
-match and invoke the script named report that resides in the cgi-bin directory
-which in turn belongs to the root directory configured in the Caddyfile. Here,
-it is assumed that the script is self-contained, for example a pre-compiled CGI
-application or a shell script. For example, the following script is similar to
-one used in the cgi plugin's test suite:
+match and invoke the script named report that resides in the /usr/local/cgi-bin
+directory. Here, it is assumed that the script is self-contained, for example a
+pre-compiled CGI application or a shell script. An example of a standalone
+script, similar to one used in the cgi plugin's test suite, follows:
 
 	#!/bin/bash
 
@@ -68,35 +57,45 @@ one used in the cgi plugin's test suite:
 	printf "[%s %s %s %s %s]\n" $PATH_INFO $CGI_LOCAL $CGI_GLOBAL $1 $QUERY_STRING
 	exit 0
 
-The environment variables PATH_INFO and QUERY_STRING are populated and passed
-to the script automatically. There are a number of other standard CGI variables
-included that are described below. If you need to pass any special environment
-variables or allow any environment variables that are part of Caddy's process
-to pass to your script, you will need to use the advanced directive syntax
-described below.
+The environment variables PATH_INFO and QUERY_STRING are populated and
+passed to the script automatically. There are a number of other standard CGI
+variables included that are described below. If you need to pass any special
+environment variables or allow any environment variables that are part of
+Caddy's process to pass to your script, you will need to use the advanced
+directive syntax described below.
 
-The exec field in the example includes the placeholder {root} that is
-substituted with Caddy's specified root directory. You may also use the
-placeholder {match} that will be substituted with the rooted script name. In
-this example, {match} would be /www/cgi-bin/report assuming that /www is
-Caddy's configured root.
+Fields that follow the exec directive are subject to placeholder replacement.
+In addition to the standard Caddy placeholders such as {method} and {host},
+the following placeholders substitutions are made:
 
-The optional arguments to the script can contain these placeholders as well as
-the standard Caddy placeholders such as {method} and {host}.
+ {.} is replaced with Caddy's current working directory
+ {match} is replaced with the portion of the request that satisfied the match
+  directive
+ {root} is replaced with Caddy's specified root directory
 
-You can include glob wildcards in your matches. Here is an example:
+You can include glob wildcards in your matches. See the documentation for
+path/Match in the Go standard library for more details about glob
+matching. Here is an example directive:
 
-	cgi /report/*.lua /usr/bin/lua {match}
+	cgi /report/.lua /usr/bin/lua /usr/local/cgi-bin/{match}
 
 In this case, the cgi middleware will match requests such as
 https://example.com/report/weekly.lua and
 https://example.com/report/report.lua/weekly but not
 https://example.com/report.lua. The use of the asterisk expands to any
-character sequence within a directory. The name of the matching script (it
-could be something like /www/report/weekly.lua based on your Cadddyfile) will
-be passed to the Lua interpreter. In this case, the Lua script does not need
-the shebang that would be needed in a standalone script. See the documentation
-for path/Match in the Go standard library for more details about glob matching.
+character sequence within a directory. For example, if the request
+
+	https://report/weekly.lua/summary
+
+is made, the following command is executed:
+
+	/usr/bin/lua /usr/local/cgi-bin/report/weeky.lua
+
+Note that the portion of the request that follows the match is not included.
+That information is conveyed to the script by means of environment variables.
+In this example, the Lua interpreter is invoked directly from Caddy, so the Lua
+script does not need the shebang that would be needed in a standalone script.
+This method facilitates the use of CGI on the Windows platform.
 
 Advanced Syntax
 
@@ -129,14 +128,14 @@ Environment Variable Example
 In this example, the Caddyfile looks like this:
 
 	192.168.1.2:8080
-	root /var/www
-	cgi /show {root}/report/gen
+	root /usr/local/www
+	cgi /show /usr/local/cgi-bin/report/gen
 
 Note that a request for /show gets mapped to a script named
-/var/www/report/gen. There is no need for any element of the script name to be
-the same as the match pattern.
+/usr/local/cgi-bin/report/gen. There is no need for any element of the script
+name to match any element of the match pattern.
 
-The script stored with the name /var/www/report/gen looks like this:
+The contents of /usr/local/cgi-bin/report/gen are:
 
 	#!/bin/bash
 
@@ -144,8 +143,8 @@ The script stored with the name /var/www/report/gen looks like this:
 
 	printf "example error message\n" > /dev/stderr
 
-	if [ "POST" = $REQUEST_METHOD -a -n $CONTENT_LENGTH ]; then
-	  read -n $CONTENT_LENGTH POST_DATA
+	if [ "POST" = "$REQUEST_METHOD" -a -n "$CONTENT_LENGTH" ]; then
+	  read -n "$CONTENT_LENGTH" POST_DATA
 	fi
 
 	printf "AUTH_TYPE         [%s]\n" $AUTH_TYPE
@@ -172,11 +171,11 @@ The script stored with the name /var/www/report/gen looks like this:
 
 The purpose of this script is to show how request information gets communicated
 to a CGI script. Note that POST data must be read from standard input. In this
-particular case, posted data gets stored in the variable POST_DATA. Your script
-may use a different method to read POST content. Secondly, the SCRIPT_EXEC
-variable is not a CGI standard. It is provided by this middleware and contains
-the entire command line, including all arguments, with which the CGI script was
-executed.
+particular case, posted data gets stored in the variable POST_DATA. Your
+script may use a different method to read POST content. Secondly, the
+SCRIPT_EXEC variable is not a CGI standard. It is provided by this middleware
+and contains the entire command line, including all arguments, with which the
+CGI script was executed.
 
 When a browser requests
 
@@ -197,7 +196,7 @@ the response looks like
 	REMOTE_IDENT      []
 	REMOTE_USER       []
 	REQUEST_METHOD    [GET]
-	SCRIPT_EXEC       [/var/www/report/gen]
+	SCRIPT_EXEC       [/usr/local/cgi-bin/report/gen]
 	SCRIPT_NAME       [/show]
 	SERVER_NAME       [192.168.1.2:8080]
 	SERVER_PORT       [8080]
@@ -208,26 +207,30 @@ When a client makes a POST request, such as with the following command
 
 	wget -O - -q --post-data="city=San%20Francisco" http://192.168.1.2:8080/show/weekly?mode=summary
 
-the response looks the same except for the following line:
+the response looks the same except for the following lines:
 
 	POST_DATA         [city=San%20Francisco]
+	REQUEST_METHOD    [POST]
 
 Fossil Example
 
 The fossil distributed software management tool is a native executable that
-uses a single SQLite database for all of its storage. It uses CGI for one of
-its access methods. To set it up, use a cgi directive something like this in
-your Caddyfile:
+supports interaction as a CGI application. In this example, /usr/bin/fossil is
+the executable and /home/quixote/projects.fossil is the fossil repository. To
+configure Caddy to serve it, use a cgi directive something like this in your
+Caddyfile:
 
-	cgi /cgi-bin/* {match}
+	cgi /projects /usr/bin/fossil /usr/local/cgi-bin/projects
 
-In your cgi-bin directory, make a file named, say, repo with the following contents:
+In your /usr/local/cgi-bin directory, make a file named projects with the
+following single line:
 
-	#!/usr/bin/fossil
-	repository: /home/fossil/repo.fossil
+	repository: /home/quixote/projects.fossil
 
-Change the shebang line to reflect the location of the fossil executable, and the second line to reflect the
-location of your fossil repository.
+The fossil documentation calls this a command file. When fossil is invoked
+after a request to /projects, it examines the relevant environment variables
+and responds as a CGI application.
+
 
 */
 package cgi
