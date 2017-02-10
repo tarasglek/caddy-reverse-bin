@@ -4,16 +4,16 @@
 [![Build Status][badge-build]][travis]
 [![Report][badge-report]][report]
 
-
 Package cgi implements the common gateway interface ([CGI][cgi-wiki]) for
 [Caddy][caddy], a modern, full-featured, easy-to-use web server.
 
 This plugin lets you generate dynamic content on your website by means of
 command line scripts. To collect information about the inbound HTTP request,
-your script examines certain environment variables such as `PATH_INFO` and
-`QUERY_STRING`. Then, to return a dynamically generated web page to the client,
-your script simply writes content to standard output. In the case of POST
-requests, your script reads additional inbound content from standard input.
+your script examines certain environment variables such as
+`PATH_INFO` and `QUERY_STRING`. Then, to return a dynamically
+generated web page to the client, your script simply writes content to standard
+output. In the case of POST requests, your script reads additional inbound
+content from standard input.
 
 The advantage of CGI is that you do not need to fuss with persistent server
 startup, long term memory management, sockets, and crash recovery. Your script
@@ -32,7 +32,7 @@ scripts take a long time to respond. However, in many cases, such as using a
 pre-compiled CGI application like fossil or a Lua script, the impact will
 generally be insignificant.
 
-Important: CGI scripts should be located outside of Caddy's document root.
+**Important**: CGI scripts should be located outside of Caddy's document root.
 Otherwise, an inadvertent misconfiguration could result in Caddy delivering
 the script as an ordinary static resource. At best, this could merely confuse
 the site visitor. At worst, it could expose sensitive internal information
@@ -50,13 +50,15 @@ association.
 In the indirect case, the name of the CGI script is passed to an interpeter
 such as lua, perl or python.
 
-## Basic Syntax
+### Basic Syntax
 
 The basic cgi directive lets you associate a single pattern with a particular
 script. The directive can be repeated any reasonable number of times. Here is
 the basic syntax:
 
-	cgi match exec [args...]
+<code class="block">
+<span class="hl-directive">cgi</span> <span class="hl-arg">*match*</span> <span class="hl-arg">*exec*</span> <span class="hl-arg">[*args*</span>...]
+</code>
 
 For example:
 
@@ -89,10 +91,10 @@ The values used for the script name and its arguments are subject to
 placeholder replacement. In addition to the standard Caddy placeholders such as
 `{method}` and `{host}`, the following placeholders substitutions are made:
 
- {.} is replaced with Caddy's current working directory
- {match} is replaced with the portion of the request that satisfies the match
+* **{.}** is replaced with Caddy's current working directory
+* **{match}** is replaced with the portion of the request that satisfies the match
   directive
- {root} is replaced with Caddy's specified root directory
+* **{root}** is replaced with Caddy's specified root directory
 
 You can include glob wildcards in your matches. See the documentation for
 [path/Match][match] in the Go standard library for more details about glob
@@ -118,19 +120,21 @@ In this example, the Lua interpreter is invoked directly from Caddy, so the Lua
 script does not need the shebang that would be needed in a standalone script.
 This method facilitates the use of CGI on the Windows platform.
 
-## Advanced Syntax
+### Advanced Syntax
 
 In order to specify custom environment variables, pass along one or more
 environment variables known to Caddy, or specify more than one match pattern
 for a given rule, you will need to use the advanced directive syntax. That
 looks like this:
 
-	cgi {
-	  match match [match2...]
-	  exec script [args...]
-	  env key1=val1 [key2=val2...]
-	  pass_env key1 [key2...]
-	}
+<code class="block">
+<span class="hl-directive">cgi</span> {
+  <span class="hl-subdirective">match</span> <span class="hl-arg">*match*</span> <span class="hl-arg">[*match2*</span>...]
+  <span class="hl-subdirective">exec</span> <span class="hl-arg">*script*</span> <span class="hl-arg">[*args*</span>...]
+  <span class="hl-subdirective">env</span> <span class="hl-arg">*key1=val1*</span> <span class="hl-arg">[*key2=val2*</span>...]
+  <span class="hl-subdirective">pass_env</span> <span class="hl-arg">*key1*</span> <span class="hl-arg">[*key2*</span>...]
+}
+</code>
 
 With the advanced syntax, the `exec` subdirective must appear exactly once. The
 `match` subdirective must appear at least once. The `env` and `pass_env`
@@ -139,7 +143,7 @@ subdirectives can appear any reasonable number of times.
 The values associated with environment variable keys are all subject to
 placeholder substitution, just as with the script name and arguments.
 
-## Environment Variable Example
+### Environment Variable Example
 
 In this example, the Caddyfile looks like this:
 
@@ -230,7 +234,7 @@ the response looks the same except for the following lines:
 	POST_DATA         [city=San%20Francisco]
 	REQUEST_METHOD    [POST]
 
-## Fossil Example
+### Fossil Example
 
 The fossil distributed software management tool is a native executable that
 supports interaction as a CGI application. In this example, /usr/bin/fossil is
@@ -247,9 +251,9 @@ following single line:
 
 The fossil documentation calls this a command file. When fossil is invoked
 after a request to /projects, it examines the relevant environment variables
-and responds as a CGI application. If you protect /projects with 
-[basic HTTP autentication][auth], you may wish to enable the 
-Allow REMOTE_USER authentication option when setting up fossil. This lets
+and responds as a CGI application. If you protect /projects with
+[basic HTTP authentication][auth], you may wish to enable the
+**Allow REMOTE_USER authentication** option when setting up fossil. This lets
 fossil dispense with its own authentication, assuming it has an account for
 the user.
 
