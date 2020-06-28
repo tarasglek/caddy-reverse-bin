@@ -32,19 +32,19 @@ func init() {
 
 type CGI struct {
 	// Name of executable script or binary
-	exe string // [1]
+	Executable string // [1]
 	// Working directory (default, current Caddy working directory)
-	dir string // [0..1]
+	WorkingDirectory string // [0..1]
 	// Arguments to submit to executable
-	args []string // [0..n]
+	Args []string // [0..n]
 	// Environment key value pairs (key=value) for this particular app
-	envs []string // [0..n]
+	Envs []string // [0..n]
 	// Environment keys to pass through for all apps
-	passEnvs []string // [0..n]
+	PassEnvs []string // [0..n]
 	// True to pass all environment variables to CGI executable
-	passAll bool
+	PassAll bool
 	// True to return inspection page rather than call CGI executable
-	inspect bool
+	Inspect bool
 }
 
 // Interface guards
@@ -69,29 +69,29 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		if len(args) < 1 {
 			return fmt.Errorf("an executable needs to be specified")
 		}
-		c.exe = args[0]
-		c.args = args[1:]
+		c.Executable = args[0]
+		c.Args = args[1:]
 
 		for d.NextBlock(0) {
 			switch d.Val() {
 			case "dir":
-				if !d.Args(&c.dir) {
+				if !d.Args(&c.WorkingDirectory) {
 					return d.ArgErr()
 				}
 			case "env":
-				c.envs = d.RemainingArgs()
-				if len(c.envs) == 0 {
+				c.Envs = d.RemainingArgs()
+				if len(c.Envs) == 0 {
 					return d.ArgErr()
 				}
 			case "pass_env":
-				c.passEnvs = d.RemainingArgs()
-				if len(c.passEnvs) == 0 {
+				c.PassEnvs = d.RemainingArgs()
+				if len(c.PassEnvs) == 0 {
 					return d.ArgErr()
 				}
 			case "pass_all_env":
-				c.passAll = true
+				c.PassAll = true
 			case "inspect":
-				c.inspect = true
+				c.Inspect = true
 			default:
 				return fmt.Errorf("unknown subdirective: %q", d.Val())
 			}

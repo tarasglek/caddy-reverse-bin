@@ -5,6 +5,7 @@ printf "PATH_INFO [%s]\n" ${PATH_INFO}
 printf "CGI_GLOBAL [%s]\n" ${CGI_GLOBAL}
 printf "Arg 1 [%s]\n" ${1}
 printf "QUERY_STRING [%s]\n" ${QUERY_STRING}
+printf "REMOTE_USER [%s]\n" ${REMOTE_USER}
 printf "HTTP_TOKEN_CLAIM_USER [%s]\n" ${HTTP_TOKEN_CLAIM_USER}
 if [ -z ${CGI_LOCAL+x} ]; then 
 	printf "CGI_LOCAL is unset\n" 
