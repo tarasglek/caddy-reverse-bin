@@ -1,19 +1,9 @@
 /*
-Package cgi implements the common gateway interface (CGI) for Caddy 1, a
+Package cgi implements the common gateway interface (CGI) for Caddy 2, a
 modern, full-featured, easy-to-use web server.
 
-
-We Are Closed
-
-This CGI plugin works with version 1 of the Caddy web server. As of
-2020, this version has been superseded by version 2. Circumstances
-prevent me from porting this plugin to version 2 and then maintaining
-it. However, this is a very simple plugin as the Go standard library
-does all of the real work. The bulk of the code is spent parsing the
-configuration file and I believe this has been greatly simplified for
-version 2. Porting this software to the new version of the Caddy web
-server is a good first-time contributor project.
-
+It has been forked from the fantastic work of Kurt Jung who wrote that
+plugin for Caddy 1.
 
 Documentation
 
@@ -55,13 +45,13 @@ Serving dynamic content exposes your server to more potential threats
 than serving static pages. There are a number of considerations of which
 you should be aware when using CGI applications.
 
-CGI SCRIPTS SHOULD BE LOCATED OUTSIDE OF CADDY’S DOCUMENT ROOT.
+CGI scripts should be located outside of Caddy’s document root.
 Otherwise, an inadvertent misconfiguration could result in Caddy
 delivering the script as an ordinary static resource. At best, this
 could merely confuse the site visitor. At worst, it could expose
 sensitive internal information that should not leave the server.
 
-MISTRUST THE CONTENTS OF PATH_INFO, QUERY_STRING AND STANDARD INPUT.
+Mistrust the contents of PATH_INFO, QUERY_STRING and standard input.
 Most of the environment variables available to your CGI program are
 inherently safe because they originate with Caddy and cannot be modified
 by external users. This is not the case with PATH_INFO, QUERY_STRING
@@ -432,7 +422,7 @@ The fossil documentation calls this a command file. When fossil is
 invoked after a request to /projects, it examines the relevant
 environment variables and responds as a CGI application. If you protect
 /projects with basic HTTP authentication, you may wish to enable the
-ALLOW REMOTE_USER AUTHENTICATION option when setting up fossil. This
+Allow REMOTE_USER authentication option when setting up fossil. This
 lets fossil dispense with its own authentication, assuming it has an
 account for the user.
 

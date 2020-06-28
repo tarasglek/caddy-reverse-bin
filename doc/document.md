@@ -1,21 +1,13 @@
 # CGI for Caddy
 
-[![No Maintenance Intended](http://unmaintained.tech/badge.svg)][unmaintained]
 [![MIT licensed][badge-mit]][license]
 [![Report][badge-report]][report]
 
 Package cgi implements the common gateway interface ([CGI][cgi-wiki]) for
-[Caddy 1][caddy], a modern, full-featured, easy-to-use web server.
+[Caddy 2][caddy], a modern, full-featured, easy-to-use web server.
 
-## We Are Closed
-
-This CGI plugin works with version 1 of the Caddy web server. As of 2020, this
-version has been superseded by version 2. Circumstances prevent me from porting
-this plugin to version 2 and then maintaining it. However, this is a very
-simple plugin as the Go standard library does all of the real work. The bulk of
-the code is spent parsing the configuration file and I believe this has been
-greatly simplified for version 2. Porting this software to the new version of
-the Caddy web server is a good first-time contributor project.
+It has been forked from the fantastic work of [Kurt Jung][fork-root]
+who wrote that plugin for Caddy 1.
 
 ## Documentation
 
@@ -647,24 +639,19 @@ cgi /sample/*.php /usr/local/cgi-bin/phpwrap /usr/local/cgi-bin{match}
 
 [agedu]: http://www.chiark.greenend.org.uk/~sgtatham/agedu/
 [auth]: https://caddyserver.com/docs/basicauth
-[badge-author]: https://img.shields.io/badge/author-Kurt_Jung-blue.svg
-[badge-build]: https://travis-ci.org/jung-kurt/caddy-cgi.svg?branch=master
-[badge-github]: https://img.shields.io/badge/project-Git_Hub-blue.svg
 [badge-mit]: https://img.shields.io/badge/license-MIT-blue.svg
-[badge-report]: https://goreportcard.com/badge/github.com/jung-kurt/caddy-cgi
+[badge-report]: https://goreportcard.com/badge/github.com/aksdb/caddy-cgi
 [caddy]: https://caddyserver.com/
 [cgit]: https://git.zx2c4.com/cgit/about/
 [cgi-wiki]: https://en.wikipedia.org/wiki/Common_Gateway_Interface
 [fastcgi]: https://caddyserver.com/docs/fastcgi
+[fork-root]: https://github.com/jung-kurt/caddy-cgi
 [fossil]: https://www.fossil-scm.org/
 [github]: https://github.com/jung-kurt/caddy-cgi
-[jung]: https://github.com/jung-kurt/
 [jwt]: https://github.com/BTBurke/caddy-jwt
 [key]: class:key
-[license]: https://raw.githubusercontent.com/jung-kurt/caddy-cgi/master/LICENSE
+[license]: https://raw.githubusercontent.com/aksdb/caddy-cgi/master/LICENSE
 [match]: https://golang.org/pkg/path/#Match
 [php]: http://php.net/
-[report]: https://goreportcard.com/report/github.com/jung-kurt/caddy-cgi
+[report]: https://goreportcard.com/report/github.com/aksdb/caddy-cgi
 [subkey]: class:subkey
-[travis]: https://travis-ci.org/jung-kurt/caddy-cgi
-[unmaintained]: http://unmaintained.tech/

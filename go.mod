@@ -1,5 +1,5 @@
-module github.com/jung-kurt/caddy-cgi
+module github.com/aksdb/caddy-cgi
 
-go 1.12
+go 1.14
 
-require github.com/caddyserver/caddy v1.0.1
+require github.com/caddyserver/caddy/v2 v2.1.0
