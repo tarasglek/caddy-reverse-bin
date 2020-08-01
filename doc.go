@@ -63,11 +63,7 @@ its limitations.
 Errors
 
 An error in a CGI application is generally handled within the
-application itself and reported in the headers it returns. Additionally,
-if the Caddy errors directive is enabled, any content the application
-writes to its standard error stream will be written to the error log.
-This can be useful to diagnose problems with the execution of the CGI
-application.
+application itself and reported in the headers it returns.
 
 Application Modes
 
@@ -83,13 +79,30 @@ setting up the filename extension association.
 In the indirect case, the name of the CGI script is passed to an
 interpreter such as lua, perl or python.
 
+Requirements
+
+
+-   This module needs to be installed (obviously).
+
+    Refer to the Caddy documentation on how to build Caddy with
+    plugins/modules.
+
+
+-   The directive needs to be registered in the Caddyfile:
+
+        {
+            order cgi last
+        }
+
 Basic Syntax
 
-The basic cgi directive lets you associate a single pattern with a
-particular script. The directive can be repeated any reasonable number
-of times. Here is the basic syntax:
+The basic cgi directive lets you add a handler in the current caddy
+router location with a given script and optional arguments. The matcher
+is a default caddy matcher that is used to restrict the scope of this
+directive. The directive can be repeated any reasonable number of times.
+Here is the basic syntax:
 
-    cgi match exec [args...]
+    cgi [matcher] exec [args...]
 
 For example:
 
@@ -119,46 +132,14 @@ special environment variables or allow any environment variables that
 are part of Caddy’s process to pass to your script, you will need to use
 the advanced directive syntax described below.
 
-The values used for the script name and its arguments are subject to
-placeholder replacement. In addition to the standard Caddy placeholders
-such as {method} and {host}, the following placeholder substitutions are
-made:
+Beware that in Caddy v2 it is (currently) not possible to separate the
+path left of the matcher from the full URL. Therefore if you require
+your CGI program to know the SCRIPT_NAME, make sure to pass that
+explicitly:
 
-
--   {.} is replaced with Caddy’s current working directory
-
--   {match} is replaced with the portion of the request that satisfies
-the match directive
-
--   {root} is replaced with Caddy’s specified root directory
-
-You can include glob wildcards in your matches. Basically, an asterisk
-represents a sequence of zero or more non-slash characters and a
-question mark represents a single non-slash character. These wildcards
-can be used multiple times in a match expression. See the documentation
-for path/Match in the Go standard library for more details about glob
-matching. Here is an example directive:
-
-    cgi /report/*.lua /usr/bin/lua /usr/local/cgi-bin/{match}
-
-In this case, the cgi middleware will match requests such as
-https://example.com/report/weekly.lua and
-https://example.com/report/report.lua/weekly but not
-https://example.com/report.lua. The use of the asterisk expands to any
-character sequence within a directory. For example, if the request
-
-    https://report/weekly.lua/summary
-
-is made, the following command is executed:
-
-    /usr/bin/lua /usr/local/cgi-bin/report/weeky.lua
-
-Note that the portion of the request that follows the match is not
-included. That information is conveyed to the script by means of
-environment variables. In this example, the Lua interpreter is invoked
-directly from Caddy, so the Lua script does not need the shebang that
-would be needed in a standalone script. This method facilitates the use
-of CGI on the Windows platform.
+    cgi /script.cgi* /path/to/my/script someargument {
+      script_name /script.cgi
+    }
 
 Advanced Syntax
 
@@ -167,53 +148,31 @@ environment variables known to Caddy, or specify more than one match
 pattern for a given rule, you will need to use the advanced directive
 syntax. That looks like this:
 
-    cgi {
-        match match [match2...]
-        except match [match2...]
-        exec script [args...]
-        dir directory
+    cgi [matcher] exec [args...] {
+        scipt_name subpath
+        dir working_directory
         env key1=val1 [key2=val2...]
         pass_env key1 [key2...]
-        empty_env key1 [key2...]
         pass_all_env
         inspect
     }
 
 For example,
 
-    cgi {
-        match /sample/*.php /sample/app/*.php
-        except /sample/init.php
-        exec /usr/local/cgi-bin/phpwrap /usr/local/cgi-bin{match}
-        env DB=/usr/local/share/app/app.db SECRET=/usr/local/share/app/secret
+    cgi /sample/report* /usr/local/bin/reportscript.sh {
+        script_name /sample/report
+        env DB=/usr/local/share/app/app.db SECRET=/usr/local/share/app/secret CGI_LOCAL=
         pass_env HOME UID
-        empty_env CGI_LOCAL
     }
 
-With the advanced syntax, the exec subdirective must appear exactly
-once. The match subdirective must appear at least once. The env,
-pass_env, empty_env, and except subdirectives can appear any reasonable
-number of times. pass_all_env, dir may appear once.
+The script_name subdirective helps the cgi module to separate the path
+to the script from the (virtual) path afterwards (which shall be passed
+to the script).
 
-The dir subdirective specifies the CGI executable’s working directory.
-If it is not specified, Caddy’s current working directory is used.
-
-The except subdirective uses the same pattern matching logic that is
-used with the match subdirective except that the request must match a
-rule fully; no request path prefix matching is performed. Any request
-that matches a match pattern is then checked with the patterns in
-except, if any. If any matches are made with the except pattern, the
-request is rejected and passed along to subsequent handlers. This is a
-convenient way to have static file resources served properly rather than
-being confused as CGI applications.
-
-The empty_env subdirective is used to pass one or more empty environment
-variables. Some CGI scripts may expect the server to pass certain empty
-variables rather than leaving them unset. This subdirective allows you
-to deal with those situations.
-
-The values associated with environment variable keys are all subject to
-placeholder substitution, just as with the script name and arguments.
+env can be used to define a list of key=value environment variable pairs
+that shall be passed to the script. pass_env can be used to define a
+list of environment variables of the Caddy process that shall be passed
+to the script.
 
 If your CGI application runs properly at the command line but fails to
 run from Caddy it is possible that certain environment variables may be
@@ -232,27 +191,6 @@ is that a lot of server information is shared with the CGI executable.
 Use this subdirective only with CGI applications that you trust not to
 leak this information.
 
-JSON web tokens
-
-If you protect your CGI application with the Caddy JWT middleware, your
-program will have access to the token’s payload claims by means of
-environment variables. For example, the following token claims
-
-    {
-        "sub": "1234567890",
-        "user": "quixote",
-        "admin": true,
-    }
-
-will be available with the following environment variables
-
-    HTTP_TOKEN_CLAIM_SUB=1234567890
-    HTTP_TOKEN_CLAIM_USER=quixote
-    HTTP_TOKEN_CLAIM_ADMIN=true
-
-All values are conveyed as strings, so some conversion may be necessary
-in your program. No placeholder substitutions are made on these values.
-
 Troubleshooting
 
 If you run into unexpected results with the CGI plugin, you are able to
@@ -266,9 +204,8 @@ variables to which your CGI application has access.
 
 For example, consider this example CGI block:
 
-    cgi {
-        match /wapp/*
-        exec /usr/local/bin/wapptclsh /home/quixote/projects{match}.tcl
+    cgi /wapp/*.tcl /usr/local/bin/wapptclsh /home/quixote/projects{path} {
+        script_name /wapp
         pass_env HOME LANG
         env DB=/usr/local/share/app/app.db SECRET=/usr/local/share/app/secret
         inspect
@@ -284,14 +221,14 @@ CGI application (in this case, wapptclsh) will not be called.
     CGI for Caddy inspection page
 
     Executable .................... /usr/local/bin/wapptclsh
-      Arg 1 ....................... /home/quixote/projects/wapp/hello.tcl
+      Arg 1 ....................... /home/quixote/projects/hello.tcl
     Root .......................... /
     Dir ........................... /home/quixote/www
     Environment
       DB .......................... /usr/local/share/app/app.db
       PATH_INFO ...................
       REMOTE_USER .................
-      SCRIPT_EXEC ................. /usr/local/bin/wapptclsh /home/quixote/projects/wapp/hello.tcl
+      SCRIPT_EXEC ................. /usr/local/bin/wapptclsh /home/quixote/projects/hello.tcl
       SCRIPT_FILENAME ............. /usr/local/bin/wapptclsh
       SCRIPT_NAME ................. /wapp/hello
       SECRET ...................... /usr/local/share/app/secret
@@ -299,12 +236,11 @@ CGI application (in this case, wapptclsh) will not be called.
       HOME ........................ /home/quixote
       LANG ........................ en_US.UTF-8
     Placeholders
-      {.} ......................... /home/quixote/go/src/github.com/caddyserver/caddy/caddy
-      {host} ...................... example.com
-      {match} ..................... /wapp/hello
-      {method} .................... GET
-      {root} ...................... /home/quixote/www
-      {when} ...................... 23/May/2018:14:49:55 -0400
+      {path} ...................... /hello
+      {root} ...................... /
+      {http.request.host} ......... example.com
+      {http.request.host} ......... GET
+      {http.request.host} ......... /wapp/hello.tcl
 
 This information can be used to diagnose problems with how a CGI
 application is called.
@@ -316,9 +252,15 @@ Environment Variable Example
 
 In this example, the Caddyfile looks like this:
 
+    {
+        http_port 8080
+        order cgi last
+    }
+
     192.168.1.2:8080
-    root /usr/local/www
-    cgi /show /usr/local/cgi-bin/report/gen
+    cgi /show* /usr/local/cgi-bin/report/gen {
+        script_name /show
+    }
 
 Note that a request for /show gets mapped to a script named
 /usr/local/cgi-bin/report/gen. There is no need for any element of the
@@ -403,46 +345,6 @@ the response looks the same except for the following lines:
     POST_DATA         [city=San%20Francisco]
     REQUEST_METHOD    [POST]
 
-Fossil Example
-
-The fossil distributed software management tool is a native executable
-that supports interaction as a CGI application. In this example,
-/usr/bin/fossil is the executable and /home/quixote/projects.fossil is
-the fossil repository. To configure Caddy to serve it, use a cgi
-directive something like this in your Caddyfile:
-
-    cgi /projects /usr/bin/fossil /usr/local/cgi-bin/projects
-
-In your /usr/local/cgi-bin directory, make a file named projects with
-the following single line:
-
-    repository: /home/quixote/projects.fossil
-
-The fossil documentation calls this a command file. When fossil is
-invoked after a request to /projects, it examines the relevant
-environment variables and responds as a CGI application. If you protect
-/projects with basic HTTP authentication, you may wish to enable the
-Allow REMOTE_USER authentication option when setting up fossil. This
-lets fossil dispense with its own authentication, assuming it has an
-account for the user.
-
-Agedu Example
-
-The agedu utility can be used to identify unused files that are taking
-up space on your storage media. Like fossil, it can be used in different
-modes including CGI. First, use it from the command line to generate an
-index of a directory, for example
-
-    agedu --file /home/quixote/agedu.dat --scan /home/quixote
-
-In your Caddyfile, include a directive that references the generated
-index:
-
-    cgi /agedu /usr/local/bin/agedu --cgi --file /home/quixote/agedu.dat
-
-You will want to protect the /agedu resource with some sort of access
-control, for example HTTP Basic Authentication.
-
 Go Source Example
 
 This small example demonstrates how to write a CGI program in Go. The
@@ -473,125 +375,5 @@ When this program is compiled and installed as
 will make it available:
 
     cgi /servertime /usr/local/bin/servertime
-
-Cgit Example
-
-The cgit application provides an attractive and useful web interface to
-git repositories. Here is how to run it with Caddy. After compiling
-cgit, you can place the executable somewhere out of Caddy’s document
-root. In this example, it is located in /usr/local/cgi-bin.
-
-A sample configuration file is included in the project’s cgitrc.5.txt
-file. You can use it as a starting point for your configuration. The
-default location for this file is /etc/cgitrc but in this example the
-location /home/quixote/caddy/cgitrc. Note that changing the location of
-this file from its default will necessitate the inclusion of the
-environment variable CGIT_CONFIG in the Caddyfile cgi directive.
-
-When you edit the repository stanzas in this file, be sure each
-repo.path item refers to the .git directory within a working checkout.
-Here is an example stanza:
-
-    repo.url=caddy-cgi
-    repo.path=/home/quixote/go/src/github.com/jung-kurt/caddy-cgi/.git
-    repo.desc=CGI for Caddy
-    repo.owner=jung-kurt
-    repo.readme=/home/quixote/go/src/github.com/jung-kurt/caddy-cgi/README.md
-
-Also, you will likely want to change cgit’s cache directory from its
-default in /var/cache (generally accessible only to root) to a location
-writeable by Caddy. In this example, cgitrc contains the line
-
-    cache-root=/home/quixote/.cache/cgit
-
-You may need to create the cgit subdirectory.
-
-There are some static cgit resources (namely, cgit.css, favicon.ico, and
-cgit.png) that will be accessed from Caddy’s document tree. For this
-example, these files are placed in a directory named cgit-resource. The
-following lines are part of the cgitrc file:
-
-    css=/cgit-resource/cgit.css
-    favicon=/cgit-resource/favicon.ico
-    logo=/cgit-resource/cgit.png
-
-Additionally, you will likely need to tweak the various file viewer
-filters such source-filter and about-filter based on your system.
-
-The following Caddyfile directive will allow you to access the cgit
-application at /cgit:
-
-    cgi {
-        match /cgit
-        exec /usr/local/cgi-bin/cgit
-        env CGIT_CONFIG=/home/quixote/caddy/cgitrc
-    }
-
-PHP Example
-
-Feeling reckless? You can run PHP in CGI mode. In general, FastCGI is
-the preferred method to run PHP if your application has many pages or a
-fair amount of database activity. But for small PHP programs that are
-seldom used, CGI can work fine. You’ll need the php-cgi interpreter for
-your platform. This may involve downloading the executable or
-downloading and then compiling the source code. For this example, assume
-the interpreter is installed as /usr/local/bin/php-cgi. Additionally,
-because of the way PHP operates in CGI mode, you will need an
-intermediate script. This one works in Posix environments:
-
-    #!/bin/bash
-
-    REDIRECT_STATUS=1 SCRIPT_FILENAME="${1}" /usr/local/bin/php-cgi -c /home/quixote/.config/php/php-cgi.ini
-
-This script can be reused for multiple cgi directives. In this example,
-it is installed as /usr/local/cgi-bin/phpwrap. The argument following -c
-is your initialization file for PHP. In this example, it is named
-/home/quixote/.config/php/php-cgi.ini.
-
-Two PHP files will be used for this example. The first,
-/usr/local/cgi-bin/sample/min.php, looks like this:
-
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>PHP Sample</title>
-        <style>
-          form span {
-            font: 15px sans-serif;
-            display: inline-block;
-            width: 8em;
-            text-align: right;
-          }
-        </style>
-      </head>
-      <body>
-        <form action="action.php" method="post">
-          <p><span>Name</span> <input type="text" name="name" /></p>
-          <p><span>Number</span> <input type="text" name="number" /></p>
-          <p><span>Day</span> <input type="text" name="day"
-            value="<?php echo(date("l", time())); ?>" /></p>
-          <p><span>&nbsp;</span> <input type="submit" /></p>
-        </form>
-      </body>
-    </html>
-
-The second, /usr/local/cgi-bin/sample/action.php, follows:
-
-    <!DOCTYPE html>
-    <html>
-      <head>
-        <title>PHP Sample</title>
-      </head>
-      <body>
-        <p>Name is <strong><?php echo htmlspecialchars($_POST['name']); ?></strong>.</p>
-        <p>Number is <strong><?php echo (int)$_POST['number']; ?></strong>.</p>
-        <p>Day is <strong><?php echo htmlspecialchars($_POST['day']); ?></strong>.</p>
-      </body>
-    </html>
-
-The following directive in your Caddyfile will make the application
-available at sample/min.php:
-
-    cgi /sample/*.php /usr/local/cgi-bin/phpwrap /usr/local/cgi-bin{match}
 */
 package cgi
