@@ -35,6 +35,8 @@ type CGI struct {
 	Executable string // [1]
 	// Working directory (default, current Caddy working directory)
 	WorkingDirectory string // [0..1]
+	// The script path of the uri.
+	ScriptName string
 	// Arguments to submit to executable
 	Args []string // [0..n]
 	// Environment key value pairs (key=value) for this particular app
@@ -76,6 +78,10 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 			switch d.Val() {
 			case "dir":
 				if !d.Args(&c.WorkingDirectory) {
+					return d.ArgErr()
+				}
+			case "script_name":
+				if !d.Args(&c.ScriptName) {
 					return d.ArgErr()
 				}
 			case "env":
