@@ -1,4 +1,4 @@
-module github.com/aksdb/caddy-cgi
+module github.com/aksdb/caddy-cgi/v2
 
 go 1.14
 
