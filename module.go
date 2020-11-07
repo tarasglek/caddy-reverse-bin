@@ -30,23 +30,26 @@ func init() {
 	httpcaddyfile.RegisterHandlerDirective("cgi", parseCaddyfile)
 }
 
+// CGI implements a CGI handler that executes binary files following the
+// CGI protocol, passing parameters via environment variables and evaluating
+// the response as the HTTP response.
 type CGI struct {
 	// Name of executable script or binary
-	Executable string // [1]
+	Executable string `json:"executable"`
 	// Working directory (default, current Caddy working directory)
-	WorkingDirectory string // [0..1]
+	WorkingDirectory string `json:"workingDirectory,omitempty"`
 	// The script path of the uri.
-	ScriptName string
+	ScriptName string `json:"scriptName,omitempty"`
 	// Arguments to submit to executable
-	Args []string // [0..n]
+	Args []string `json:"args,omitempty"`
 	// Environment key value pairs (key=value) for this particular app
-	Envs []string // [0..n]
+	Envs []string `json:"envs,omitempty"`
 	// Environment keys to pass through for all apps
-	PassEnvs []string // [0..n]
+	PassEnvs []string `json:"passEnvs,omitempty"`
 	// True to pass all environment variables to CGI executable
-	PassAll bool
+	PassAll bool `json:"passAllEnvs,omitempty"`
 	// True to return inspection page rather than call CGI executable
-	Inspect bool
+	Inspect bool `json:"inspect,omitempty"`
 }
 
 // Interface guards
