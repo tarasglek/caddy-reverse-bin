@@ -291,13 +291,20 @@ func (c *CGI) startProcess() error {
 
 	// Wait for readiness signal from stdout
 	reader := bufio.NewReader(stdoutPipe)
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		c.process.Kill()
-		c.process = nil
-		return fmt.Errorf("failed to read readiness signal from stdout: %v", err)
+	expected := "127.0.0.1:" + c.Port
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			c.process.Kill()
+			c.process = nil
+			return fmt.Errorf("failed to read readiness signal from stdout: %v", err)
+		}
+		if strings.Contains(line, expected) {
+			c.logger.Info("CGI process ready", zap.String("address", expected))
+			break
+		}
+		c.logger.Info("CGI process stdout (startup)", zap.String("msg", strings.TrimSpace(line)))
 	}
-	c.logger.Info("CGI process ready", zap.String("signal", strings.TrimSpace(line)))
 
 	// Handle stderr and process exit
 	go func() {
