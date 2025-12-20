@@ -17,6 +17,11 @@
 package cgi
 
 import (
+	"net/http/httputil"
+	"os"
+	"sync"
+	"time"
+
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
@@ -57,6 +62,19 @@ type CGI struct {
 	// If set, output from the CGI script is immediately flushed whenever
 	// some bytes have been read.
 	UnbufferedOutput bool `json:"unbufferedOutput,omitempty"`
+
+	// Mode of operation: "cgi" (default) or "proxy"
+	Mode string `json:"mode,omitempty"`
+	// Port to listen on (for proxy mode)
+	Port string `json:"port,omitempty"`
+
+	// Internal state for proxy mode
+	process        *os.Process
+	proxyAddr      string
+	activeRequests int64
+	idleTimer      *time.Timer
+	mu             sync.Mutex
+	reverseProxy   *httputil.ReverseProxy
 
 	logger *zap.Logger
 }
@@ -122,6 +140,14 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				c.BufferLimit = int64(size)
 			case "unbuffered_output":
 				c.UnbufferedOutput = true
+			case "mode":
+				if !d.Args(&c.Mode) {
+					return d.ArgErr()
+				}
+			case "port":
+				if !d.Args(&c.Port) {
+					return d.ArgErr()
+				}
 			default:
 				return d.Errf("unknown subdirective: %q", d.Val())
 			}

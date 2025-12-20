@@ -18,15 +18,20 @@
 package cgi
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cgi"
+	"net/http/httputil"
+	"net/url"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -48,6 +53,10 @@ func passAll() (list []string) {
 }
 
 func (c *CGI) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	if c.Mode == "proxy" {
+		return c.serveProxy(w, r, next)
+	}
+
 	// For convenience: get the currently authenticated user; if some other middleware has set that.
 	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
 	var username string
@@ -189,4 +198,139 @@ func (iw instantWriter) Write(b []byte) (int, error) {
 	n, err := iw.ResponseWriter.Write(b)
 	iw.ResponseWriter.(http.Flusher).Flush()
 	return n, err
+}
+
+func (c *CGI) serveProxy(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	c.mu.Lock()
+	if c.process == nil {
+		if err := c.startProcess(); err != nil {
+			c.mu.Unlock()
+			return err
+		}
+	}
+
+	// Stop idle timer if running
+	if c.idleTimer != nil {
+		c.idleTimer.Stop()
+		c.idleTimer = nil
+	}
+
+	c.activeRequests++
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		c.activeRequests--
+		if c.activeRequests == 0 {
+			c.idleTimer = time.AfterFunc(30*time.Second, func() {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				if c.activeRequests == 0 && c.process != nil {
+					c.process.Kill()
+					c.process = nil
+				}
+			})
+		}
+	}()
+
+	c.reverseProxy.ServeHTTP(w, r)
+	return nil
+}
+
+func (c *CGI) startProcess() error {
+	// Prepare command
+	cmd := exec.Command(c.Executable, c.Args...)
+	cmd.Dir = c.WorkingDirectory
+	if cmd.Dir == "" {
+		cmd.Dir = "."
+	}
+
+	// Environment
+	var cmdEnv []string
+	if c.PassAll {
+		cmdEnv = os.Environ()
+	} else {
+		for _, key := range c.PassEnvs {
+			if val, ok := os.LookupEnv(key); ok {
+				cmdEnv = append(cmdEnv, key+"="+val)
+			}
+		}
+	}
+	cmdEnv = append(cmdEnv, c.Envs...)
+
+	port := "0"
+	if c.Port != "" {
+		port = c.Port
+	}
+	cmdEnv = append(cmdEnv, "LISTEN_HOST=127.0.0.1:"+port)
+	cmd.Env = cmdEnv
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	c.process = cmd.Process
+
+	// Read address from stdout
+	reader := bufio.NewReader(stdoutPipe)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		c.process.Kill()
+		c.process = nil
+		return fmt.Errorf("failed to read address from stdout: %v", err)
+	}
+	c.proxyAddr = strings.TrimSpace(line)
+
+	// Parse URL
+	if !strings.Contains(c.proxyAddr, "://") {
+		c.proxyAddr = "http://" + c.proxyAddr
+	}
+	target, err := url.Parse(c.proxyAddr)
+	if err != nil {
+		c.process.Kill()
+		c.process = nil
+		return fmt.Errorf("failed to parse proxy address '%s': %v", c.proxyAddr, err)
+	}
+
+	c.reverseProxy = httputil.NewSingleHostReverseProxy(target)
+
+	// Handle stderr and process exit
+	go func() {
+		// Consume remaining stdout
+		go func() {
+			for {
+				line, err := reader.ReadString('\n')
+				if err != nil {
+					break
+				}
+				c.logger.Info("CGI process stdout", zap.String("msg", strings.TrimSpace(line)))
+			}
+		}()
+
+		// Consume stderr
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			c.logger.Info("CGI process stderr", zap.String("msg", scanner.Text()))
+		}
+
+		cmd.Wait()
+		c.mu.Lock()
+		if c.process == cmd.Process {
+			c.process = nil
+		}
+		c.mu.Unlock()
+	}()
+
+	return nil
 }
