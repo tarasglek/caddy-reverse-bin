@@ -12,4 +12,5 @@ go build -o caddy ./cmd/caddy
 popd > /dev/null
 
 # Run Caddy using the config in the current working directory
-"$REPO_ROOT/caddy" run --config caddy.config --adapter caddyfile
+CONFIG_FILE="${1:-caddy.config}"
+"$REPO_ROOT/caddy" run --config "$CONFIG_FILE" --adapter caddyfile
