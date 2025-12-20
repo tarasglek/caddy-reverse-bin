@@ -2,7 +2,7 @@
 set -ex
 
 # Start python backend in background
-python3 -m http.server 8000 &
+python3 -m http.server 8001 &
 BACKEND_PID=$!
 
 # Ensure backend is killed when script exits
