@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -ex
 
 # Go to the root of the repository
 pushd "$(dirname "$0")/../.." > /dev/null
