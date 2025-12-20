@@ -74,7 +74,8 @@ The module and the managed process communicate via environment variables and sta
 - **LISTEN_HOST**: Caddy passes the configured address (e.g., `127.0.0.1:8001`) to the process via the `LISTEN_HOST` environment variable.
 - **Port Specification**: Users must specify a fixed port in the configuration.
 - **Address Discovery**: Not used. The proxy target is static based on the configuration.
-- **Logging**: Output to `stdout` and `stderr` is streamed directly to Caddy's logs.
+- **Readiness**: The process must write a line to `stdout` to signal that it is ready to accept connections.
+- **Logging**: Subsequent output to `stdout` and all output to `stderr` is streamed directly to Caddy's logs.
 
 ### 3. Request Handling
 Once the process is ready and the address is discovered:
@@ -107,7 +108,8 @@ Once the process is ready and the address is discovered:
 - **`startProcess()`**:
     - **Environment Setup**: Pass `LISTEN_HOST` based on configured port.
     - **Process Spawning**: Use `os/exec` to start the configured executable with arguments.
-    - **Logging**: Start goroutines to continuously read `stdout` and `stderr` and pipe them to Caddy's logger.
+    - **Readiness**: Wait for a line of output on `stdout` to confirm the process is ready.
+    - **Logging**: Start goroutines to continuously read `stdout` (after readiness signal) and `stderr` and pipe them to Caddy's logger.
     - **Cleanup**: Ensure that if the process exits unexpectedly, the state is cleaned up.
 
 ### Configuration
