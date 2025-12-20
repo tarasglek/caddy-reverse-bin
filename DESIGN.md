@@ -72,7 +72,7 @@ Instead of spawning a process for every HTTP request, the module manages a singl
 The module and the managed process communicate via environment variables and standard output for initialization.
 
 - **LISTEN_HOST**: Caddy generates a local address (e.g., `127.0.0.1:0` to let the OS pick a port) and passes it to the process via the `LISTEN_HOST` environment variable.
-- **Port Specification**: Users can specify a fixed port or a range of ports. If a range is provided, Caddy will find an available port within that range before starting the process. This may require modifying the environment or arguments passed to the subprocess to reflect the selected port.
+- **Port Specification**: Users can specify a fixed port.
 - **Address Discovery**: Upon startup, the process must write its actual listening address (e.g., `127.0.0.1:45678`) to its `stdout`. Caddy reads this first line to determine the proxy target.
 - **Stderr**: All subsequent output to `stderr` is streamed directly to Caddy's logs.
 
@@ -86,13 +86,13 @@ Once the process is ready and the address is discovered:
 
 ### Struct Updates (`CGI` in `module.go`)
 - `mode`: A new field to toggle between `cgi` (default) and `proxy` modes.
-- `port`: A string field to store the specified port or port range (e.g., `8001` or `8000-9000`).
+- `port`: A string field to store the specified port (e.g., `8001`).
 - `process`: Reference to the running `*os.Process`.
 - `proxyAddr`: The discovered address of the backend.
 - `activeRequests`: Atomic counter for tracking concurrency.
 - `idleTimer`: A `*time.Timer` for managing the 30s shutdown.
 - `mu`: A `sync.Mutex` to protect process state transitions.
-- `reverseProxy`: A `*reverseproxy.Handler` instance to handle the actual proxying.
+- `reverseProxy`: A `*httputil.ReverseProxy` instance to handle the actual proxying.
 
 ### Logic Updates (`cgi.go`)
 - **`ServeHTTP`**:
@@ -101,7 +101,7 @@ Once the process is ready and the address is discovered:
         - **Dynamic Startup**: If `process` is nil, call `startProcess()`. This involves spawning the process and reading the first line of `stdout` to get the `proxyAddr`.
         - **Concurrency Tracking**: Increment `activeRequests` before proxying and decrement after.
         - **Idle Management**: Stop the `idleTimer` when a request starts. If `activeRequests` reaches zero after a request, start the `idleTimer` for 30 seconds.
-        - **Routing**: Use the `reverseProxy` handler to forward the request to `proxyAddr`.
+        - **Routing**: Use the `reverseProxy` to forward the request to `proxyAddr`.
     - Else: Execute traditional CGI logic using `net/http/cgi`.
 
 - **`startProcess()`**:
@@ -117,7 +117,5 @@ New Caddyfile subdirective:
 cgi /path* ./binary {
     mode proxy
     port 8001
-    # OR
-    port 8000-9000
 }
 ```
