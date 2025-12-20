@@ -30,8 +30,7 @@ Once the process is ready and the address is discovered:
 
 ### Struct Updates (`CGI` in `module.go`)
 - `mode`: A new field to toggle between `cgi` (default) and `proxy` modes.
-- `port`: A fixed port to listen on.
-- `portRange`: A range of ports (e.g., `8000-9000`) to pick from.
+- `port`: A string field to store the specified port or port range (e.g., `8001` or `8000-9000`).
 - `process`: Reference to the running `*os.Process`.
 - `proxyAddr`: The discovered address of the backend.
 - `activeRequests`: Atomic counter for tracking concurrency.
@@ -66,6 +65,6 @@ cgi /path* ./binary {
     mode proxy
     port 8001
     # OR
-    port_range 8000-9000
+    port 8000-9000
 }
 ```
