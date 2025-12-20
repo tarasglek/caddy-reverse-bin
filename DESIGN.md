@@ -16,6 +16,7 @@ Instead of spawning a process for every HTTP request, the module manages a singl
 The module and the managed process communicate via environment variables and standard output for initialization.
 
 - **LISTEN_HOST**: Caddy generates a local address (e.g., `127.0.0.1:0` to let the OS pick a port) and passes it to the process via the `LISTEN_HOST` environment variable.
+- **Port Specification**: Users can specify a fixed port or a range of ports. If a range is provided, Caddy will find an available port within that range before starting the process. This may require modifying the environment or arguments passed to the subprocess to reflect the selected port.
 - **Address Discovery**: Upon startup, the process must write its actual listening address (e.g., `127.0.0.1:45678`) to its `stdout`. Caddy reads this first line to determine the proxy target.
 - **Stderr**: All subsequent output to `stderr` is streamed directly to Caddy's logs.
 
@@ -29,6 +30,8 @@ Once the process is ready and the address is discovered:
 
 ### Struct Updates (`CGI` in `module.go`)
 - `mode`: A new field to toggle between `cgi` (default) and `proxy` modes.
+- `port`: A fixed port to listen on.
+- `portRange`: A range of ports (e.g., `8000-9000`) to pick from.
 - `process`: Reference to the running `*os.Process`.
 - `proxyAddr`: The discovered address of the backend.
 - `activeRequests`: Atomic counter for tracking concurrency.
@@ -61,5 +64,8 @@ New Caddyfile subdirective:
 ```caddyfile
 cgi /path* ./binary {
     mode proxy
+    port 8001
+    # OR
+    port_range 8000-9000
 }
 ```
