@@ -92,27 +92,24 @@ Once the process is ready and the address is discovered:
 - `activeRequests`: Atomic counter for tracking concurrency.
 - `idleTimer`: A `*time.Timer` for managing the 30s shutdown.
 - `mu`: A `sync.Mutex` to protect process state transitions.
+- `reverseProxy`: A `*reverseproxy.Handler` instance to handle the actual proxying.
 
 ### Logic Updates (`cgi.go`)
 - **`ServeHTTP`**:
     - If `mode == proxy`:
-        - Lock `mu`.
-        - If `process` is nil, call `startProcess()`.
-        - Increment `activeRequests`.
-        - Stop `idleTimer`.
-        - Unlock `mu`.
-        - Proxy the request.
-        - Lock `mu`.
-        - Decrement `activeRequests`.
-        - If `activeRequests == 0`, start `idleTimer` for 30s.
-        - Unlock `mu`.
-    - Else: Execute traditional CGI logic.
+        - **State Tracking**: Use `mu` to safely check and update process state.
+        - **Dynamic Startup**: If `process` is nil, call `startProcess()`. This involves spawning the process and reading the first line of `stdout` to get the `proxyAddr`.
+        - **Concurrency Tracking**: Increment `activeRequests` before proxying and decrement after.
+        - **Idle Management**: Stop the `idleTimer` when a request starts. If `activeRequests` reaches zero after a request, start the `idleTimer` for 30 seconds.
+        - **Routing**: Use the `reverseProxy` handler to forward the request to `proxyAddr`.
+    - Else: Execute traditional CGI logic using `net/http/cgi`.
 
 - **`startProcess()`**:
-    - Generate `LISTEN_HOST`.
-    - Spawn process with `os/exec`.
-    - Read first line of `stdout` for `proxyAddr`.
-    - Start a goroutine to pipe `stderr` to Caddy logs.
+    - **Environment Setup**: Generate `LISTEN_HOST` (e.g., `127.0.0.1:0`).
+    - **Process Spawning**: Use `os/exec` to start the configured executable with arguments.
+    - **Address Discovery**: Read the first line from the process's `stdout`. This line must contain the address the process is listening on.
+    - **Logging**: Start a goroutine to continuously read `stderr` and pipe it to Caddy's logger.
+    - **Cleanup**: Ensure that if the process exits unexpectedly, the state is cleaned up.
 
 ### Configuration
 New Caddyfile subdirective:
