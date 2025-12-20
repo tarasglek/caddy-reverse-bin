@@ -5,7 +5,7 @@ set -e
 pushd "$(dirname "$0")/../.." > /dev/null
 
 # Build Caddy with the local version of the cgi module
-xcaddy build --with github.com/aksdb/caddy-cgi/v2=.
+go build -o caddy ./cmd/caddy
 
 # Go back to the example directory
 popd > /dev/null
