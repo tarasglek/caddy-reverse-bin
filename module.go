@@ -17,7 +17,6 @@
 package cgi
 
 import (
-	"net/http/httputil"
 	"os"
 	"sync"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 	"github.com/dustin/go-humanize"
 	"go.uber.org/zap"
 )
@@ -74,7 +74,8 @@ type CGI struct {
 	activeRequests int64
 	idleTimer      *time.Timer
 	mu             sync.Mutex
-	reverseProxy   *httputil.ReverseProxy
+	reverseProxy   *reverseproxy.Handler
+	ctx            caddy.Context
 
 	logger *zap.Logger
 }
@@ -157,6 +158,7 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 }
 
 func (c *CGI) Provision(ctx caddy.Context) error {
+	c.ctx = ctx
 	c.logger = ctx.Logger(c)
 
 	if c.BufferLimit <= 0 {
