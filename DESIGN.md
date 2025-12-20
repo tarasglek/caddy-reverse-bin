@@ -5,6 +5,62 @@ This document outlines the transition of the Caddy CGI module from a per-request
 
 ## Architecture
 
+### Traditional CGI Lifecycle (Current)
+In the current model, every HTTP request triggers a full process lifecycle.
+
+```text
+HTTP Request
+     |
+     v
+[ Caddy Handler ]
+     |
+     +--- fork/exec ---> [ Subprocess (e.g., hello.sh) ]
+     |                          |
+     | <--- Stdout (Response) --+
+     |                          |
+     | <--- Stderr (Logs) ------+
+     |                          |
+[ Response Sent ]             [ Exit ]
+```
+
+---
+
+### Managed Reverse Proxy Lifecycle (Proposed)
+In the new model, the subprocess is long-running. Caddy manages the process state, tracks active connections, and handles idle timeouts.
+
+```text
+HTTP Request
+     |
+     v
+[ Caddy Handler ] <-------+
+     |                    |
+     | (Lock Mutex)       |
+     |                    |
+     +-- [ Process Running? ] -- No --> [ Start Subprocess ]
+     |          |                          |
+     |         Yes <--- (Read Stdout) -----+ (Get Proxy Address)
+     |          |
+     +-- [ Increment Active Count ]
+     |          |
+     +-- [ Stop/Reset Idle Timer ]
+     |          |
+     | (Unlock Mutex)
+     |          |
+     +-- [ Reverse Proxy Request ] ----> [ Persistent Subprocess ]
+     |          |                               |
+     | <------- [ Receive Response ] <----------+
+     |          |
+     | (Lock Mutex)
+     |          |
+     +-- [ Decrement Active Count ]
+     |          |
+     +-- [ Count == 0? ] -- Yes --> [ Start 30s Idle Timer ]
+     |                              |
+     | (Unlock Mutex)               +--- (On Expiry) ---> [ Kill Process ]
+     v
+[ Response Sent ]
+```
+
 ### 1. Process Lifecycle
 Instead of spawning a process for every HTTP request, the module manages a single persistent process that acts as an HTTP server.
 
