@@ -236,6 +236,7 @@ func (c *CGI) serveProxy(w http.ResponseWriter, r *http.Request, next caddyhttp.
 				c.mu.Lock()
 				defer c.mu.Unlock()
 				if c.activeRequests == 0 && c.process != nil {
+					c.terminationMsg = "idle timeout"
 					c.process.Kill()
 					c.process = nil
 				}
@@ -326,16 +327,22 @@ func (c *CGI) startProcess() error {
 		}
 
 		err := cmd.Wait()
-		c.logger.Info("proxy subprocess terminated",
-			zap.String("executable", cmd.Path),
-			zap.Strings("args", cmd.Args),
-			zap.Error(err))
-
 		c.mu.Lock()
+		reason := c.terminationMsg
+		if reason == "" {
+			reason = "unexpected exit"
+		}
+		c.terminationMsg = ""
 		if c.process == cmd.Process {
 			c.process = nil
 		}
 		c.mu.Unlock()
+
+		c.logger.Info("proxy subprocess terminated",
+			zap.String("executable", cmd.Path),
+			zap.Strings("args", cmd.Args),
+			zap.String("reason", reason),
+			zap.Error(err))
 	}()
 
 	return nil

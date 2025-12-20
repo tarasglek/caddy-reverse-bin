@@ -74,6 +74,7 @@ type CGI struct {
 	process        *os.Process
 	activeRequests int64
 	idleTimer      *time.Timer
+	terminationMsg string
 	mu             sync.Mutex
 	reverseProxy   *reverseproxy.Handler
 	ctx            caddy.Context
