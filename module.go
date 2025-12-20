@@ -17,6 +17,8 @@
 package cgi
 
 import (
+	"fmt"
+	"net/url"
 	"os"
 	"sync"
 	"time"
@@ -70,7 +72,6 @@ type CGI struct {
 
 	// Internal state for proxy mode
 	process        *os.Process
-	proxyAddr      string
 	activeRequests int64
 	idleTimer      *time.Timer
 	mu             sync.Mutex
@@ -163,6 +164,26 @@ func (c *CGI) Provision(ctx caddy.Context) error {
 
 	if c.BufferLimit <= 0 {
 		c.BufferLimit = 4 << 20
+	}
+
+	if c.Mode == "proxy" {
+		if c.Port == "" {
+			return fmt.Errorf("port is required in proxy mode")
+		}
+		target, err := url.Parse("http://127.0.0.1:" + c.Port)
+		if err != nil {
+			return fmt.Errorf("invalid port: %v", err)
+		}
+
+		rp := &reverseproxy.Handler{
+			Upstreams: reverseproxy.UpstreamPool{
+				{Dial: target.Host},
+			},
+		}
+		if err := rp.Provision(ctx); err != nil {
+			return fmt.Errorf("failed to provision reverse proxy: %v", err)
+		}
+		c.reverseProxy = rp
 	}
 
 	return nil

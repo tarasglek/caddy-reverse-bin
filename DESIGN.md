@@ -71,10 +71,10 @@ Instead of spawning a process for every HTTP request, the module manages a singl
 ### 2. Communication & Discovery
 The module and the managed process communicate via environment variables and standard output for initialization.
 
-- **LISTEN_HOST**: Caddy generates a local address (e.g., `127.0.0.1:0` to let the OS pick a port) and passes it to the process via the `LISTEN_HOST` environment variable.
-- **Port Specification**: Users can specify a fixed port.
-- **Address Discovery**: Upon startup, the process must write its actual listening address (e.g., `127.0.0.1:45678`) to its `stdout`. Caddy reads this first line to determine the proxy target.
-- **Stderr**: All subsequent output to `stderr` is streamed directly to Caddy's logs.
+- **LISTEN_HOST**: Caddy passes the configured address (e.g., `127.0.0.1:8001`) to the process via the `LISTEN_HOST` environment variable.
+- **Port Specification**: Users must specify a fixed port in the configuration.
+- **Address Discovery**: Not used. The proxy target is static based on the configuration.
+- **Logging**: Output to `stdout` and `stderr` is streamed directly to Caddy's logs.
 
 ### 3. Request Handling
 Once the process is ready and the address is discovered:
@@ -98,17 +98,16 @@ Once the process is ready and the address is discovered:
 - **`ServeHTTP`**:
     - If `mode == proxy`:
         - **State Tracking**: Use `mu` to safely check and update process state.
-        - **Dynamic Startup**: If `process` is nil, call `startProcess()`. This involves spawning the process and reading the first line of `stdout` to get the `proxyAddr`.
+        - **Dynamic Startup**: If `process` is nil, call `startProcess()`. This involves spawning the process.
         - **Concurrency Tracking**: Increment `activeRequests` before proxying and decrement after.
         - **Idle Management**: Stop the `idleTimer` when a request starts. If `activeRequests` reaches zero after a request, start the `idleTimer` for 30 seconds.
-        - **Routing**: Use the `reverseProxy` to forward the request to `proxyAddr`.
+        - **Routing**: Use the pre-provisioned `reverseProxy` to forward the request.
     - Else: Execute traditional CGI logic using `net/http/cgi`.
 
 - **`startProcess()`**:
-    - **Environment Setup**: Generate `LISTEN_HOST` (e.g., `127.0.0.1:0`).
+    - **Environment Setup**: Pass `LISTEN_HOST` based on configured port.
     - **Process Spawning**: Use `os/exec` to start the configured executable with arguments.
-    - **Address Discovery**: Read the first line from the process's `stdout`. This line must contain the address the process is listening on.
-    - **Logging**: Start a goroutine to continuously read `stderr` and pipe it to Caddy's logger.
+    - **Logging**: Start goroutines to continuously read `stdout` and `stderr` and pipe them to Caddy's logger.
     - **Cleanup**: Ensure that if the process exits unexpectedly, the state is cleaned up.
 
 ### Configuration
