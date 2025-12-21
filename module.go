@@ -34,8 +34,11 @@ import (
 
 func init() {
 	caddy.RegisterModule(CGI{})
-	// add comments explaining what these 2 lines accomplish AI!
+	// RegisterHandlerDirective associates the "cgi" directive in the Caddyfile
+	// with the parseCaddyfile function to create a CGI handler instance.
 	httpcaddyfile.RegisterHandlerDirective("cgi", parseCaddyfile)
+	// RegisterDirectiveOrder ensures the "cgi" handler is executed before the
+	// "respond" handler in the HTTP middleware chain.
 	httpcaddyfile.RegisterDirectiveOrder("cgi", httpcaddyfile.Before, "respond")
 }
 
