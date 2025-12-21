@@ -92,6 +92,7 @@ var (
 	_ caddyhttp.MiddlewareHandler = (*CGI)(nil)
 	_ caddyfile.Unmarshaler       = (*CGI)(nil)
 	_ caddy.Provisioner           = (*CGI)(nil)
+	_ caddy.CleanerUpper          = (*CGI)(nil)
 )
 
 func (c CGI) CaddyModule() caddy.ModuleInfo {
@@ -190,6 +191,24 @@ func (c *CGI) Provision(ctx caddy.Context) error {
 			return fmt.Errorf("failed to provision reverse proxy: %v", err)
 		}
 		c.reverseProxy = rp
+	}
+
+	return nil
+}
+
+func (c *CGI) Cleanup() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.idleTimer != nil {
+		c.idleTimer.Stop()
+		c.idleTimer = nil
+	}
+
+	if c.process != nil {
+		c.logger.Info("cleaning up proxy subprocess", zap.Int("pid", c.process.Pid))
+		c.killProcessGroup()
+		c.process = nil
 	}
 
 	return nil
