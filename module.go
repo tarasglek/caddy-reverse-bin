@@ -34,6 +34,7 @@ import (
 
 func init() {
 	caddy.RegisterModule(CGI{})
+	// add comments explaining what these 2 lines accomplish AI!
 	httpcaddyfile.RegisterHandlerDirective("cgi", parseCaddyfile)
 	httpcaddyfile.RegisterDirectiveOrder("cgi", httpcaddyfile.Before, "respond")
 }
