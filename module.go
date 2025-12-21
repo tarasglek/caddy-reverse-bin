@@ -38,7 +38,8 @@ func init() {
 	// with the parseCaddyfile function to create a CGI handler instance.
 	httpcaddyfile.RegisterHandlerDirective("cgi", parseCaddyfile)
 	// RegisterDirectiveOrder ensures the "cgi" handler is executed before the
-	// "respond" handler in the HTTP middleware chain.
+	// "respond" handler in the HTTP middleware chain. This makes the "order"
+	// block in the Caddyfile redundant.
 	httpcaddyfile.RegisterDirectiveOrder("cgi", httpcaddyfile.Before, "respond")
 }
 
