@@ -74,6 +74,10 @@ type CGI struct {
 	Mode string `json:"mode,omitempty"`
 	// Port to listen on (for proxy mode)
 	Port string `json:"port,omitempty"`
+	// Readiness check method (GET or HEAD)
+	ReadinessMethod string `json:"readinessMethod,omitempty"`
+	// Readiness check path
+	ReadinessPath string `json:"readinessPath,omitempty"`
 
 	// Internal state for proxy mode
 	process        *os.Process
@@ -157,6 +161,11 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				if !d.Args(&c.Port) {
 					return d.ArgErr()
 				}
+			case "readiness_check":
+				if !d.Args(&c.ReadinessMethod, &c.ReadinessPath) {
+					return d.ArgErr()
+				}
+				c.ReadinessMethod = strings.ToUpper(c.ReadinessMethod)
 			default:
 				return d.Errf("unknown subdirective: %q", d.Val())
 			}
