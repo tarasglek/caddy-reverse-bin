@@ -342,6 +342,7 @@ func (c *CGI) startProcess() error {
 		exitChan := make(chan error, 1)
 		go func() {
 			err := cmd.Wait()
+			// log this err  here AI!
 			exitChan <- err
 		}()
 		go func() {
