@@ -4,7 +4,7 @@
 }
 
 (subdomain_template) {
-	reverse-bin * /bin/sh -c "python3 -m http.server {args[0]}" {
+	reverse-bin {args[1]} {args[2]} {
 		mode proxy
 		reverse_proxy_to :{args[0]}
 		readiness_check HEAD /
@@ -13,7 +13,7 @@
 
 http://python.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	import subdomain_template 8001
+	import subdomain_template 8001 ./apps/discover-app/discover-app.py :8001
 }
 
 http://*.{$DOMAIN:localhost} {
