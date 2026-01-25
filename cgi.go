@@ -326,6 +326,9 @@ func (c *CGI) startProcess() error {
 			scheme = "https"
 		}
 		checkURL := fmt.Sprintf("%s://%s%s", scheme, expected, c.ReadinessPath)
+		c.logger.Info("waiting for CGI process readiness via HTTP polling",
+			zap.String("method", c.ReadinessMethod),
+			zap.String("url", checkURL))
 		client := &http.Client{Timeout: 500 * time.Millisecond}
 		ticker := time.NewTicker(200 * time.Millisecond)
 		defer ticker.Stop()
@@ -368,6 +371,8 @@ func (c *CGI) startProcess() error {
 		}
 	} else {
 		// Wait for readiness signal from stdout
+		c.logger.Info("waiting for CGI process readiness via stdout",
+			zap.String("expected_substring", expected))
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
