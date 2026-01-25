@@ -70,8 +70,8 @@ A new `auto-discovery` mode allows for dynamic application provisioning in catch
 - **Trigger**: When a request hits a catch-all handler, the module checks if a directory corresponding to the hostname exists within a configured `appDir`.
 - **Validation**: If the directory does not exist, the handler returns a 404.
 - **Provisioning**: If the directory exists, the module executes a `discoveryBin`. This binary is responsible for generating a `reverse-bin-caddy.json` configuration file within the application directory.
-- **Integration**: Once generated, the module dynamically injects this configuration into the running Caddy instance.
-- **Redirection**: After successful injection, the module issues a 302 redirect to the same URL, allowing the newly configured handler to take over the request.
+- **Integration**: Once generated, the module reads the JSON fragment and dynamically publishes it to the Caddy configuration as a new route. This is achieved by updating the active Caddy configuration via the internal API.
+- **Redirection**: After the configuration is successfully updated and the new route is active, the module issues a 302 redirect to the same URL, allowing the newly provisioned `reverse-bin` handler to take over the request.
 
 #### Managed Process Lifecycle
 - **Startup**: Triggered by the first incoming request if no process is currently running.
