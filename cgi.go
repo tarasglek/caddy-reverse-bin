@@ -191,8 +191,8 @@ func (c *CGI) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.H
 			zap.Strings("args", cgiHandler.Args))
 	}
 
-	if c.logger != nil && errorBuffer.Len() > 0 {
-		c.logger.Error("Error from CGI Application", zap.Stringer("Stderr", errorBuffer))
+	if errorBuffer.Len() > 0 {
+		c.logger.Error("Error from CGI Application", zap.Stringer("stderr", errorBuffer))
 	}
 
 	return nil
