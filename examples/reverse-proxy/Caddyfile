@@ -16,11 +16,11 @@ http://python.{$DOMAIN:localhost} {
 	import cgi_proxy 8001
 }
 
-# map this to discover-app  AI!
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
 	reverse-bin * /bin/sh -c "exec python3 ./apps/discover-app/discover-app.py :8002" {
 		mode proxy
 		reverse_proxy_to :8002
+		readiness_check HEAD /
 	}
 }
