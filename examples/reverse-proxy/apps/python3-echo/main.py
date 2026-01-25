@@ -9,7 +9,7 @@ class EchoHandler(http.server.BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/plain')
         self.end_headers()
         
-        response = f"Request Headers:\n{self.headers}"
+        response = f"Request Headers:\n{self.headers}" # also print location AI!
         self.wfile.write(response.encode('utf-8'))
 
     def do_HEAD(self):
