@@ -13,8 +13,12 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
         
         # Find an available port
         port = None
-        for _ in range(10):
+        tried_ports = set()
+        while len(tried_ports) < 10:
             p = random.randint(10000, 60000)
+            if p in tried_ports:
+                continue
+            tried_ports.add(p)
             print(f"Trying port: {p}")
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
