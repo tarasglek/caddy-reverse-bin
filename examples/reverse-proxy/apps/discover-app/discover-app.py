@@ -3,16 +3,19 @@ import sys
 import http.server
 import urllib.request
 import json
+import os
 
 class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         print(f"Request: {self.command} {self.path}")
         
         # Update Caddy API to include subdomain path
+        app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "subdomain"))
         subdomain_config = {
             "handler": "reverse-bin",
             "mode": "proxy",
-            "executable": "../../apps/subdomain/main.py",
+            "workingDirectory": app_root,
+            "executable": "./main.py",
             "args": ["--port", "8002"],
             "reverse_proxy_to": ":8002"
         }
