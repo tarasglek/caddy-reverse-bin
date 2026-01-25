@@ -77,9 +77,9 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
         
         try:
             req = urllib.request.Request(
-                "http://localhost:2019/config/apps/http/servers/srv0/routes",
+                "http://localhost:2019/config/apps/http/servers/srv0/routes/0",
                 data=json.dumps(subdomain_config).encode(),
-                method='POST',
+                method='PUT',
                 headers={'Content-Type': 'application/json'}
             )
             with urllib.request.urlopen(req) as f:
