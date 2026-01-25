@@ -19,6 +19,8 @@ http://python.{$DOMAIN:localhost} {
 # map this to discover-app  AI!
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	header Content-Type "text/plain"
-	respond "unhandled {scheme}://{host}{uri}" 404
+	reverse-bin * ./apps/discover-app/discover-app.py :8002 {
+		mode proxy
+		reverse_proxy_to :8002
+	}
 }
