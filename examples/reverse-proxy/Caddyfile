@@ -17,6 +17,11 @@ http://python.{$DOMAIN:localhost} {
 }
 
 # generate caddy json and include it
+http://python3-echo.{$DOMAIN:localhost} {
+	bind 0.0.0.0
+	import apps/python3-echo/reverse-bin-caddy.json
+}
+
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
 	header Content-Type "text/plain"
