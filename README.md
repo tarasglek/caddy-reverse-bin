@@ -108,20 +108,20 @@ plugins/modules.
 
 ### Basic Syntax
 
-The basic cgi directive lets you add a handler in the current caddy
+The basic reverse-bin directive lets you add a handler in the current caddy
 router location with a given script and optional arguments. The matcher
 is a default caddy matcher that is used to restrict the scope of this
 directive. The directive can be repeated any reasonable number of times.
 Here is the basic syntax:
 
 ``` caddy
-cgi [matcher] exec [args...]
+reverse-bin [matcher] exec [args...]
 ```
 
 For example:
 
 ``` caddy
-cgi /report /usr/local/cgi-bin/report
+reverse-bin /report /usr/local/cgi-bin/report
 ```
 
 When a request such as <https://example.com/report> or

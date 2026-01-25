@@ -35,13 +35,13 @@ import (
 
 func init() {
 	caddy.RegisterModule(CGI{})
-	// RegisterHandlerDirective associates the "cgi" directive in the Caddyfile
+	// RegisterHandlerDirective associates the "reverse-bin" directive in the Caddyfile
 	// with the parseCaddyfile function to create a CGI handler instance.
-	httpcaddyfile.RegisterHandlerDirective("cgi", parseCaddyfile)
-	// RegisterDirectiveOrder ensures the "cgi" handler is executed before the
+	httpcaddyfile.RegisterHandlerDirective("reverse-bin", parseCaddyfile)
+	// RegisterDirectiveOrder ensures the "reverse-bin" handler is executed before the
 	// "respond" handler in the HTTP middleware chain. This makes the "order"
 	// block in the Caddyfile redundant.
-	httpcaddyfile.RegisterDirectiveOrder("cgi", httpcaddyfile.Before, "respond")
+	httpcaddyfile.RegisterDirectiveOrder("reverse-bin", httpcaddyfile.Before, "respond")
 }
 
 // CGI implements a CGI handler that executes binary files following the
@@ -102,7 +102,7 @@ var (
 
 func (c CGI) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.cgi",
+		ID:  "http.handlers.reverse-bin",
 		New: func() caddy.Module { return &CGI{} },
 	}
 }
