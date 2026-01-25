@@ -52,8 +52,6 @@ type CGI struct {
 	Executable string `json:"executable"`
 	// Working directory (default, current Caddy working directory)
 	WorkingDirectory string `json:"workingDirectory,omitempty"`
-	// The script path of the uri.
-	ScriptName string `json:"scriptName,omitempty"`
 	// Arguments to submit to executable
 	Args []string `json:"args,omitempty"`
 	// Environment key value pairs (key=value) for this particular app
@@ -62,14 +60,6 @@ type CGI struct {
 	PassEnvs []string `json:"passEnvs,omitempty"`
 	// True to pass all environment variables to CGI executable
 	PassAll bool `json:"passAllEnvs,omitempty"`
-	// True to return inspection page rather than call CGI executable
-	Inspect bool `json:"inspect,omitempty"`
-	// Size of the in memory buffer to buffer chunked transfers
-	// if this size is exceeded a temporary file is used
-	BufferLimit int64 `json:"buffer_limit,omitempty"`
-	// If set, output from the CGI script is immediately flushed whenever
-	// some bytes have been read.
-	UnbufferedOutput bool `json:"unbufferedOutput,omitempty"`
 
 	// Mode of operation: "cgi" (default) or "proxy"
 	Mode string `json:"mode,omitempty"`
@@ -125,10 +115,6 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				if !d.Args(&c.WorkingDirectory) {
 					return d.ArgErr()
 				}
-			case "script_name":
-				if !d.Args(&c.ScriptName) {
-					return d.ArgErr()
-				}
 			case "env":
 				c.Envs = d.RemainingArgs()
 				if len(c.Envs) == 0 {
@@ -141,19 +127,6 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				}
 			case "pass_all_env":
 				c.PassAll = true
-			case "inspect":
-				c.Inspect = true
-			case "buffer_limit":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				size, err := humanize.ParseBytes(d.Val())
-				if err != nil {
-					return d.Errf("invalid buffer limit '%s': %v", d.Val(), err)
-				}
-				c.BufferLimit = int64(size)
-			case "unbuffered_output":
-				c.UnbufferedOutput = true
 			case "mode":
 				if !d.Args(&c.Mode) {
 					return d.ArgErr()
@@ -178,10 +151,6 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 func (c *CGI) Provision(ctx caddy.Context) error {
 	c.ctx = ctx
 	c.logger = ctx.Logger(c)
-
-	if c.BufferLimit <= 0 {
-		c.BufferLimit = 4 << 20
-	}
 
 	if c.Mode == "proxy" {
 		if c.ReverseProxyTo == "" {
