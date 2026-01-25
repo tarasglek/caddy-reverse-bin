@@ -3,8 +3,8 @@
 	https_port 9443
 }
 
-(cgi_proxy) {
-	reverse-bin * /bin/sh -c "exec python3 -m http.server {args[0]}" {
+(subdomain_template) {
+	reverse-bin * /bin/sh -c "python3 -m http.server {args[0]}" {
 		mode proxy
 		reverse_proxy_to :{args[0]}
 		readiness_check HEAD /
@@ -14,12 +14,6 @@
 http://python.{$DOMAIN:localhost} {
 	bind 0.0.0.0
 	import cgi_proxy 8001
-}
-
-# generate caddy json and include it
-http://python3-echo.{$DOMAIN:localhost} {
-	bind 0.0.0.0
-	import apps/python3-echo/reverse-bin-caddy.json
 }
 
 http://*.{$DOMAIN:localhost} {
