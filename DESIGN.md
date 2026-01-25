@@ -79,9 +79,8 @@ A new `auto-discovery` mode allows for dynamic application provisioning in catch
 - **Shutdown**: A 30-second idle timer is started when the active request count drops to zero. If a new request arrives before the timer expires, the timer is cancelled. Otherwise, the process is terminated.
 
 ### 2. Communication & Discovery
-The module and the managed process communicate via environment variables and standard output for initialization.
+The module and the managed process communicate via standard output or HTTP polling for initialization.
 
-- **LISTEN_HOST**: Caddy passes the configured address (e.g., `127.0.0.1:8001`) to the process via the `LISTEN_HOST` environment variable.
 - **Port Specification**: Users must specify a fixed port in the configuration using the `port` subdirective.
 - **Address Discovery**: By default, the module waits for the process to write a line to `stdout` containing the listening address (e.g., `127.0.0.1:8001`) to signal readiness.
 - **Readiness Check**: Alternatively, a `readiness_check` can be configured to poll the backend via HTTP (e.g., `readiness_check HEAD /`).
