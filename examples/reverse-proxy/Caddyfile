@@ -1,4 +1,5 @@
 {
+	debug
 	http_port 9080
 	https_port 9443
 }
@@ -18,6 +19,7 @@ http://python.{$DOMAIN:localhost} {
 
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
+	# change this to use ./discover-app and set cwd instead AI!
 	reverse-bin * /bin/sh -c "exec python3 ./apps/discover-app/discover-app.py :8002" {
 		mode proxy
 		reverse_proxy_to :8002
