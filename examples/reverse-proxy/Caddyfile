@@ -3,8 +3,8 @@
 	https_port 9443
 }
 
-(subdomain_template) {
-	reverse-bin {args[1]} {args[2]} {
+(cgi_proxy) {
+	reverse-bin * /bin/sh -c "exec python3 -m http.server {args[0]}" {
 		mode proxy
 		reverse_proxy_to :{args[0]}
 		readiness_check HEAD /
@@ -13,9 +13,10 @@
 
 http://python.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	import subdomain_template 8001 ./apps/discover-app/discover-app.py :8001
+	import cgi_proxy 8001
 }
-# map this wildcard to discover-app.py AI!
+
+# map this to discover-app  AI!
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
 	header Content-Type "text/plain"
