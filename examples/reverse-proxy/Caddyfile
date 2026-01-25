@@ -19,8 +19,7 @@ http://python.{$DOMAIN:localhost} {
 # map this to discover-app  AI!
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	reverse-bin * ./apps/discover-app/discover-app.py :8002 {
-		#use sh -c AI!
+	reverse-bin * /bin/sh -c "exec python3 ./apps/discover-app/discover-app.py :8002" {
 		mode proxy
 		reverse_proxy_to :8002
 	}
