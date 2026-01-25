@@ -301,7 +301,10 @@ func (c *CGI) startProcess() error {
 		zap.Strings("args", cmd.Args))
 
 	if err := cmd.Start(); err != nil {
-		// add error logging here AI!
+		c.logger.Error("failed to start proxy subprocess",
+			zap.String("executable", cmd.Path),
+			zap.Strings("args", cmd.Args),
+			zap.Error(err))
 		return err
 	}
 	c.process = cmd.Process
