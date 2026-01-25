@@ -1,7 +1,7 @@
 {
 	debug
 	admin unix//tmp/caddy.sock {
-		origins *
+		origins localhost
 	}
 	http_port 9080
 	https_port 9443
