@@ -311,20 +311,26 @@ func (c *CGI) startProcess() error {
 
 	exitChan := make(chan error, 1)
 	go func() {
-		// Drain stdout/stderr in background
-		go func() {
-			scanner := bufio.NewScanner(stdoutPipe)
-			for scanner.Scan() {
-				c.logger.Info("reverse proxy process stdout", zap.String("msg", scanner.Text()))
+		var wg sync.WaitGroup
+		drain := func(name string, pipe io.ReadCloser) {
+			defer wg.Done()
+			reader := bufio.NewReader(pipe)
+			for {
+				line, err := reader.ReadString('\n')
+				if len(line) > 0 {
+					c.logger.Info("reverse proxy process "+name, zap.String("msg", strings.TrimSuffix(line, "\n")))
+				}
+				if err != nil {
+					break
+				}
 			}
-		}()
-		go func() {
-			scanner := bufio.NewScanner(stderrPipe)
-			for scanner.Scan() {
-				c.logger.Info("reverse proxy process stderr", zap.String("msg", scanner.Text()))
-			}
-		}()
+		}
 
+		wg.Add(2)
+		go drain("stdout", stdoutPipe)
+		go drain("stderr", stderrPipe)
+
+		wg.Wait()
 		err := cmd.Wait()
 
 		c.mu.Lock()
