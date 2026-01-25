@@ -8,9 +8,13 @@ import socket
 import random
 
 class UnixHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, host, socket_path):
+        super().__init__(host)
+        self.socket_path = socket_path
+
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.connect("/tmp/caddy.sock")
+        self.sock.connect(self.socket_path)
 
 class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
     def do_HEAD(self):
@@ -86,14 +90,14 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
         }
         
         try:
-            conn = UnixHTTPConnection('localhost')
+            conn = UnixHTTPConnection('localhost', self.server.caddy_socket)
             conn.request(
                 "PUT",
                 "/config/apps/http/servers/srv0/routes/0",
                 body=json.dumps(subdomain_config).encode(),
                 headers={
                     'Content-Type': 'application/json',
-                    'Origin': 'http://localhost'
+                    'Origin': self.server.caddy_origin
                 }
             )
             resp = conn.getresponse()
@@ -112,14 +116,19 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(f"Failed to update Caddy: {e}".encode())
 
 def run():
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 4:
+        print("Usage: discover-app.py <port> <caddy_socket> <caddy_origin>")
         sys.exit(1)
     
     port_str = sys.argv[1].replace(':', '')
     port = int(port_str)
+    caddy_socket = sys.argv[2]
+    caddy_origin = sys.argv[3]
     
     server_address = ('', port)
     httpd = http.server.HTTPServer(server_address, DiscoveryHandler)
+    httpd.caddy_socket = caddy_socket
+    httpd.caddy_origin = caddy_origin
     httpd.serve_forever()
 
 if __name__ == "__main__":
