@@ -343,7 +343,7 @@ func (c *CGI) startProcess() error {
 		go func() {
 			err := cmd.Wait()
 			if err != nil {
-				c.logger.Debug("CGI process exited", zap.Error(err))
+				c.logger.Debug("proxy process exited", zap.Error(err))
 			}
 			exitChan <- err
 		}()
