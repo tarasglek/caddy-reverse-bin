@@ -90,7 +90,7 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
         }
         
         try:
-            conn = UnixHTTPConnection('localhost', self.server.caddy_socket)
+            conn = UnixHTTPConnection(self.server.caddy_origin, self.server.caddy_socket)
             conn.request(
                 "PUT",
                 "/config/apps/http/servers/srv0/routes/0",

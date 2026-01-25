@@ -22,7 +22,7 @@ http://python.{$DOMAIN:localhost} {
 
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	reverse-bin * /bin/sh -c "exec python3 discover-app.py :8002 /tmp/caddy.sock http://caddy-wants-origin-for-unix-socket" {
+	reverse-bin * /bin/sh -c "exec python3 discover-app.py :8002 /tmp/caddy.sock caddy-wants-origin-for-unix-socket" {
 		dir ./examples/reverse-proxy/apps/discover-app
 		mode proxy
 		reverse_proxy_to :8002
