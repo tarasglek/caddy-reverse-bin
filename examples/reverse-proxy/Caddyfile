@@ -13,7 +13,7 @@
 
 http://python.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	import cgi_proxy 8001
+	import subdomain_template 8001
 }
 
 http://*.{$DOMAIN:localhost} {
