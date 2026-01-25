@@ -92,8 +92,7 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
                 "/config/apps/http/servers/srv0/routes/0",
                 body=json.dumps(subdomain_config).encode(),
                 headers={
-                    'Content-Type': 'application/json',
-                    'Origin': 'http://localhost'
+                    'Content-Type': 'application/json'
                 }
             )
             resp = conn.getresponse()
