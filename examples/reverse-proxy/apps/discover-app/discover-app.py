@@ -63,7 +63,7 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
             return
 
         subdomain_config = {
-            "match": [{"host": [forwarded_host]}],
+            "match": [{"host": [host_only]}],
             "handle": [{
                 "handler": "reverse-bin",
                 "mode": "proxy",
