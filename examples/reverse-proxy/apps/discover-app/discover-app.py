@@ -44,8 +44,19 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
 
         # Update Caddy API to include subdomain path
         forwarded_host = self.headers.get('X-Forwarded-Host', self.headers.get('Host', ''))
-        subdomain = forwarded_host.split(':')[0].split('.')[0]
+        host_only = forwarded_host.split(':')[0]
+        parts = host_only.split('.')
         
+        # If host is 'sub.domain.tld', subdomain is 'sub'
+        # If host is 'localhost', there is no subdomain
+        subdomain = parts[0] if len(parts) > 1 else ""
+        
+        if not subdomain:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b"Could not determine subdomain from host")
+            return
+
         app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "subdomain"))
         subdomain_config = {
             "match": [{"host": [forwarded_host]}],
