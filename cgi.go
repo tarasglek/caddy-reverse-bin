@@ -15,7 +15,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-package cgi
+package reversebin
 
 import (
 	"bufio"
@@ -47,11 +47,11 @@ func passAll() (list []string) {
 	return
 }
 
-func (c *CGI) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	return c.serveProxy(w, r, next)
 }
 
-func (c *CGI) killProcessGroup() {
+func (c *ReverseBin) killProcessGroup() {
 	if c.process == nil {
 		return
 	}
@@ -73,7 +73,7 @@ func (iw instantWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (c *CGI) serveProxy(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+func (c *ReverseBin) serveProxy(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	c.mu.Lock()
 	if c.process == nil {
 		if err := c.startProcess(); err != nil {
@@ -118,7 +118,7 @@ func (c *CGI) serveProxy(w http.ResponseWriter, r *http.Request, next caddyhttp.
 	return c.reverseProxy.ServeHTTP(w, r, next)
 }
 
-func (c *CGI) startProcess() error {
+func (c *ReverseBin) startProcess() error {
 	cmd := exec.Command(c.Executable, c.Args...)
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

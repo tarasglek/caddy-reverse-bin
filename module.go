@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-package cgi
+package reversebin
 
 import (
 	"fmt"
@@ -34,7 +34,7 @@ import (
 )
 
 func init() {
-	caddy.RegisterModule(CGI{})
+	caddy.RegisterModule(ReverseBin{})
 	// RegisterHandlerDirective associates the "reverse-bin" directive in the Caddyfile
 	// with the parseCaddyfile function to create a CGI handler instance.
 	httpcaddyfile.RegisterHandlerDirective("reverse-bin", parseCaddyfile)
@@ -44,10 +44,10 @@ func init() {
 	httpcaddyfile.RegisterDirectiveOrder("reverse-bin", httpcaddyfile.Before, "respond")
 }
 
-// CGI implements a CGI handler that executes binary files following the
+// ReverseBin implements a CGI handler that executes binary files following the
 // CGI protocol, passing parameters via environment variables and evaluating
 // the response as the HTTP response.
-type CGI struct {
+type ReverseBin struct {
 	// Name of executable script or binary
 	Executable string `json:"executable"`
 	// Working directory (default, current Caddy working directory)
@@ -84,21 +84,21 @@ type CGI struct {
 
 // Interface guards
 var (
-	_ caddyhttp.MiddlewareHandler = (*CGI)(nil)
-	_ caddyfile.Unmarshaler       = (*CGI)(nil)
-	_ caddy.Provisioner           = (*CGI)(nil)
-	_ caddy.CleanerUpper          = (*CGI)(nil)
+	_ caddyhttp.MiddlewareHandler = (*ReverseBin)(nil)
+	_ caddyfile.Unmarshaler       = (*ReverseBin)(nil)
+	_ caddy.Provisioner           = (*ReverseBin)(nil)
+	_ caddy.CleanerUpper          = (*ReverseBin)(nil)
 )
 
-func (c CGI) CaddyModule() caddy.ModuleInfo {
+func (c ReverseBin) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.reverse-bin",
-		New: func() caddy.Module { return &CGI{} },
+		New: func() caddy.Module { return &ReverseBin{} },
 	}
 }
 
 // UnmarshalCaddyfile implements caddyfile.Unmarshaler.
-func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	// Consume 'em all. Matchers should be used to differentiate multiple instantiations.
 	// If they are not used, we simply combine them first-to-last.
 	for d.Next() {
@@ -148,7 +148,7 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return nil
 }
 
-func (c *CGI) Provision(ctx caddy.Context) error {
+func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.ctx = ctx
 	c.logger = ctx.Logger(c)
 
@@ -188,7 +188,7 @@ func (c *CGI) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-func (c *CGI) Cleanup() error {
+func (c *ReverseBin) Cleanup() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -208,7 +208,7 @@ func (c *CGI) Cleanup() error {
 
 // parseCaddyfile unmarshals tokens from h into a new Middleware.
 func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-	c := new(CGI)
+	c := new(ReverseBin)
 	err := c.UnmarshalCaddyfile(h.Dispenser)
 	return c, err
 }

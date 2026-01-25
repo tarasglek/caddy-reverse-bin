@@ -1,4 +1,4 @@
-package cgi
+package reversebin
 
 import (
 	"context"
@@ -16,7 +16,7 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
-func TestCGI_UnmarshalCaddyfile(t *testing.T) {
+func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 	content := `reverse-bin /some/file a b c d 1 {
   dir /somewhere
   env foo=bar what=ever
@@ -24,12 +24,12 @@ func TestCGI_UnmarshalCaddyfile(t *testing.T) {
   pass_all_env
 }`
 	d := caddyfile.NewTestDispenser(content)
-	var c CGI
+	var c ReverseBin
 	if err := c.UnmarshalCaddyfile(d); err != nil {
 		t.Fatalf("Cannot parse caddyfile: %v", err)
 	}
 
-	expected := CGI{
+	expected := ReverseBin{
 		Executable:       "/some/file",
 		WorkingDirectory: "/somewhere",
 		Args:             []string{"a", "b", "c", "d", "1"},
@@ -50,20 +50,20 @@ func (n NoOpNextHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
-func _TestCGI_ServeHTTPPost(t *testing.T) {
+func _TestReverseBin_ServeHTTPPost(t *testing.T) {
 	testSetup := []struct {
 		name         string
 		uri          string
 		method       string
 		requestBody  string
 		responseBody string
-		cgi          CGI
+		cgi          ReverseBin
 		statusCode   int
 		chunked      bool
 	}{
 		{
 			name: "POST Request",
-			cgi: CGI{
+			cgi: ReverseBin{
 				Executable: "test/example_post",
 				ScriptName: "/foo.cgi",
 				Args:       []string{"arg1", "arg2"},
@@ -97,7 +97,7 @@ this and that and also`,
 		},
 		{
 			name: "POST Request with chunked Transfer-Encoding In-Memory",
-			cgi: CGI{
+			cgi: ReverseBin{
 				Executable:  "test/example_post",
 				ScriptName:  "/foo.cgi",
 				Args:        []string{"arg1", "arg2"},
@@ -133,7 +133,7 @@ this and that and also`,
 		},
 		{
 			name: "POST Request with chunked Transfer-Encoding tempfile",
-			cgi: CGI{
+			cgi: ReverseBin{
 				Executable:  "test/example_post",
 				ScriptName:  "/foo.cgi",
 				Args:        []string{"arg1", "arg2"},

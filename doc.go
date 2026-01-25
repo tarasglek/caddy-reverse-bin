@@ -1,5 +1,5 @@
 /*
-Package cgi implements the common gateway interface (CGI) for Caddy 2, a
+Package reversebin implements the common gateway interface (CGI) for Caddy 2, a
 modern, full-featured, easy-to-use web server.
 
 It has been forked from the fantastic work of Kurt Jung who wrote that
@@ -416,4 +416,4 @@ When calling a url like /cgi/foo/bar.pl it will check if the local file
 ./app/foo/bar.pl exists and only then it will proceed with calling the
 CGI.
 */
-package cgi
+package reversebin

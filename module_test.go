@@ -1,4 +1,4 @@
-package cgi
+package reversebin
 
 import (
 	"github.com/caddyserver/caddy/v2/caddytest"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCGI_CaddyModule(t *testing.T) {
+func TestReverseBin_CaddyModule(t *testing.T) {
 	tester := caddytest.NewTester(t)
 	tester.InitServer(`
 	{
