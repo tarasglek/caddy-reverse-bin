@@ -115,7 +115,7 @@ Once the process is ready and the address is discovered:
 ### Configuration
 New Caddyfile subdirective:
 ```caddyfile
-cgi /path* ./binary {
+reverse-bin /path* ./binary {
     mode proxy
     port 8001
 }

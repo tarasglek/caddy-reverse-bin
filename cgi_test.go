@@ -113,7 +113,7 @@ Placeholders
 }
 
 func TestCGI_UnmarshalCaddyfile(t *testing.T) {
-	content := `cgi /some/file a b c d 1 {
+	content := `reverse-bin /some/file a b c d 1 {
   dir /somewhere
   script_name /my.cgi
   env foo=bar what=ever

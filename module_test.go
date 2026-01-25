@@ -17,7 +17,7 @@ func TestCGI_CaddyModule(t *testing.T) {
 		https_port    9443
 	}
 	localhost:9080 {
-		cgi /foo* ./test/example
+		reverse-bin /foo* ./test/example
 	}`, "caddyfile")
 
 	resp, err := tester.Client.Get("http://localhost:9080/foo/bar")
