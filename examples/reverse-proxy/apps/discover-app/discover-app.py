@@ -13,7 +13,7 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        with open('/tmp/access', 'a') as f: #log everything to this file...log nothing to stderr stdout AI!
+        with open('/tmp/access', 'a') as f:
             f.write(f"Request: {self.command} {self.path}\nHeaders:\n{self.headers}\n")
         
         # Find an available port
@@ -24,16 +24,13 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
             if p in tried_ports:
                 continue
             tried_ports.add(p)
-            print(f"Trying port: {p}")
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.bind(('', p))
                 port = s.getsockname()[1]
                 s.close()
-                print(f"Found available port: {port}")
                 break
             except socket.error:
-                print(f"Port {p} is busy")
                 continue
         
         if port is None:
@@ -86,7 +83,7 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
                 headers={'Content-Type': 'application/json'}
             )
             with urllib.request.urlopen(req) as f:
-                print(f"Caddy API response: {f.status}")
+                pass
             
             # Issue redirect after successful update
             self.send_response(302)
@@ -94,14 +91,12 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         except Exception as e:
-            print(f"Failed to update Caddy: {e}")
             self.send_response(500)
             self.end_headers()
             self.wfile.write(f"Failed to update Caddy: {e}".encode())
 
 def run():
     if len(sys.argv) < 2:
-        print("Usage: discover-app.py :<port>")
         sys.exit(1)
     
     port_str = sys.argv[1].replace(':', '')
@@ -109,7 +104,6 @@ def run():
     
     server_address = ('', port)
     httpd = http.server.HTTPServer(server_address, DiscoveryHandler)
-    print(f"Starting discovery server on port {port}...")
     httpd.serve_forever()
 
 if __name__ == "__main__":
