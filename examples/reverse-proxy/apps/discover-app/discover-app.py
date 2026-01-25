@@ -14,14 +14,17 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
         # Find an available port
         port = None
         for _ in range(10):
+            p = random.randint(10000, 60000)
+            print(f"Trying port: {p}")
             try:
-                p = random.randint(10000, 60000)
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.bind(('', p))
                 port = s.getsockname()[1]
                 s.close()
+                print(f"Found available port: {port}")
                 break
             except socket.error:
+                print(f"Port {p} is busy")
                 continue
         
         if port is None:
