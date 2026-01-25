@@ -64,6 +64,15 @@ HTTP Request
 ### 1. Process Lifecycle
 Instead of spawning a process for every HTTP request, the module manages a single persistent process that acts as an HTTP server.
 
+#### Auto-Discovery Mode
+A new `auto-discovery` mode allows for dynamic application provisioning in catch-all scenarios (e.g., wildcard domains).
+
+- **Trigger**: When a request hits a catch-all handler, the module checks if a directory corresponding to the hostname exists within a configured `appDir`.
+- **Validation**: If the directory does not exist, the handler returns a 404.
+- **Provisioning**: If the directory exists, the module executes a `discoveryBin`. This binary is responsible for generating a `reverse-bin-caddy.json` configuration file within the application directory.
+- **Integration**: Once generated, the module dynamically injects this configuration into the running Caddy instance.
+
+#### Managed Process Lifecycle
 - **Startup**: Triggered by the first incoming request if no process is currently running.
 - **Persistence**: The process remains running as long as it is handling at least one active request.
 - **Shutdown**: A 30-second idle timer is started when the active request count drops to zero. If a new request arrives before the timer expires, the timer is cancelled. Otherwise, the process is terminated.
@@ -118,5 +127,12 @@ New Caddyfile subdirective:
 reverse-bin /path* ./binary {
     mode proxy
     port 8001
+}
+
+# Auto-discovery example
+reverse-bin * {
+    mode auto-discovery
+    app_dir ./apps
+    discovery_bin /usr/local/bin/discover
 }
 ```
