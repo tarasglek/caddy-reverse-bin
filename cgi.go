@@ -350,7 +350,7 @@ func (c *CGI) startProcess() error {
 					readyChan <- checks
 					return
 				}
-				c.logger.Debug("readiness check failed",
+				c.logger.Info("readiness check failed",
 					zap.String("url", checkURL),
 					zap.Int("attempt", checks),
 					zap.Error(err))
@@ -370,6 +370,8 @@ func (c *CGI) startProcess() error {
 				zap.Int("checks", checks))
 		case err := <-exitChan:
 			c.process = nil
+			c.logger.Error("CGI process terminated unexpectedly during readiness check",
+				zap.Error(err))
 			return fmt.Errorf("CGI process terminated unexpectedly during readiness check: %v", err)
 		case <-time.After(30 * time.Second):
 			c.killProcessGroup()
