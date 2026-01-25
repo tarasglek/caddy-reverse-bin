@@ -19,8 +19,8 @@ http://python.{$DOMAIN:localhost} {
 
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	# change this to use ./discover-app and set cwd instead AI!
-	reverse-bin * /bin/sh -c "exec python3 ./apps/discover-app/discover-app.py :8002" {
+	reverse-bin * /bin/sh -c "exec python3 discover-app.py :8002" {
+		dir ./examples/reverse-proxy/apps/discover-app
 		mode proxy
 		reverse_proxy_to :8002
 		readiness_check HEAD /
