@@ -6,7 +6,7 @@
 (cgi_proxy) {
 	reverse-bin * /bin/sh -c "exec python3 -m http.server {args[0]}" {
 		mode proxy
-		port {args[0]}
+		reverse_proxy_to :{args[0]}
 		readiness_check HEAD /
 	}
 }

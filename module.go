@@ -73,8 +73,8 @@ type CGI struct {
 
 	// Mode of operation: "cgi" (default) or "proxy"
 	Mode string `json:"mode,omitempty"`
-	// Port to listen on (for proxy mode)
-	Port string `json:"port,omitempty"`
+	// Address to proxy to (for proxy mode)
+	ReverseProxyTo string `json:"reverse_proxy_to,omitempty"`
 	// Readiness check method (GET or HEAD)
 	ReadinessMethod string `json:"readinessMethod,omitempty"`
 	// Readiness check path
@@ -158,8 +158,8 @@ func (c *CGI) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				if !d.Args(&c.Mode) {
 					return d.ArgErr()
 				}
-			case "port":
-				if !d.Args(&c.Port) {
+			case "reverse_proxy_to":
+				if !d.Args(&c.ReverseProxyTo) {
 					return d.ArgErr()
 				}
 			case "readiness_check":
@@ -184,12 +184,21 @@ func (c *CGI) Provision(ctx caddy.Context) error {
 	}
 
 	if c.Mode == "proxy" {
-		if c.Port == "" {
-			return fmt.Errorf("port is required in proxy mode")
+		if c.ReverseProxyTo == "" {
+			return fmt.Errorf("reverse_proxy_to is required in proxy mode")
 		}
-		target, err := url.Parse("http://127.0.0.1:" + c.Port)
+
+		toAddr := c.ReverseProxyTo
+		if strings.HasPrefix(toAddr, ":") {
+			toAddr = "127.0.0.1" + toAddr
+		}
+		if !strings.HasPrefix(toAddr, "http://") && !strings.HasPrefix(toAddr, "https://") {
+			toAddr = "http://" + toAddr
+		}
+
+		target, err := url.Parse(toAddr)
 		if err != nil {
-			return fmt.Errorf("invalid port: %v", err)
+			return fmt.Errorf("invalid reverse_proxy_to address: %v", err)
 		}
 
 		rp := &reverseproxy.Handler{

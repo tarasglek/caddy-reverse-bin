@@ -81,8 +81,8 @@ A new `auto-discovery` mode allows for dynamic application provisioning in catch
 ### 2. Communication & Discovery
 The module and the managed process communicate via standard output or HTTP polling for initialization.
 
-- **Port Specification**: Users must specify a fixed port in the configuration using the `port` subdirective.
-- **Address Discovery**: By default, the module waits for the process to write a line to `stdout` containing the listening address (e.g., `127.0.0.1:8001`) to signal readiness.
+- **Address Specification**: Users must specify a target address in the configuration using the `reverse_proxy_to` subdirective (e.g., `:9000` or `http://localhost:9000`).
+- **Address Discovery**: By default, the module waits for the process to write a line to `stdout` containing the listening address to signal readiness.
 - **Readiness Check**: Alternatively, a `readiness_check` can be configured to poll the backend via HTTP (e.g., `readiness_check HEAD /`).
 - **Logging**: Subsequent output to `stdout` (after readiness) and all output to `stderr` is streamed directly to Caddy's logs.
 
@@ -97,7 +97,7 @@ New Caddyfile subdirective:
 ```caddyfile
 reverse-bin /path* ./binary {
     mode proxy
-    port 8001
+    reverse_proxy_to :8001
     readiness_check HEAD /
 }
 
