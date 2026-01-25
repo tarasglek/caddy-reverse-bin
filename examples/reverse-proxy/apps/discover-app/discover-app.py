@@ -69,7 +69,7 @@ class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
                 "mode": "proxy",
                 "workingDirectory": app_root,
                 "executable": "./main.py",
-                "args": ["--port", str(port)],
+                "args": [f"{port}"],
                 "reverse_proxy_to": f":{port}"
             }],
             "terminal": True
