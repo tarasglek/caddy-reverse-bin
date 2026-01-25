@@ -82,10 +82,10 @@ A new `auto-discovery` mode allows for dynamic application provisioning in catch
 The module and the managed process communicate via environment variables and standard output for initialization.
 
 - **LISTEN_HOST**: Caddy passes the configured address (e.g., `127.0.0.1:8001`) to the process via the `LISTEN_HOST` environment variable.
-- **Port Specification**: Users must specify a fixed port in the configuration.
-- **Address Discovery**: Not used. The proxy target is static based on the configuration.
-- **Readiness**: The process must write a line to `stdout` containing the listening address (e.g., `127.0.0.1:8001`) to signal that it is ready.
-- **Logging**: Subsequent output to `stdout` and all output to `stderr` is streamed directly to Caddy's logs.
+- **Port Specification**: Users must specify a fixed port in the configuration using the `port` subdirective.
+- **Address Discovery**: By default, the module waits for the process to write a line to `stdout` containing the listening address (e.g., `127.0.0.1:8001`) to signal readiness.
+- **Readiness Check**: Alternatively, a `readiness_check` can be configured to poll the backend via HTTP (e.g., `readiness_check HEAD /`).
+- **Logging**: Subsequent output to `stdout` (after readiness) and all output to `stderr` is streamed directly to Caddy's logs.
 
 ### 3. Request Handling
 Once the process is ready and the address is discovered:
@@ -99,6 +99,7 @@ New Caddyfile subdirective:
 reverse-bin /path* ./binary {
     mode proxy
     port 8001
+    readiness_check HEAD /
 }
 
 # Auto-discovery example
