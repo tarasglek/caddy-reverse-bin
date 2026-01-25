@@ -20,6 +20,7 @@ http://python.{$DOMAIN:localhost} {
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
 	reverse-bin * ./apps/discover-app/discover-app.py :8002 {
+		#use sh -c AI!
 		mode proxy
 		reverse_proxy_to :8002
 	}
