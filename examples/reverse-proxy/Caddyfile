@@ -1,7 +1,7 @@
 {
 	debug
 	admin unix//tmp/caddy.sock {
-		origins localhost
+		origins caddy-wants-origin-for-unix-socket
 	}
 	http_port 9080
 	https_port 9443
@@ -22,7 +22,7 @@ http://python.{$DOMAIN:localhost} {
 
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	reverse-bin * /bin/sh -c "exec python3 discover-app.py :8002 /tmp/caddy.sock http://localhost" {
+	reverse-bin * /bin/sh -c "exec python3 discover-app.py :8002 /tmp/caddy.sock http://caddy-wants-origin-for-unix-socket" {
 		dir ./examples/reverse-proxy/apps/discover-app
 		mode proxy
 		reverse_proxy_to :8002
