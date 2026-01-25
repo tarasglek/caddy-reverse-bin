@@ -1,0 +1,24 @@
+{
+	http_port 9080
+	https_port 9443
+}
+
+(cgi_proxy) {
+	reverse-bin * /bin/sh -c "exec python3 -m http.server {args[0]}" {
+		mode proxy
+		port {args[0]}
+		readiness_check HEAD /
+	}
+}
+
+http://python.{$DOMAIN:localhost} {
+	bind 0.0.0.0
+	import cgi_proxy 8001
+}
+
+# generate caddy json and include it
+http://*.{$DOMAIN:localhost} {
+	bind 0.0.0.0
+	header Content-Type "text/plain"
+	respond "unhandled {scheme}://{host}{uri}" 404
+}
