@@ -301,6 +301,7 @@ func (c *CGI) startProcess() error {
 		zap.Strings("args", cmd.Args))
 
 	if err := cmd.Start(); err != nil {
+		// add error logging here AI!
 		return err
 	}
 	c.process = cmd.Process
