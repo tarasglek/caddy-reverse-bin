@@ -5,16 +5,30 @@ import urllib.request
 import json
 import os
 import socket
+import random
 
 class DiscoveryHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         print(f"Request: {self.command} {self.path}")
         
         # Find an available port
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.bind(('', 0))
-        port = s.getsockname()[1]
-        s.close()
+        port = None
+        for _ in range(10):
+            try:
+                p = random.randint(10000, 60000)
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.bind(('', p))
+                port = s.getsockname()[1]
+                s.close()
+                break
+            except socket.error:
+                continue
+        
+        if port is None:
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(b"Could not find available port")
+            return
 
         # Update Caddy API to include subdomain path
         app_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "subdomain"))
