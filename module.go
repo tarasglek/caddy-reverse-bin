@@ -188,6 +188,10 @@ func (c *CGI) Provision(ctx caddy.Context) error {
 			return fmt.Errorf("reverse_proxy_to is required in proxy mode")
 		}
 
+		if c.ReadinessMethod == "" {
+			c.ReadinessMethod = "GET"
+		}
+
 		toAddr := c.ReverseProxyTo
 		if strings.HasPrefix(toAddr, ":") {
 			toAddr = "127.0.0.1" + toAddr
