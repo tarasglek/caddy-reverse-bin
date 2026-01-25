@@ -258,6 +258,10 @@ func (c *CGI) serveProxy(w http.ResponseWriter, r *http.Request, next caddyhttp.
 		}
 	}()
 
+	if c.reverseProxy == nil {
+		return fmt.Errorf("reverse proxy not initialized")
+	}
+
 	return c.reverseProxy.ServeHTTP(w, r, next)
 }
 
