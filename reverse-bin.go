@@ -87,6 +87,7 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 // ensures process is running before returning the upstream address to the proxy.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
 	var overrides *proxyOverrides
+	// move this override stuff into startProcess and make it take no args and just return overrides struct from it AI!
 	if c.DynamicProxyDetector != "" {
 		detectorCmd := exec.Command(c.DynamicProxyDetector, r.URL.String())
 		output, err := detectorCmd.Output()
