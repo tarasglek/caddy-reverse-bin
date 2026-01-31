@@ -19,6 +19,6 @@ http://python.{$DOMAIN:localhost} {
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
 	reverse-bin * {
-		dynamic_proxy_detector ./site-detector.sh {http.request.host.labels.1}
+		dynamic_proxy_detector "examples/reverse-proxy/apps/discover-app/discover-app.py" {http.request.host.labels.1}
 	}
 }
