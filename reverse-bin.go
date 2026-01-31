@@ -49,11 +49,7 @@ func passAll() (list []string) {
 }
 
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	// this module only supports proxy mode so get rid of this config settings and all related ifs AI!
-	if c.Mode == "proxy" {
-		return c.serveProxy(w, r, next)
-	}
-	return next.ServeHTTP(w, r)
+	return c.serveProxy(w, r, next)
 }
 
 // GetUpstreams implements reverseproxy.UpstreamSource.
