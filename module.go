@@ -93,7 +93,8 @@ func (c ReverseBin) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// UnmarshalCaddyfile implements caddyfile.Unmarshaler.
+// UnmarshalCaddyfile implements caddyfile.Unmarshaler; it parses the
+// reverse-bin directive and its subdirectives from the Caddyfile.
 func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	// Consume 'em all. Matchers should be used to differentiate multiple instantiations.
 	// If they are not used, we simply combine them first-to-last.
@@ -140,6 +141,8 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	return nil
 }
 
+// Provision implements caddy.Provisioner; it sets up the module's
+// internal state and provisions the underlying reverse proxy handler.
 func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.ctx = ctx
 	c.logger = ctx.Logger(c)
@@ -163,6 +166,8 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	return nil
 }
 
+// Cleanup implements caddy.CleanerUpper; it ensures that any running
+// backend process is terminated when the module is unloaded.
 func (c *ReverseBin) Cleanup() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

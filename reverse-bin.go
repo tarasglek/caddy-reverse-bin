@@ -48,9 +48,38 @@ func passAll() (list []string) {
 	return
 }
 
-// comment all caddy interfaces with tldr on what they do in caddy AI!
+// ServeHTTP implements caddyhttp.MiddlewareHandler; it handles the HTTP request
+// by ensuring the backend process is running and then proxying the request to it.
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	return c.serveProxy(w, r, next) //inline serveProxy and rid of AI!
+	c.mu.Lock()
+	c.activeRequests++
+	c.logger.Debug("incremented active requests", zap.Int64("count", c.activeRequests))
+	c.mu.Unlock()
+
+	defer func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		c.activeRequests--
+		c.logger.Debug("decremented active requests", zap.Int64("count", c.activeRequests))
+		if c.activeRequests == 0 {
+			c.idleTimer = time.AfterFunc(30*time.Second, func() {
+				c.mu.Lock()
+				defer c.mu.Unlock()
+				if c.activeRequests == 0 && c.process != nil {
+					c.terminationMsg = "idle timeout"
+					c.killProcessGroup()
+					c.process = nil
+				}
+			})
+		}
+	}()
+
+	if c.reverseProxy == nil {
+		return fmt.Errorf("reverse proxy not initialized")
+	}
+
+	return c.reverseProxy.ServeHTTP(w, r, next)
 }
 
 // GetUpstreams implements reverseproxy.UpstreamSource.
@@ -110,37 +139,6 @@ func (iw instantWriter) Write(b []byte) (int, error) {
 	return n, err
 }
 
-func (c *ReverseBin) serveProxy(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	c.mu.Lock()
-	c.activeRequests++
-	c.logger.Debug("incremented active requests", zap.Int64("count", c.activeRequests))
-	c.mu.Unlock()
-
-	defer func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-
-		c.activeRequests--
-		c.logger.Debug("decremented active requests", zap.Int64("count", c.activeRequests))
-		if c.activeRequests == 0 {
-			c.idleTimer = time.AfterFunc(30*time.Second, func() {
-				c.mu.Lock()
-				defer c.mu.Unlock()
-				if c.activeRequests == 0 && c.process != nil {
-					c.terminationMsg = "idle timeout"
-					c.killProcessGroup()
-					c.process = nil
-				}
-			})
-		}
-	}()
-
-	if c.reverseProxy == nil {
-		return fmt.Errorf("reverse proxy not initialized")
-	}
-
-	return c.reverseProxy.ServeHTTP(w, r, next)
-}
 
 func (c *ReverseBin) startProcess() error {
 	cmd := exec.Command(c.Executable, c.Args...)
