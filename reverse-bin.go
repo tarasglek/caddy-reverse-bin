@@ -130,15 +130,6 @@ func (c *ReverseBin) killProcessGroup() {
 	}
 }
 
-type instantWriter struct {
-	http.ResponseWriter
-}
-
-func (iw instantWriter) Write(b []byte) (int, error) {
-	n, err := iw.ResponseWriter.Write(b)
-	iw.ResponseWriter.(http.Flusher).Flush()
-	return n, err
-}
 
 func (c *ReverseBin) startProcess() error {
 	cmd := exec.Command(c.Executable, c.Args...)
