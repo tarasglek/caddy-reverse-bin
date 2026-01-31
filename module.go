@@ -175,9 +175,7 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 		}
 
 		rp := &reverseproxy.Handler{
-			Upstreams: reverseproxy.UpstreamPool{
-				{Dial: target.Host},
-			},
+			DynamicUpstreams: c,
 		}
 		if err := rp.Provision(ctx); err != nil {
 			return fmt.Errorf("failed to provision reverse proxy: %v", err)
