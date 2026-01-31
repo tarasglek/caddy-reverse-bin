@@ -139,7 +139,7 @@ func (c *ReverseBin) killProcessGroup() {
 }
 
 type proxyOverrides struct {
-	Executable       *string   `json:"executable"`
+	Executable       *[]string `json:"executable"`
 	WorkingDirectory *string   `json:"working_directory"`
 	Args             *[]string `json:"args"`
 	Envs             *[]string `json:"envs"`
@@ -171,11 +171,20 @@ func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
 			return nil, fmt.Errorf("failed to unmarshal detector output: %v", err)
 		}
 	}
-	if overrides.Executable == nil {
-		overrides.Executable = &c.Executable
+	var execPath string
+	var execArgs []string
+
+	if overrides.Executable != nil && len(*overrides.Executable) > 0 {
+		execPath = (*overrides.Executable)[0]
+		execArgs = (*overrides.Executable)[1:]
+	} else {
+		execPath = c.Executable
 	}
-	if overrides.Args == nil {
-		overrides.Args = &c.Args
+
+	if overrides.Args != nil {
+		execArgs = append(execArgs, *overrides.Args...)
+	} else if overrides.Executable == nil {
+		execArgs = append(execArgs, c.Args...)
 	}
 	if overrides.WorkingDirectory == nil {
 		overrides.WorkingDirectory = &c.WorkingDirectory
@@ -193,7 +202,7 @@ func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
 		overrides.ReadinessPath = &c.ReadinessPath
 	}
 
-	cmd := exec.Command(*overrides.Executable, *overrides.Args...)
+	cmd := exec.Command(execPath, execArgs...)
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
