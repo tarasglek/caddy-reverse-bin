@@ -149,8 +149,14 @@ type proxyOverrides struct {
 
 func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
 	overrides := new(proxyOverrides)
-	if c.DynamicProxyDetector != "" {
-		detectorCmd := exec.Command(c.DynamicProxyDetector, r.URL.String())
+	if len(c.DynamicProxyDetector) > 0 {
+		repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+		args := make([]string, len(c.DynamicProxyDetector))
+		for i, arg := range c.DynamicProxyDetector {
+			args[i] = repl.ReplaceAll(arg, "")
+		}
+
+		detectorCmd := exec.Command(args[0], args[1:]...)
 		output, err := detectorCmd.Output()
 		if err != nil {
 			return nil, fmt.Errorf("dynamic proxy detector failed: %v", err)
