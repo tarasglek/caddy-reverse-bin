@@ -154,12 +154,14 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.ctx = ctx
 	c.logger = ctx.Logger(c)
 
-	if c.Executable == "" {
-		return fmt.Errorf("exec (executable) is required")
-	}
+	if c.DynamicProxyDetector == "" {
+		if c.Executable == "" {
+			return fmt.Errorf("exec (executable) is required when dynamic_proxy_detector is not set")
+		}
 
-	if c.ReverseProxyTo == "" {
-		return fmt.Errorf("reverse_proxy_to is required")
+		if c.ReverseProxyTo == "" {
+			return fmt.Errorf("reverse_proxy_to is required when dynamic_proxy_detector is not set")
+		}
 	}
 
 	if c.ReadinessMethod == "" {
