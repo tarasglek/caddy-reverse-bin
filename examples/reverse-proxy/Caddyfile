@@ -9,7 +9,6 @@
 
 (cgi_proxy) {
 	reverse-bin * /bin/sh -c "exec python3 -m http.server {args[0]}" {
-		mode proxy
 		reverse_proxy_to :{args[0]}
 		readiness_check HEAD /
 	}
@@ -24,7 +23,6 @@ http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
 	reverse-bin * /bin/sh -c "exec python3 discover-app.py :8002 /tmp/caddy.sock caddy-wants-origin-for-unix-socket" {
 		dir ./examples/reverse-proxy/apps/discover-app
-		mode proxy
 		reverse_proxy_to :8002
 		readiness_check HEAD /
 	}
