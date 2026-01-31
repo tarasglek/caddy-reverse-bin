@@ -16,7 +16,7 @@
 
 http://python.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	import cgi_proxy 8001
+	import cgi_proxy 8001 // inline and get rid of cgi_proxy AI!
 }
 
 http://*.{$DOMAIN:localhost} {
