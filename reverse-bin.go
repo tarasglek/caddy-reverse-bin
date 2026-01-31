@@ -48,8 +48,9 @@ func passAll() (list []string) {
 	return
 }
 
+// comment all caddy interfaces with tldr on what they do in caddy AI!
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	return c.serveProxy(w, r, next)
+	return c.serveProxy(w, r, next) //inline serveProxy and rid of AI!
 }
 
 // GetUpstreams implements reverseproxy.UpstreamSource.
