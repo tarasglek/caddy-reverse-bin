@@ -51,6 +51,26 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 	return c.serveProxy(w, r, next)
 }
 
+// GetUpstreams implements reverseproxy.UpstreamSource.
+func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
+	toAddr := c.ReverseProxyTo
+	if strings.HasPrefix(toAddr, ":") {
+		toAddr = "127.0.0.1" + toAddr
+	}
+	if !strings.HasPrefix(toAddr, "http://") && !strings.HasPrefix(toAddr, "https://") {
+		toAddr = "http://" + toAddr
+	}
+
+	target, err := url.Parse(toAddr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid reverse_proxy_to address: %v", err)
+	}
+
+	return []*reverseproxy.Upstream{
+		{Dial: target.Host},
+	}, nil
+}
+
 func (c *ReverseBin) killProcessGroup() {
 	if c.process == nil {
 		return
