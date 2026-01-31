@@ -82,8 +82,8 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 	return c.reverseProxy.ServeHTTP(w, r, next)
 }
 
-// GetUpstreams implements reverseproxy.UpstreamSource.
-// no this ensures backend process is running...above one only kills it on idle AI!
+// GetUpstreams implements reverseproxy.UpstreamSource; it ensures the backend
+// process is running before returning the upstream address to the proxy.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
 	c.mu.Lock()
 	if c.process == nil {
