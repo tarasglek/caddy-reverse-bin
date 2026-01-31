@@ -157,6 +157,10 @@ func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
 			args[i] = repl.ReplaceAll(arg, "")
 		}
 
+		c.logger.Debug("running dynamic proxy detector",
+			zap.String("command", args[0]),
+			zap.Strings("args", args[1:]))
+
 		detectorCmd := exec.Command(args[0], args[1:]...)
 		output, err := detectorCmd.Output()
 		if err != nil {
