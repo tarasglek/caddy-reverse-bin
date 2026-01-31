@@ -49,11 +49,29 @@ func passAll() (list []string) {
 }
 
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	return c.serveProxy(w, r, next)
+	if c.Mode == "proxy" {
+		return c.serveProxy(w, r, next)
+	}
+	return next.ServeHTTP(w, r)
 }
 
 // GetUpstreams implements reverseproxy.UpstreamSource.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
+	c.mu.Lock()
+	if c.process == nil {
+		if err := c.startProcess(); err != nil {
+			c.mu.Unlock()
+			return nil, err
+		}
+	}
+
+	// Stop idle timer if running
+	if c.idleTimer != nil {
+		c.idleTimer.Stop()
+		c.idleTimer = nil
+	}
+	c.mu.Unlock()
+
 	toAddr := c.ReverseProxyTo
 	if strings.HasPrefix(toAddr, ":") {
 		toAddr = "127.0.0.1" + toAddr
@@ -96,19 +114,6 @@ func (iw instantWriter) Write(b []byte) (int, error) {
 
 func (c *ReverseBin) serveProxy(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	c.mu.Lock()
-	if c.process == nil {
-		if err := c.startProcess(); err != nil {
-			c.mu.Unlock()
-			return err
-		}
-	}
-
-	// Stop idle timer if running
-	if c.idleTimer != nil {
-		c.idleTimer.Stop()
-		c.idleTimer = nil
-	}
-
 	c.activeRequests++
 	c.logger.Debug("incremented active requests", zap.Int64("count", c.activeRequests))
 	c.mu.Unlock()
