@@ -49,7 +49,7 @@ func passAll() (list []string) {
 }
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler; it handles the HTTP request
-// by ensuring the backend process is running and then proxying the request to it.
+// manages idle process killing
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	c.mu.Lock()
 	c.activeRequests++
@@ -82,8 +82,8 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 	return c.reverseProxy.ServeHTTP(w, r, next)
 }
 
-// GetUpstreams implements reverseproxy.UpstreamSource; it ensures the backend
-// process is running before returning the upstream address to the proxy.
+// GetUpstreams implements reverseproxy.UpstreamSource which allows dynamic selection of backend process
+// ensures process is running before returning the upstream address to the proxy.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
 	c.mu.Lock()
 	if c.process == nil {
