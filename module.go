@@ -59,8 +59,6 @@ type ReverseBin struct {
 	// True to pass all environment variables to CGI executable
 	PassAll bool `json:"passAllEnvs,omitempty"`
 
-	// Mode of operation: "cgi" (default) or "proxy"
-	Mode string `json:"mode,omitempty"`
 	// Address to proxy to (for proxy mode)
 	ReverseProxyTo string `json:"reverse_proxy_to,omitempty"`
 	// Readiness check method (GET or HEAD)
@@ -125,10 +123,6 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				}
 			case "pass_all_env":
 				c.PassAll = true
-			case "mode":
-				if !d.Args(&c.Mode) {
-					return d.ArgErr()
-				}
 			case "reverse_proxy_to":
 				if !d.Args(&c.ReverseProxyTo) {
 					return d.ArgErr()
@@ -150,31 +144,21 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.ctx = ctx
 	c.logger = ctx.Logger(c)
 
-	if c.Mode == "proxy" {
-		if c.ReverseProxyTo == "" {
-			return fmt.Errorf("reverse_proxy_to is required in proxy mode")
-		}
-
-		if c.ReadinessMethod == "" {
-			c.ReadinessMethod = "GET"
-		}
-
-		toAddr := c.ReverseProxyTo
-		if strings.HasPrefix(toAddr, ":") {
-			toAddr = "127.0.0.1" + toAddr
-		}
-		if !strings.HasPrefix(toAddr, "http://") && !strings.HasPrefix(toAddr, "https://") {
-			toAddr = "http://" + toAddr
-		}
-
-		rp := &reverseproxy.Handler{
-			DynamicUpstreams: c,
-		}
-		if err := rp.Provision(ctx); err != nil {
-			return fmt.Errorf("failed to provision reverse proxy: %v", err)
-		}
-		c.reverseProxy = rp
+	if c.ReverseProxyTo == "" {
+		return fmt.Errorf("reverse_proxy_to is required")
 	}
+
+	if c.ReadinessMethod == "" {
+		c.ReadinessMethod = "GET"
+	}
+
+	rp := &reverseproxy.Handler{
+		DynamicUpstreams: c,
+	}
+	if err := rp.Provision(ctx); err != nil {
+		return fmt.Errorf("failed to provision reverse proxy: %v", err)
+	}
+	c.reverseProxy = rp
 
 	return nil
 }
