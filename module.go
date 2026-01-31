@@ -69,15 +69,22 @@ type ReverseBin struct {
 	DynamicProxyDetector []string `json:"dynamic_proxy_detector,omitempty"`
 
 	// Internal state for proxy mode
+	processes map[string]*processState
+	mu        sync.Mutex
+
+	reverseProxy *reverseproxy.Handler
+	ctx          caddy.Context
+
+	logger *zap.Logger
+}
+
+type processState struct {
 	process        *os.Process
 	activeRequests int64
 	idleTimer      *time.Timer
 	terminationMsg string
+	overrides      *proxyOverrides
 	mu             sync.Mutex
-	reverseProxy   *reverseproxy.Handler
-	ctx            caddy.Context
-
-	logger *zap.Logger
 }
 
 // Interface guards
@@ -154,6 +161,7 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.ctx = ctx
 	c.logger = ctx.Logger(c)
+	c.processes = make(map[string]*processState)
 
 	if len(c.DynamicProxyDetector) == 0 {
 		if c.Executable == "" {
@@ -186,15 +194,18 @@ func (c *ReverseBin) Cleanup() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.idleTimer != nil {
-		c.idleTimer.Stop()
-		c.idleTimer = nil
-	}
-
-	if c.process != nil {
-		c.logger.Info("cleaning up proxy subprocess", zap.Int("pid", c.process.Pid))
-		c.killProcessGroup()
-		c.process = nil
+	for _, ps := range c.processes {
+		ps.mu.Lock()
+		if ps.idleTimer != nil {
+			ps.idleTimer.Stop()
+			ps.idleTimer = nil
+		}
+		if ps.process != nil {
+			c.logger.Info("cleaning up proxy subprocess", zap.Int("pid", ps.process.Pid))
+			c.killProcessGroup(ps.process)
+			ps.process = nil
+		}
+		ps.mu.Unlock()
 	}
 
 	return nil
