@@ -53,29 +53,36 @@ func passAll() (list []string) {
 // ServeHTTP implements caddyhttp.MiddlewareHandler; it handles the HTTP request
 // manages idle process killing
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	key := c.getProcessKey(r)
 	c.mu.Lock()
-	c.activeRequests++
-	c.logger.Debug("incremented active requests", zap.Int64("count", c.activeRequests))
+	ps, ok := c.processes[key]
 	c.mu.Unlock()
 
-	defer func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
+	if ok {
+		ps.mu.Lock()
+		ps.activeRequests++
+		c.logger.Debug("incremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
+		ps.mu.Unlock()
 
-		c.activeRequests--
-		c.logger.Debug("decremented active requests", zap.Int64("count", c.activeRequests))
-		if c.activeRequests == 0 {
-			c.idleTimer = time.AfterFunc(30*time.Second, func() {
-				c.mu.Lock()
-				defer c.mu.Unlock()
-				if c.activeRequests == 0 && c.process != nil {
-					c.terminationMsg = "idle timeout"
-					c.killProcessGroup()
-					c.process = nil
-				}
-			})
-		}
-	}()
+		defer func() {
+			ps.mu.Lock()
+			defer ps.mu.Unlock()
+
+			ps.activeRequests--
+			c.logger.Debug("decremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
+			if ps.activeRequests == 0 {
+				ps.idleTimer = time.AfterFunc(30*time.Second, func() {
+					ps.mu.Lock()
+					defer ps.mu.Unlock()
+					if ps.activeRequests == 0 && ps.process != nil {
+						ps.terminationMsg = "idle timeout"
+						c.killProcessGroup(ps.process)
+						ps.process = nil
+					}
+				})
+			}
+		}()
+	}
 
 	if c.reverseProxy == nil {
 		return fmt.Errorf("reverse proxy not initialized")
@@ -84,26 +91,50 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 	return c.reverseProxy.ServeHTTP(w, r, next)
 }
 
+func (c *ReverseBin) getProcessKey(r *http.Request) string {
+	if len(c.DynamicProxyDetector) == 0 {
+		return ""
+	}
+	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+	var sb strings.Builder
+	for i, arg := range c.DynamicProxyDetector {
+		if i > 0 {
+			sb.WriteByte(' ')
+		}
+		sb.WriteString(repl.ReplaceAll(arg, ""))
+	}
+	return sb.String()
+}
+
 // GetUpstreams implements reverseproxy.UpstreamSource which allows dynamic selection of backend process
 // ensures process is running before returning the upstream address to the proxy.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
+	key := c.getProcessKey(r)
 	c.mu.Lock()
-	var overrides *proxyOverrides
-	if c.process == nil {
-		var err error
-		overrides, err = c.startProcess(r)
+	ps, ok := c.processes[key]
+	if !ok {
+		ps = &processState{}
+		c.processes[key] = ps
+	}
+	c.mu.Unlock()
+
+	ps.mu.Lock()
+	if ps.process == nil {
+		overrides, err := c.startProcess(r, ps, key)
 		if err != nil {
-			c.mu.Unlock()
+			ps.mu.Unlock()
 			return nil, err
 		}
+		ps.overrides = overrides
 	}
 
 	// Stop idle timer if running
-	if c.idleTimer != nil {
-		c.idleTimer.Stop()
-		c.idleTimer = nil
+	if ps.idleTimer != nil {
+		ps.idleTimer.Stop()
+		ps.idleTimer = nil
 	}
-	c.mu.Unlock()
+	overrides := ps.overrides
+	ps.mu.Unlock()
 
 	toAddr := c.ReverseProxyTo
 	if overrides != nil && overrides.ReverseProxyTo != nil {
@@ -126,15 +157,15 @@ func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, er
 	}, nil
 }
 
-func (c *ReverseBin) killProcessGroup() {
-	if c.process == nil {
+func (c *ReverseBin) killProcessGroup(proc *os.Process) {
+	if proc == nil {
 		return
 	}
 	if runtime.GOOS != "windows" {
 		// Kill the process group
-		syscall.Kill(-c.process.Pid, syscall.SIGKILL)
+		syscall.Kill(-proc.Pid, syscall.SIGKILL)
 	} else {
-		c.process.Kill()
+		proc.Kill()
 	}
 }
 
@@ -148,14 +179,10 @@ type proxyOverrides struct {
 	ReadinessPath    *string   `json:"readiness_path"`
 }
 
-func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
+func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string) (*proxyOverrides, error) {
 	overrides := new(proxyOverrides)
 	if len(c.DynamicProxyDetector) > 0 {
-		repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
-		args := make([]string, len(c.DynamicProxyDetector))
-		for i, arg := range c.DynamicProxyDetector {
-			args[i] = repl.ReplaceAll(arg, "")
-		}
+		args := strings.Split(key, " ")
 
 		c.logger.Debug("running dynamic proxy detector",
 			zap.String("command", args[0]),
@@ -246,7 +273,7 @@ func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
 			zap.Error(err))
 		return nil, err
 	}
-	c.process = cmd.Process
+	ps.process = cmd.Process
 
 	exitChan := make(chan error, 1)
 	go func() {
@@ -272,16 +299,16 @@ func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
 		wg.Wait()
 		err := cmd.Wait()
 
-		c.mu.Lock()
-		reason := c.terminationMsg
+		ps.mu.Lock()
+		reason := ps.terminationMsg
 		if reason == "" {
 			reason = "unexpected exit"
 		}
-		c.terminationMsg = ""
-		if c.process == cmd.Process {
-			c.process = nil
+		ps.terminationMsg = ""
+		if ps.process == cmd.Process {
+			ps.process = nil
 		}
-		c.mu.Unlock()
+		ps.mu.Unlock()
 
 		c.logger.Info("proxy subprocess terminated",
 			zap.String("executable", cmd.Path),
@@ -344,7 +371,7 @@ func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
 	case err := <-exitChan:
 		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v", err)
 	case <-time.After(10 * time.Second):
-		c.killProcessGroup()
+		c.killProcessGroup(ps.process)
 		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness")
 	}
 }
