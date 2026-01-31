@@ -145,7 +145,6 @@ func (c *ReverseBin) killProcessGroup() {
 	}
 }
 
-
 type proxyOverrides struct {
 	Executable       *string   `json:"executable"`
 	WorkingDirectory *string   `json:"working_directory"`
@@ -157,6 +156,7 @@ type proxyOverrides struct {
 }
 
 func (c *ReverseBin) startProcess(overrides *proxyOverrides) error {
+	// no get rid of this duplication..just fill in nil fields directly in  proxyOverrides AI!
 	executable := c.Executable
 	args := c.Args
 	workingDir := c.WorkingDirectory
