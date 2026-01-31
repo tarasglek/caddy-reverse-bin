@@ -29,7 +29,6 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
-	"github.com/dustin/go-humanize"
 	"go.uber.org/zap"
 )
 
@@ -167,11 +166,6 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 		}
 		if !strings.HasPrefix(toAddr, "http://") && !strings.HasPrefix(toAddr, "https://") {
 			toAddr = "http://" + toAddr
-		}
-
-		target, err := url.Parse(toAddr)
-		if err != nil {
-			return fmt.Errorf("invalid reverse_proxy_to address: %v", err)
 		}
 
 		rp := &reverseproxy.Handler{
