@@ -19,6 +19,7 @@ package reversebin
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -85,6 +86,52 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 // GetUpstreams implements reverseproxy.UpstreamSource which allows dynamic selection of backend process
 // ensures process is running before returning the upstream address to the proxy.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
+	if c.DynamicProxyDetector != "" {
+		detectorCmd := exec.Command(c.DynamicProxyDetector, r.URL.String())
+		output, err := detectorCmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("dynamic proxy detector failed: %v", err)
+		}
+
+		var overrides struct {
+			Executable       *string   `json:"executable"`
+			WorkingDirectory *string   `json:"working_directory"`
+			Args             *[]string `json:"args"`
+			Envs             *[]string `json:"envs"`
+			ReverseProxyTo   *string   `json:"reverse_proxy_to"`
+			ReadinessMethod  *string   `json:"readiness_method"`
+			ReadinessPath    *string   `json:"readiness_path"`
+		}
+
+		if err := json.Unmarshal(output, &overrides); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal detector output: %v", err)
+		}
+
+		c.mu.Lock()
+		if overrides.Executable != nil {
+			c.Executable = *overrides.Executable
+		}
+		if overrides.WorkingDirectory != nil {
+			c.WorkingDirectory = *overrides.WorkingDirectory
+		}
+		if overrides.Args != nil {
+			c.Args = *overrides.Args
+		}
+		if overrides.Envs != nil {
+			c.Envs = *overrides.Envs
+		}
+		if overrides.ReverseProxyTo != nil {
+			c.ReverseProxyTo = *overrides.ReverseProxyTo
+		}
+		if overrides.ReadinessMethod != nil {
+			c.ReadinessMethod = *overrides.ReadinessMethod
+		}
+		if overrides.ReadinessPath != nil {
+			c.ReadinessPath = *overrides.ReadinessPath
+		}
+		c.mu.Unlock()
+	}
+
 	c.mu.Lock()
 	if c.process == nil {
 		if err := c.startProcess(); err != nil {

@@ -65,6 +65,8 @@ type ReverseBin struct {
 	ReadinessMethod string `json:"readinessMethod,omitempty"`
 	// Readiness check path
 	ReadinessPath string `json:"readinessPath,omitempty"`
+	// Binary to run to determine proxy parameters dynamically
+	DynamicProxyDetector string `json:"dynamic_proxy_detector,omitempty"`
 
 	// Internal state for proxy mode
 	process        *os.Process
@@ -133,6 +135,10 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 				c.ReadinessMethod = strings.ToUpper(c.ReadinessMethod)
+			case "dynamic_proxy_detector":
+				if !d.Args(&c.DynamicProxyDetector) {
+					return d.ArgErr()
+				}
 			default:
 				return d.Errf("unknown subdirective: %q", d.Val())
 			}
