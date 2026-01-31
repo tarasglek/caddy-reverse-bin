@@ -31,7 +31,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 	"go.uber.org/zap"
@@ -227,6 +226,7 @@ func (c *ReverseBin) startProcess() error {
 	}()
 
 	// Readiness check
+	// might be able to use caddy health check here instead https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#active-health-checks
 	expected := c.ReverseProxyTo
 	if strings.HasPrefix(expected, ":") {
 		expected = "127.0.0.1" + expected
