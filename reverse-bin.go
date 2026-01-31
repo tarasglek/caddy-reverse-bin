@@ -206,11 +206,11 @@ func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	c.logger.Info("starting proxy subprocess",

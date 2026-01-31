@@ -101,6 +101,7 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	// Consume 'em all. Matchers should be used to differentiate multiple instantiations.
 	// If they are not used, we simply combine them first-to-last.
 	for d.Next() {
+		d.RemainingArgs() // consume matcher if present
 		for d.NextBlock(0) {
 			switch d.Val() {
 			case "exec":
