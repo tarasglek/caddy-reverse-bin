@@ -4,7 +4,9 @@ import sys
 import os
 
 working_dir = sys.argv[1] if len(sys.argv) > 1 else "."
-os.makedirs(working_dir, exist_ok=True)
+if not os.path.isdir(working_dir):
+    print(f"Error: directory {working_dir} does not exist", file=sys.stderr)
+    sys.exit(1)
 
 print(
     json.dumps(
