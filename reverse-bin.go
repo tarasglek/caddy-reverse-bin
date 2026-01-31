@@ -86,24 +86,12 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 // GetUpstreams implements reverseproxy.UpstreamSource which allows dynamic selection of backend process
 // ensures process is running before returning the upstream address to the proxy.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
-	var overrides *proxyOverrides
-	// move this override stuff into startProcess and make it take no args and just return overrides struct from it AI!
-	if c.DynamicProxyDetector != "" {
-		detectorCmd := exec.Command(c.DynamicProxyDetector, r.URL.String())
-		output, err := detectorCmd.Output()
-		if err != nil {
-			return nil, fmt.Errorf("dynamic proxy detector failed: %v", err)
-		}
-
-		overrides = new(proxyOverrides)
-		if err := json.Unmarshal(output, overrides); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal detector output: %v", err)
-		}
-	}
-
 	c.mu.Lock()
+	var overrides *proxyOverrides
 	if c.process == nil {
-		if err := c.startProcess(overrides); err != nil {
+		var err error
+		overrides, err = c.startProcess(r)
+		if err != nil {
 			c.mu.Unlock()
 			return nil, err
 		}
@@ -156,9 +144,18 @@ type proxyOverrides struct {
 	ReadinessPath    *string   `json:"readiness_path"`
 }
 
-func (c *ReverseBin) startProcess(overrides *proxyOverrides) error {
-	if overrides == nil {
-		overrides = new(proxyOverrides)
+func (c *ReverseBin) startProcess(r *http.Request) (*proxyOverrides, error) {
+	overrides := new(proxyOverrides)
+	if c.DynamicProxyDetector != "" {
+		detectorCmd := exec.Command(c.DynamicProxyDetector, r.URL.String())
+		output, err := detectorCmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("dynamic proxy detector failed: %v", err)
+		}
+
+		if err := json.Unmarshal(output, overrides); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal detector output: %v", err)
+		}
 	}
 	if overrides.Executable == nil {
 		overrides.Executable = &c.Executable
@@ -221,7 +218,7 @@ func (c *ReverseBin) startProcess(overrides *proxyOverrides) error {
 		c.logger.Error("failed to start proxy subprocess",
 			zap.String("executable", cmd.Path),
 			zap.Error(err))
-		return err
+		return nil, err
 	}
 	c.process = cmd.Process
 
@@ -317,11 +314,11 @@ func (c *ReverseBin) startProcess(overrides *proxyOverrides) error {
 	select {
 	case <-readyChan:
 		c.logger.Info("reverse proxy process ready", zap.String("address", expected))
-		return nil
+		return overrides, nil
 	case err := <-exitChan:
-		return fmt.Errorf("reverse proxy process exited during readiness check: %v", err)
+		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v", err)
 	case <-time.After(10 * time.Second):
 		c.killProcessGroup()
-		return fmt.Errorf("timeout waiting for reverse proxy process readiness")
+		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness")
 	}
 }
