@@ -86,6 +86,7 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 // GetUpstreams implements reverseproxy.UpstreamSource which allows dynamic selection of backend process
 // ensures process is running before returning the upstream address to the proxy.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
+	var overrides *proxyOverrides
 	if c.DynamicProxyDetector != "" {
 		detectorCmd := exec.Command(c.DynamicProxyDetector, r.URL.String())
 		output, err := detectorCmd.Output()
@@ -93,48 +94,15 @@ func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, er
 			return nil, fmt.Errorf("dynamic proxy detector failed: %v", err)
 		}
 
-		var overrides struct {
-			Executable       *string   `json:"executable"`
-			WorkingDirectory *string   `json:"working_directory"`
-			Args             *[]string `json:"args"`
-			Envs             *[]string `json:"envs"`
-			ReverseProxyTo   *string   `json:"reverse_proxy_to"`
-			ReadinessMethod  *string   `json:"readiness_method"`
-			ReadinessPath    *string   `json:"readiness_path"`
-		}
-
-		if err := json.Unmarshal(output, &overrides); err != nil {
+		overrides = new(proxyOverrides)
+		if err := json.Unmarshal(output, overrides); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal detector output: %v", err)
 		}
-
-		c.mu.Lock()
-		if overrides.Executable != nil {
-			c.Executable = *overrides.Executable
-		}
-		if overrides.WorkingDirectory != nil {
-			c.WorkingDirectory = *overrides.WorkingDirectory
-		}
-		if overrides.Args != nil {
-			c.Args = *overrides.Args
-		}
-		if overrides.Envs != nil {
-			c.Envs = *overrides.Envs
-		}
-		if overrides.ReverseProxyTo != nil {
-			c.ReverseProxyTo = *overrides.ReverseProxyTo
-		}
-		if overrides.ReadinessMethod != nil {
-			c.ReadinessMethod = *overrides.ReadinessMethod
-		}
-		if overrides.ReadinessPath != nil {
-			c.ReadinessPath = *overrides.ReadinessPath
-		}
-		c.mu.Unlock()
 	}
 
 	c.mu.Lock()
 	if c.process == nil {
-		if err := c.startProcess(); err != nil {
+		if err := c.startProcess(overrides); err != nil {
 			c.mu.Unlock()
 			return nil, err
 		}
@@ -178,12 +146,54 @@ func (c *ReverseBin) killProcessGroup() {
 }
 
 
-func (c *ReverseBin) startProcess() error {
-	cmd := exec.Command(c.Executable, c.Args...)
+type proxyOverrides struct {
+	Executable       *string   `json:"executable"`
+	WorkingDirectory *string   `json:"working_directory"`
+	Args             *[]string `json:"args"`
+	Envs             *[]string `json:"envs"`
+	ReverseProxyTo   *string   `json:"reverse_proxy_to"`
+	ReadinessMethod  *string   `json:"readiness_method"`
+	ReadinessPath    *string   `json:"readiness_path"`
+}
+
+func (c *ReverseBin) startProcess(overrides *proxyOverrides) error {
+	executable := c.Executable
+	args := c.Args
+	workingDir := c.WorkingDirectory
+	envs := c.Envs
+	proxyTo := c.ReverseProxyTo
+	readinessMethod := c.ReadinessMethod
+	readinessPath := c.ReadinessPath
+
+	if overrides != nil {
+		if overrides.Executable != nil {
+			executable = *overrides.Executable
+		}
+		if overrides.Args != nil {
+			args = *overrides.Args
+		}
+		if overrides.WorkingDirectory != nil {
+			workingDir = *overrides.WorkingDirectory
+		}
+		if overrides.Envs != nil {
+			envs = *overrides.Envs
+		}
+		if overrides.ReverseProxyTo != nil {
+			proxyTo = *overrides.ReverseProxyTo
+		}
+		if overrides.ReadinessMethod != nil {
+			readinessMethod = *overrides.ReadinessMethod
+		}
+		if overrides.ReadinessPath != nil {
+			readinessPath = *overrides.ReadinessPath
+		}
+	}
+
+	cmd := exec.Command(executable, args...)
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
-	cmd.Dir = c.WorkingDirectory
+	cmd.Dir = workingDir
 	if cmd.Dir == "" {
 		cmd.Dir = "."
 	}
@@ -198,7 +208,7 @@ func (c *ReverseBin) startProcess() error {
 			}
 		}
 	}
-	cmdEnv = append(cmdEnv, c.Envs...)
+	cmdEnv = append(cmdEnv, envs...)
 	cmd.Env = cmdEnv
 
 	stdoutPipe, err := cmd.StdoutPipe()
@@ -266,7 +276,7 @@ func (c *ReverseBin) startProcess() error {
 
 	// Readiness check
 	// might be able to use caddy health check here instead https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#active-health-checks
-	expected := c.ReverseProxyTo
+	expected := proxyTo
 	if strings.HasPrefix(expected, ":") {
 		expected = "127.0.0.1" + expected
 	}
@@ -274,14 +284,14 @@ func (c *ReverseBin) startProcess() error {
 	expected = strings.TrimPrefix(expected, "https://")
 
 	readyChan := make(chan bool, 1)
-	if c.ReadinessMethod != "" {
+	if readinessMethod != "" {
 		scheme := "http"
-		if strings.HasPrefix(c.ReverseProxyTo, "https://") {
+		if strings.HasPrefix(proxyTo, "https://") {
 			scheme = "https"
 		}
-		checkURL := fmt.Sprintf("%s://%s%s", scheme, expected, c.ReadinessPath)
+		checkURL := fmt.Sprintf("%s://%s%s", scheme, expected, readinessPath)
 		c.logger.Info("waiting for reverse proxy process readiness via HTTP polling",
-			zap.String("method", c.ReadinessMethod),
+			zap.String("method", readinessMethod),
 			zap.String("url", checkURL))
 
 		go func() {
@@ -291,7 +301,7 @@ func (c *ReverseBin) startProcess() error {
 			for {
 				select {
 				case <-ticker.C:
-					req, _ := http.NewRequest(c.ReadinessMethod, checkURL, nil)
+					req, _ := http.NewRequest(readinessMethod, checkURL, nil)
 					resp, err := client.Do(req)
 					if err == nil {
 						resp.Body.Close()
