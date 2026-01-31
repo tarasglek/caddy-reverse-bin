@@ -104,8 +104,10 @@ func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, er
 	}
 	c.mu.Unlock()
 
-	// no u fucker..get reverseproxyto from overrides AI!
 	toAddr := c.ReverseProxyTo
+	if overrides != nil && overrides.ReverseProxyTo != nil {
+		toAddr = *overrides.ReverseProxyTo
+	}
 	if strings.HasPrefix(toAddr, ":") {
 		toAddr = "127.0.0.1" + toAddr
 	}
