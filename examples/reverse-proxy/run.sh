@@ -2,7 +2,7 @@
 set -ex
 
 # Change to the directory of this script
-CONFIG_DIR=$(dirname "$0")
+export CONFIG_DIR=$(dirname "$0") # make it abs AI!
 pushd $CONFIG_DIR/../..
 
 air="go run github.com/air-verse/air@v1.64.4"
