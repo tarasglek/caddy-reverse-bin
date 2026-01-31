@@ -9,8 +9,8 @@
 
 http://python.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	reverse-bin * python3 -m http.server 8001 {
-		// specify this as reverse-bin * {executable python3...}
+	reverse-bin * {
+		exec python3 -m http.server 8001
 		reverse_proxy_to :8001
 		readiness_check HEAD /
 	}
@@ -18,7 +18,8 @@ http://python.{$DOMAIN:localhost} {
 
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	reverse-bin * python3 discover-app.py :8002 /tmp/caddy.sock caddy-wants-origin-for-unix-socket {
+	reverse-bin * {
+		exec python3 discover-app.py :8002 /tmp/caddy.sock caddy-wants-origin-for-unix-socket
 		dir ./examples/reverse-proxy/apps/discover-app
 		reverse_proxy_to :8002
 		readiness_check HEAD /

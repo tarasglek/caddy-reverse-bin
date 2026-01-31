@@ -101,15 +101,15 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	// Consume 'em all. Matchers should be used to differentiate multiple instantiations.
 	// If they are not used, we simply combine them first-to-last.
 	for d.Next() {
-		args := d.RemainingArgs()
-		if len(args) < 1 {
-			return d.Err("an executable needs to be specified")
-		}
-		c.Executable = args[0]
-		c.Args = args[1:]
-
 		for d.NextBlock(0) {
 			switch d.Val() {
+			case "exec":
+				args := d.RemainingArgs()
+				if len(args) < 1 {
+					return d.Err("an executable needs to be specified")
+				}
+				c.Executable = args[0]
+				c.Args = args[1:]
 			case "dir":
 				if !d.Args(&c.WorkingDirectory) {
 					return d.ArgErr()
@@ -152,6 +152,10 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.ctx = ctx
 	c.logger = ctx.Logger(c)
+
+	if c.Executable == "" {
+		return fmt.Errorf("exec (executable) is required")
+	}
 
 	if c.ReverseProxyTo == "" {
 		return fmt.Errorf("reverse_proxy_to is required")
