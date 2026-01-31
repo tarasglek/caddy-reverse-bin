@@ -7,21 +7,17 @@
 	https_port 9443
 }
 
-(cgi_proxy) {
-	reverse-bin * /bin/sh -c "exec python3 -m http.server {args[0]}" {
-		reverse_proxy_to :{args[0]}
+http://python.{$DOMAIN:localhost} {
+	bind 0.0.0.0
+	reverse-bin * python3 -m http.server 8001 {
+		reverse_proxy_to :8001
 		readiness_check HEAD /
 	}
 }
 
-http://python.{$DOMAIN:localhost} {
-	bind 0.0.0.0
-	import cgi_proxy 8001 // inline and get rid of cgi_proxy AI!
-}
-
 http://*.{$DOMAIN:localhost} {
 	bind 0.0.0.0
-	reverse-bin * /bin/sh -c "exec python3 discover-app.py :8002 /tmp/caddy.sock caddy-wants-origin-for-unix-socket" {
+	reverse-bin * python3 discover-app.py :8002 /tmp/caddy.sock caddy-wants-origin-for-unix-socket {
 		dir ./examples/reverse-proxy/apps/discover-app
 		reverse_proxy_to :8002
 		readiness_check HEAD /
