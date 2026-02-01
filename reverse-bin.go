@@ -369,6 +369,8 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		c.logger.Info("reverse proxy process ready", zap.String("address", expected))
 		return overrides, nil
 	case err := <-exitChan:
+		// TODO: Capture and include last few lines of stderr/stdout in the error message
+		// to help diagnose immediate process failures.
 		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v", err)
 	case <-time.After(10 * time.Second):
 		c.killProcessGroup(ps.process)
