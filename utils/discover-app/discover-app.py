@@ -42,6 +42,7 @@ def wrap_landrun(
         # /etc is needed for system configuration like DNS (resolv.conf) and users.
         wrapper.extend(["--rox", "/bin,/usr,/lib,/lib64"])
         wrapper.extend(["--ro", "/etc"])
+        # also rw:/dev AI!
 
     if envs:
         for env in envs:
@@ -75,7 +76,7 @@ def detect_dir_and_port(working_dir: Path) -> tuple[list[str], int, list[str]]:
     envs = [f"PORT={port}"]
 
     if (working_dir / "main.ts").exists():
-        return ["deno", "serve", "--host", f"0.0.0.0:{port}", "main.ts"], port, envs
+        return ["deno", "serve", "--host", f"127.0.0.1:{port}", "main.ts"], port, envs
 
     for script in ["main.py", "main.sh"]:
         path = working_dir / script
@@ -96,6 +97,7 @@ def main() -> None:
     executable = wrap_landrun(
         executable,
         rox=[str(working_dir.resolve())],
+        # also rw working_dir/data AI!
         bind_tcp=[port],
         envs=envs,
         include_std=True
