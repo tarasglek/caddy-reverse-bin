@@ -66,7 +66,7 @@ def wrap_landrun(
 def find_free_port() -> int:
     """Finds a free TCP port by binding to port 0."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0)) #this would probably be more secure on 127 AI!
+        s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
 def detect_dir_and_port(working_dir: Path) -> tuple[list[str], int, list[str]]:
