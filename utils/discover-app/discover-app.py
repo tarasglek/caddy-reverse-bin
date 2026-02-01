@@ -11,8 +11,8 @@ def wrap_landrun(
     rw: list[str] | None = None,
     ro: list[str] | None = None,
     rox: list[str] | None = None,
-    bind_tcp: list[int] | None = None,
-    connect_tcp: list[int] | None = None,
+    bind_tcp: list[int | str] | None = None,
+    connect_tcp: list[int | str] | None = None,
 ) -> list[str]:
     """Wraps a command with landrun for sandboxing."""
     wrapper = ["landrun"]
