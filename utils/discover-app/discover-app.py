@@ -42,7 +42,7 @@ def wrap_landrun(
         # /etc is needed for system configuration like DNS (resolv.conf) and users.
         wrapper.extend(["--rox", "/bin,/usr,/lib,/lib64"])
         wrapper.extend(["--ro", "/etc"])
-        # also rw:/dev AI!
+        wrapper.extend(["--rw", "/dev"])
 
     if envs:
         for env in envs:
@@ -94,10 +94,15 @@ def main() -> None:
     executable, port, envs = detect_dir_and_port(working_dir)
 
     # Wrap the executable with landrun for sandboxing
+    rw_paths = []
+    data_dir = working_dir / "data"
+    if data_dir.is_dir():
+        rw_paths.append(str(data_dir.resolve()))
+
     executable = wrap_landrun(
         executable,
         rox=[str(working_dir.resolve())],
-        # also rw working_dir/data AI!
+        rw=rw_paths if rw_paths else None,
         bind_tcp=[port],
         envs=envs,
         include_std=True
