@@ -83,7 +83,7 @@ def detect_dir_and_port(working_dir: Path) -> tuple[list[str], int, list[str]]:
         if path.exists() and os.access(path, os.X_OK):
             return [f"./{script}"], port, envs
 
-    return ["python3", "-m", "http.server", str(port)], port, envs
+    return ["python3", "-m", "http.server", str(port)], port, envs # throw error here isntead AI!
 
 def main() -> None:
     working_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
@@ -94,15 +94,13 @@ def main() -> None:
     executable, port, envs = detect_dir_and_port(working_dir)
 
     # Wrap the executable with landrun for sandboxing
-    rw_paths = []
     data_dir = working_dir / "data"
-    if data_dir.is_dir():
-        rw_paths.append(str(data_dir.resolve()))
+    rw_paths = [str(data_dir.resolve())]
 
     executable = wrap_landrun(
         executable,
         rox=[str(working_dir.resolve())],
-        rw=rw_paths if rw_paths else None,
+        rw=rw_paths,
         bind_tcp=[port],
         envs=envs,
         include_std=True
