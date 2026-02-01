@@ -30,9 +30,17 @@ def wrap_landrun(
     connect_tcp: list[int] | None = None,
     unrestricted_network: bool = False,
     envs: list[str] | None = None,
+    include_std: bool = False,
 ) -> list[str]:
     """Wraps a command with landrun for sandboxing."""
     wrapper = ["landrun"]
+
+    if include_std:
+        # Standard system paths required for most binaries and scripts to run.
+        # /bin, /usr, /lib, /lib64 are needed for the loader, shared libs, and core utils.
+        # /etc is needed for system configuration like DNS (resolv.conf) and users.
+        wrapper.extend(["--rox", "/bin,/usr,/lib,/lib64"])
+        wrapper.extend(["--ro", "/etc"])
 
     if envs:
         for env in envs:
@@ -85,7 +93,8 @@ def main() -> None:
         executable,
         rwx=[str(working_dir.resolve())],
         bind_tcp=[port],
-        envs=[f"PORT={port}"]
+        envs=[f"PORT={port}"],
+        include_std=True
     )
 
     result: dict[str, Any] = {
