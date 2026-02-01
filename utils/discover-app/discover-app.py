@@ -31,6 +31,7 @@ def wrap_landrun(
 
     return wrapper + cmd
 
+def detect_dir(dir) #write a func that detects main.py and returns uv run to run it..and main.ts and uses deno serve..also write a function to find free port bind to AI! 
 def main() -> None:
     working_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     if not working_dir.is_dir():
