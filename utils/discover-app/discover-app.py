@@ -50,8 +50,8 @@ def wrap_landrun(
     if include_PATH and "PATH" in os.environ:
         path_val = os.environ["PATH"]
         envs.append(f"PATH={path_val}")
-        for p in path_val.split(os.pathsep): #filter for existing dirs AI!
-            if p:
+        for p in path_val.split(os.pathsep):
+            if p and os.path.isdir(p):
                 rox.append(p)
 
     if envs:
