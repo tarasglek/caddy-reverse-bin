@@ -108,7 +108,7 @@ def main() -> None:
         unrestricted_network=True,
         envs=envs,
         include_std=True
-        # add include_PATH which would add env and also split it and do allow-rox for every component AI!
+        # add include_PATH which would add env and also split it and do allow-rox for every component AI!..dopit inside of wrap landrun AI!
     )
 
     result: dict[str, Any] = {
