@@ -76,7 +76,7 @@ def detect_dir_and_port(working_dir: Path) -> tuple[list[str], int, list[str]]:
     envs = [f"PORT={port}"]
 
     if (working_dir / "main.ts").exists():
-        return ["deno", "serve", "--host", f"127.0.0.1:{port}", "main.ts"], port, envs
+        return ["deno", "serve", "--host", f"127.0.0.1:{port}", "main.ts"], port, envs # add --allow-all or whatever AI!
 
     for script in ["main.py", "main.sh"]:
         path = working_dir / script
