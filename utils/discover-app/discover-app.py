@@ -97,6 +97,9 @@ def main() -> None:
     data_dir = working_dir / "data"
     rw_paths = [str(data_dir.resolve()) for p in [data_dir] if p.is_dir()]
 
+    if "PATH" in os.environ:
+        envs.append(f"PATH={os.environ['PATH']}")
+
     executable = wrap_landrun(
         executable,
         rox=[str(working_dir.resolve())],
@@ -105,7 +108,6 @@ def main() -> None:
         unrestricted_network=True,
         envs=envs,
         include_std=True
-        #add include_PATH AI!
     )
 
     result: dict[str, Any] = {
