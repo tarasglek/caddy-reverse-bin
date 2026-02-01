@@ -74,7 +74,7 @@ def detect_dir(working_dir: Path) -> list[str] | None:
     if (working_dir / "main.ts").exists():
         return ["deno", "serve", "main.ts"]
 
-    for script, runner in [("main.py", "uv"), ("main.sh", "bash")]:
+    for script, runner in [("main.py", "uv"), ("main.sh", "bash")]: # dont need to do runner jsut in [main.py, main.sh] AI!
         path = working_dir / script
         if path.exists() and os.access(path, os.X_OK):
             return [runner, script]
