@@ -69,17 +69,20 @@ def find_free_port() -> int:
         s.bind(("", 0))
         return s.getsockname()[1]
 
-def detect_dir(working_dir: Path) -> list[str] | None:
-    """Detects the application type and returns the command to run it."""
+def detect_dir_and_port(working_dir: Path) -> tuple[list[str], int, list[str]]:
+    """Detects the application type and returns the command, port, and envs."""
+    port = find_free_port()
+    envs = [f"PORT={port}"]
+
     if (working_dir / "main.ts").exists():
-        return ["deno", "serve", "main.ts"]
+        return ["deno", "serve", "--host", f"0.0.0.0:{port}", "main.ts"], port, envs
 
     for script in ["main.py", "main.sh"]:
         path = working_dir / script
         if path.exists() and os.access(path, os.X_OK):
-            return [f"./{script}"]
+            return [f"./{script}"], port, envs
 
-    return None
+    return ["python3", "-m", "http.server", str(port)], port, envs
 
 def main() -> None:
     working_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
@@ -87,18 +90,14 @@ def main() -> None:
         print(f"Error: directory {working_dir} does not exist", file=sys.stderr)
         sys.exit(1)
 
-    port = find_free_port()
-    executable = detect_dir(working_dir)
-
-    if not executable:
-        executable = ["python3", "-m", "http.server", str(port)]
+    executable, port, envs = detect_dir_and_port(working_dir)
 
     # Wrap the executable with landrun for sandboxing
     executable = wrap_landrun(
         executable,
         rox=[str(working_dir.resolve())],
         bind_tcp=[port],
-        envs=[f"PORT={port}"],
+        envs=envs,
         include_std=True
     )
 
