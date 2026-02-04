@@ -298,7 +298,12 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	c.logger.Info("starting proxy subprocess",
 		zap.String("executable", cmd.Path),
 		zap.Strings("args", cmd.Args))
-	// why the fuck u still capturing output after Start AI!
+
+	// Set up output capturing before starting the process to ensure no output is missed.
+	// We use a dummy PID placeholder until the process starts and we get the real one.
+	cmd.Stdout = io.MultiWriter(&zapWriter{logger: c.logger, name: "stdout", pid: 0}, recentOutput)
+	cmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "stderr", pid: 0}, recentOutput)
+
 	if err := cmd.Start(); err != nil {
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
@@ -310,8 +315,9 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	ps.cancel = cancel
 	pid := ps.process.Pid
 
-	cmd.Stdout = io.MultiWriter(&zapWriter{logger: c.logger, name: "stdout", pid: pid}, recentOutput)
-	cmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "stderr", pid: pid}, recentOutput)
+	// Update the writers with the actual PID now that the process has started.
+	cmd.Stdout.(*io.MultiWriter).Writers[0].(*zapWriter).pid = pid
+	cmd.Stderr.(*io.MultiWriter).Writers[0].(*zapWriter).pid = pid
 
 	exitChan := make(chan error, 1)
 	go func() {
