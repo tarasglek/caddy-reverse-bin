@@ -19,6 +19,7 @@ package reversebin
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
