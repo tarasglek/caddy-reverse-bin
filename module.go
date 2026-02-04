@@ -191,6 +191,49 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 
 // Cleanup implements caddy.CleanerUpper; it ensures that any running
 // backend process is terminated when the module is unloaded.
+func (c *ReverseBin) getOrCreateProcessState(key string) *processState {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	ps, ok := c.processes[key]
+	if !ok {
+		ps = &processState{}
+		c.processes[key] = ps
+	}
+	return ps
+}
+
+func (ps *processState) incrementRequests(logger *zap.Logger, key string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.activeRequests++
+	logger.Debug("incremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
+	if ps.idleTimer != nil {
+		ps.idleTimer.Stop()
+		ps.idleTimer = nil
+	}
+}
+
+func (ps *processState) decrementRequests(logger *zap.Logger, key string) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	ps.activeRequests--
+	logger.Debug("decremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
+
+	if ps.activeRequests == 0 {
+		ps.idleTimer = time.AfterFunc(30*time.Second, func() {
+			ps.mu.Lock()
+			defer ps.mu.Unlock()
+			if ps.activeRequests == 0 && ps.process != nil {
+				ps.terminationMsg = "idle timeout"
+				if ps.cancel != nil {
+					ps.cancel()
+				}
+				ps.process = nil
+			}
+		})
+	}
+}
+
 func (c *ReverseBin) Cleanup() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
