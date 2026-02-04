@@ -169,6 +169,16 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 	}
 }
 
+type logWriter struct {
+	name  string
+	drain func(string, io.Reader, *sync.WaitGroup)
+}
+
+func (l *logWriter) Write(p []byte) (n int, err error) {
+	l.drain(l.name, strings.NewReader(string(p)), nil)
+	return len(p), nil
+}
+
 type proxyOverrides struct {
 	Executable       *[]string `json:"executable"`
 	WorkingDirectory *string   `json:"working_directory"`
@@ -180,6 +190,33 @@ type proxyOverrides struct {
 }
 
 func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string) (*proxyOverrides, error) {
+	var outputMu sync.Mutex
+	var recentOutput []string
+	const maxRecentLines = 20
+
+	drainPipe := func(name string, pipe io.Reader, wg *sync.WaitGroup) {
+		if wg != nil {
+			defer wg.Done()
+		}
+		reader := bufio.NewReader(pipe)
+		for {
+			line, err := reader.ReadString('\n')
+			if len(line) > 0 {
+				trimmed := strings.TrimSuffix(line, "\n")
+				c.logger.Info("subprocess "+name, zap.String("msg", trimmed))
+				outputMu.Lock()
+				recentOutput = append(recentOutput, fmt.Sprintf("[%s] %s", name, trimmed))
+				if len(recentOutput) > maxRecentLines {
+					recentOutput = recentOutput[1:]
+				}
+				outputMu.Unlock()
+			}
+			if err != nil {
+				break
+			}
+		}
+	}
+
 	overrides := new(proxyOverrides)
 	if len(c.DynamicProxyDetector) > 0 {
 		args := strings.Split(key, " ")
@@ -189,17 +226,39 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			zap.Strings("args", args[1:]))
 
 		detectorCmd := exec.Command(args[0], args[1:]...)
-		output, err := detectorCmd.Output()
+		stdout, _ := detectorCmd.StdoutPipe()
+		stderr, _ := detectorCmd.StderrPipe()
+
+		var outBuf strings.Builder
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			io.Copy(&outBuf, io.TeeReader(stdout, &logWriter{name: "detector-stdout", drain: drainPipe}))
+		}()
+		go drainPipe("detector-stderr", stderr, &wg)
+
+		if err := detectorCmd.Start(); err != nil {
+			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
+		}
+		wg.Wait()
+		err := detectorCmd.Wait()
+
+		outputMu.Lock()
+		recent := strings.Join(recentOutput, "\n")
+		outputMu.Unlock()
+
 		if err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				return nil, fmt.Errorf("dynamic proxy detector failed: %v; stderr: %s", err, string(exitErr.Stderr))
-			}
-			return nil, fmt.Errorf("dynamic proxy detector failed: %v", err)
+			return nil, fmt.Errorf("dynamic proxy detector failed: %v\nRecent output:\n%s", err, recent)
 		}
 
-		if err := json.Unmarshal(output, overrides); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal detector output: %v", err)
+		if err := json.Unmarshal([]byte(outBuf.String()), overrides); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal detector output: %v\nOutput: %s", err, outBuf.String())
 		}
+		// Clear recent output from detector so it doesn't clutter process launch errors
+		outputMu.Lock()
+		recentOutput = nil
+		outputMu.Unlock()
 	}
 	var execPath string
 	var execArgs []string
@@ -268,36 +327,11 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		return nil, err
 	}
 
-	var outputMu sync.Mutex
-	var recentOutput []string
-	const maxRecentLines = 10
-
 	exitChan := make(chan error, 1)
 	var wg sync.WaitGroup
-	drain := func(name string, pipe io.ReadCloser) {
-		defer wg.Done()
-		reader := bufio.NewReader(pipe)
-		for {
-			line, err := reader.ReadString('\n')
-			if len(line) > 0 {
-				trimmed := strings.TrimSuffix(line, "\n")
-				c.logger.Info("reverse proxy process "+name, zap.String("msg", trimmed))
-				outputMu.Lock()
-				recentOutput = append(recentOutput, fmt.Sprintf("[%s] %s", name, trimmed))
-				if len(recentOutput) > maxRecentLines {
-					recentOutput = recentOutput[1:]
-				}
-				outputMu.Unlock()
-			}
-			if err != nil {
-				break
-			}
-		}
-	}
-
 	wg.Add(2)
-	go drain("stdout", stdoutPipe)
-	go drain("stderr", stderrPipe)
+	go drainPipe("stdout", stdoutPipe, &wg)
+	go drainPipe("stderr", stderrPipe, &wg)
 
 	c.logger.Info("starting proxy subprocess",
 		zap.String("executable", cmd.Path),
