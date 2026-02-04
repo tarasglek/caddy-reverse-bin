@@ -234,7 +234,10 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	cmd := exec.Command(execPath, execArgs...)
 	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setpgid:   true,
+			Pdeathsig: syscall.SIGTERM,
+		}
 	}
 	cmd.Dir = *overrides.WorkingDirectory
 	if cmd.Dir == "" {
