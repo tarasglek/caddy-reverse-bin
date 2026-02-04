@@ -54,6 +54,7 @@ func passAll() (list []string) {
 // ServeHTTP implements caddyhttp.MiddlewareHandler; it handles the HTTP request
 // manages idle process killing
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	c.logger.Debug("ServeHTTP", zap.String("uri", r.RequestURI))
 	key := c.getProcessKey(r)
 	ps := c.getOrCreateProcessState(key)
 
@@ -88,6 +89,7 @@ func (c *ReverseBin) getProcessKey(r *http.Request) string {
 // request that triggers a process start, the request tracking must be initialized here
 // to ensure the idle timer starts correctly after the first request completes.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
+	c.logger.Debug("GetUpstreams", zap.String("uri", r.RequestURI))
 	key := c.getProcessKey(r)
 	ps := c.getOrCreateProcessState(key)
 
