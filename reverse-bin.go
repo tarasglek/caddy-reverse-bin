@@ -221,13 +221,25 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		detectorCmd := exec.Command(args[0], args[1:]...)
 
 		var outBuf strings.Builder
+		detectorCmd.Stdout = io.MultiWriter(&outBuf, &zapWriter{logger: c.logger, name: "detector-stdout", pid: 0}, recentOutput)
+		detectorCmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "detector-stderr", pid: 0}, recentOutput)
+
 		if err := detectorCmd.Start(); err != nil {
 			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
 		}
 		pid := detectorCmd.Process.Pid
 
-		detectorCmd.Stdout = io.MultiWriter(&outBuf, &zapWriter{logger: c.logger, name: "detector-stdout", pid: pid}, recentOutput)
-		detectorCmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "detector-stderr", pid: pid}, recentOutput)
+		// Update the writers with the actual PID
+		if mw, ok := detectorCmd.Stdout.(interface{ Writers() []io.Writer }); ok {
+			if zw, ok := mw.Writers()[1].(*zapWriter); ok {
+				zw.pid = pid
+			}
+		}
+		if mw, ok := detectorCmd.Stderr.(interface{ Writers() []io.Writer }); ok {
+			if zw, ok := mw.Writers()[0].(*zapWriter); ok {
+				zw.pid = pid
+			}
+		}
 
 		err := detectorCmd.Wait()
 
