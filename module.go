@@ -225,8 +225,8 @@ func (ps *processState) decrementRequests(logger *zap.Logger, key string) {
 	logger.Debug("decremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
 
 	if ps.activeRequests == 0 {
-		logger.Debug("starting idle timer", zap.String("key", key), zap.Duration("duration", 30*time.Second))
-		ps.idleTimer = time.AfterFunc(30*time.Second, func() {
+		logger.Debug("starting idle timer", zap.String("key", key), zap.Duration("duration", 5*time.Second))
+		ps.idleTimer = time.AfterFunc(5*time.Second, func() {
 			ps.mu.Lock()
 			defer ps.mu.Unlock()
 			if ps.activeRequests == 0 && ps.process != nil {
