@@ -196,6 +196,7 @@ func (c *ReverseBin) getOrCreateProcessState(key string) *processState {
 	defer c.mu.Unlock()
 	ps, ok := c.processes[key]
 	if !ok {
+		c.logger.Debug("creating new process state", zap.String("key", key))
 		ps = &processState{}
 		c.processes[key] = ps
 	}
@@ -206,7 +207,10 @@ func (ps *processState) incrementRequests(logger *zap.Logger, key string) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.activeRequests++
-	logger.Debug("incremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
+	logger.Debug("incremented active requests",
+		zap.String("key", key),
+		zap.Int64("count", ps.activeRequests),
+		zap.Bool("timer_stopped", ps.idleTimer != nil))
 	if ps.idleTimer != nil {
 		ps.idleTimer.Stop()
 		ps.idleTimer = nil
@@ -220,15 +224,22 @@ func (ps *processState) decrementRequests(logger *zap.Logger, key string) {
 	logger.Debug("decremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
 
 	if ps.activeRequests == 0 {
+		logger.Debug("starting idle timer", zap.String("key", key), zap.Duration("duration", 30*time.Second))
 		ps.idleTimer = time.AfterFunc(30*time.Second, func() {
 			ps.mu.Lock()
 			defer ps.mu.Unlock()
 			if ps.activeRequests == 0 && ps.process != nil {
+				logger.Info("idle timer fired, terminating process", zap.String("key", key), zap.Int("pid", ps.process.Pid))
 				ps.terminationMsg = "idle timeout"
 				if ps.cancel != nil {
 					ps.cancel()
 				}
 				ps.process = nil
+			} else {
+				logger.Debug("idle timer fired but process active or already gone",
+					zap.String("key", key),
+					zap.Int64("active_requests", ps.activeRequests),
+					zap.Bool("process_nil", ps.process == nil))
 			}
 		})
 	}
