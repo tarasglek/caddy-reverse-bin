@@ -232,7 +232,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		overrides.ReadinessPath = &c.ReadinessPath
 	}
 
-	cmd := exec.Command(execPath, execArgs...)
+	cmd := exec.CommandContext(c.ctx, execPath, execArgs...)
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			Setpgid: true,
@@ -268,6 +268,37 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		return nil, err
 	}
 
+	var outputMu sync.Mutex
+	var recentOutput []string
+	const maxRecentLines = 10
+
+	exitChan := make(chan error, 1)
+	var wg sync.WaitGroup
+	drain := func(name string, pipe io.ReadCloser) {
+		defer wg.Done()
+		reader := bufio.NewReader(pipe)
+		for {
+			line, err := reader.ReadString('\n')
+			if len(line) > 0 {
+				trimmed := strings.TrimSuffix(line, "\n")
+				c.logger.Info("reverse proxy process "+name, zap.String("msg", trimmed))
+				outputMu.Lock()
+				recentOutput = append(recentOutput, fmt.Sprintf("[%s] %s", name, trimmed))
+				if len(recentOutput) > maxRecentLines {
+					recentOutput = recentOutput[1:]
+				}
+				outputMu.Unlock()
+			}
+			if err != nil {
+				break
+			}
+		}
+	}
+
+	wg.Add(2)
+	go drain("stdout", stdoutPipe)
+	go drain("stderr", stderrPipe)
+
 	c.logger.Info("starting proxy subprocess",
 		zap.String("executable", cmd.Path),
 		zap.Strings("args", cmd.Args))
@@ -280,27 +311,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	}
 	ps.process = cmd.Process
 
-	exitChan := make(chan error, 1)
 	go func() {
-		var wg sync.WaitGroup
-		drain := func(name string, pipe io.ReadCloser) {
-			defer wg.Done()
-			reader := bufio.NewReader(pipe)
-			for {
-				line, err := reader.ReadString('\n')
-				if len(line) > 0 {
-					c.logger.Info("reverse proxy process "+name, zap.String("msg", strings.TrimSuffix(line, "\n")))
-				}
-				if err != nil {
-					break
-				}
-			}
-		}
-
-		wg.Add(2)
-		go drain("stdout", stdoutPipe)
-		go drain("stderr", stderrPipe)
-
 		wg.Wait()
 		err := cmd.Wait()
 
@@ -374,11 +385,15 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		c.logger.Info("reverse proxy process ready", zap.String("address", expected))
 		return overrides, nil
 	case err := <-exitChan:
-		// TODO: Capture and include last few lines of stderr/stdout in the error message
-		// to help diagnose immediate process failures.
-		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v", err)
+		outputMu.Lock()
+		out := strings.Join(recentOutput, "\n")
+		outputMu.Unlock()
+		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v\nRecent output:\n%s", err, out)
 	case <-time.After(10 * time.Second):
 		c.killProcessGroup(ps.process)
-		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness")
+		outputMu.Lock()
+		out := strings.Join(recentOutput, "\n")
+		outputMu.Unlock()
+		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness\nRecent output:\n%s", out)
 	}
 }
