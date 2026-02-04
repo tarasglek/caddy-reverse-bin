@@ -76,7 +76,9 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 					defer ps.mu.Unlock()
 					if ps.activeRequests == 0 && ps.process != nil {
 						ps.terminationMsg = "idle timeout"
-						c.killProcessGroup(ps.process)
+						if ps.cancel != nil {
+							ps.cancel()
+						}
 						ps.process = nil
 					}
 				})
@@ -295,7 +297,8 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		overrides.ReadinessPath = &c.ReadinessPath
 	}
 
-	cmd := exec.CommandContext(c.ctx, execPath, execArgs...)
+	ctx, cancel := context.WithCancel(c.ctx)
+	cmd := exec.CommandContext(ctx, execPath, execArgs...)
 	if runtime.GOOS != "windows" {
 		cmd.SysProcAttr = &syscall.SysProcAttr{
 			Setpgid: true,
@@ -336,12 +339,14 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		zap.Strings("args", cmd.Args))
 
 	if err := cmd.Start(); err != nil {
+		cancel()
 		c.logger.Error("failed to start proxy subprocess",
 			zap.String("executable", cmd.Path),
 			zap.Error(err))
 		return nil, err
 	}
 	ps.process = cmd.Process
+	ps.cancel = cancel
 	pid := ps.process.Pid
 
 	exitChan := make(chan error, 1)
@@ -432,7 +437,9 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		outputMu.Unlock()
 		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v\nRecent output:\n%s", err, out)
 	case <-time.After(10 * time.Second):
-		c.killProcessGroup(ps.process)
+		if ps.cancel != nil {
+			ps.cancel()
+		}
 		outputMu.Lock()
 		out := strings.Join(recentOutput, "\n")
 		outputMu.Unlock()
