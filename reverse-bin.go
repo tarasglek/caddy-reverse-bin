@@ -139,14 +139,53 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 	}
 }
 
-type logWriter struct {
-	name  string
-	drain func(string, io.Reader, *sync.WaitGroup, int)
-	pid   int
+type tailBuffer struct {
+	mu    sync.Mutex
+	lines []string
+	max   int
 }
 
-func (l *logWriter) Write(p []byte) (n int, err error) {
-	l.drain(l.name, strings.NewReader(string(p)), nil, l.pid)
+func (tb *tailBuffer) Write(p []byte) (n int, err error) {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	scanner := bufio.NewScanner(strings.NewReader(string(p)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line != "" {
+			tb.lines = append(tb.lines, line)
+			if len(tb.lines) > tb.max {
+				tb.lines = tb.lines[1:]
+			}
+		}
+	}
+	return len(p), nil
+}
+
+func (tb *tailBuffer) String() string {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	return strings.Join(tb.lines, "\n")
+}
+
+func (tb *tailBuffer) Clear() {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	tb.lines = nil
+}
+
+type zapWriter struct {
+	logger *zap.Logger
+	name   string
+	pid    int
+}
+
+func (zw *zapWriter) Write(p []byte) (n int, err error) {
+	scanner := bufio.NewScanner(strings.NewReader(string(p)))
+	for scanner.Scan() {
+		zw.logger.Info("subprocess "+zw.name,
+			zap.Int("pid", zw.pid),
+			zap.String("msg", scanner.Text()))
+	}
 	return len(p), nil
 }
 
@@ -161,34 +200,7 @@ type proxyOverrides struct {
 }
 
 func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string) (*proxyOverrides, error) {
-	var outputMu sync.Mutex
-	var recentOutput []string
-	const maxRecentLines = 20
-
-	drainPipe := func(name string, pipe io.Reader, wg *sync.WaitGroup, pid int) {
-		if wg != nil {
-			defer wg.Done()
-		}
-		reader := bufio.NewReader(pipe)
-		for {
-			line, err := reader.ReadString('\n')
-			if len(line) > 0 {
-				trimmed := strings.TrimSuffix(line, "\n")
-				c.logger.Info("subprocess "+name,
-					zap.Int("pid", pid),
-					zap.String("msg", trimmed))
-				outputMu.Lock()
-				recentOutput = append(recentOutput, fmt.Sprintf("[%d][%s] %s", pid, name, trimmed))
-				if len(recentOutput) > maxRecentLines {
-					recentOutput = recentOutput[1:]
-				}
-				outputMu.Unlock()
-			}
-			if err != nil {
-				break
-			}
-		}
-	}
+	recentOutput := &tailBuffer{max: 20}
 
 	overrides := new(proxyOverrides)
 	if len(c.DynamicProxyDetector) > 0 {
@@ -199,8 +211,6 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			zap.Strings("args", args[1:]))
 
 		detectorCmd := exec.Command(args[0], args[1:]...)
-		stdout, _ := detectorCmd.StdoutPipe()
-		stderr, _ := detectorCmd.StderrPipe()
 
 		var outBuf strings.Builder
 		if err := detectorCmd.Start(); err != nil {
@@ -208,31 +218,20 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		}
 		pid := detectorCmd.Process.Pid
 
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			io.Copy(&outBuf, io.TeeReader(stdout, &logWriter{name: "detector-stdout", drain: drainPipe, pid: pid}))
-		}()
-		go drainPipe("detector-stderr", stderr, &wg, pid)
-		wg.Wait()
+		detectorCmd.Stdout = io.MultiWriter(&outBuf, &zapWriter{logger: c.logger, name: "detector-stdout", pid: pid}, recentOutput)
+		detectorCmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "detector-stderr", pid: pid}, recentOutput)
+
 		err := detectorCmd.Wait()
 
-		outputMu.Lock()
-		recent := strings.Join(recentOutput, "\n")
-		outputMu.Unlock()
-
 		if err != nil {
-			return nil, fmt.Errorf("dynamic proxy detector failed: %v\nRecent output:\n%s", err, recent)
+			return nil, fmt.Errorf("dynamic proxy detector failed: %v\nRecent output:\n%s", err, recentOutput.String())
 		}
 
 		if err := json.Unmarshal([]byte(outBuf.String()), overrides); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal detector output: %v\nOutput: %s", err, outBuf.String())
 		}
 		// Clear recent output from detector so it doesn't clutter process launch errors
-		outputMu.Lock()
-		recentOutput = nil
-		outputMu.Unlock()
+		recentOutput.Clear()
 	}
 	var execPath string
 	var execArgs []string
@@ -293,15 +292,6 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	cmdEnv = append(cmdEnv, *overrides.Envs...)
 	cmd.Env = cmdEnv
 
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
-
 	c.logger.Info("starting proxy subprocess",
 		zap.String("executable", cmd.Path),
 		zap.Strings("args", cmd.Args))
@@ -317,14 +307,11 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	ps.cancel = cancel
 	pid := ps.process.Pid
 
-	exitChan := make(chan error, 1)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go drainPipe("stdout", stdoutPipe, &wg, pid)
-	go drainPipe("stderr", stderrPipe, &wg, pid)
+	cmd.Stdout = io.MultiWriter(&zapWriter{logger: c.logger, name: "stdout", pid: pid}, recentOutput)
+	cmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "stderr", pid: pid}, recentOutput)
 
+	exitChan := make(chan error, 1)
 	go func() {
-		wg.Wait()
 		err := cmd.Wait()
 
 		ps.mu.Lock()
@@ -400,17 +387,11 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			zap.String("address", expected))
 		return overrides, nil
 	case err := <-exitChan:
-		outputMu.Lock()
-		out := strings.Join(recentOutput, "\n")
-		outputMu.Unlock()
-		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v\nRecent output:\n%s", err, out)
+		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v\nRecent output:\n%s", err, recentOutput.String())
 	case <-time.After(10 * time.Second):
 		if ps.cancel != nil {
 			ps.cancel()
 		}
-		outputMu.Lock()
-		out := strings.Join(recentOutput, "\n")
-		outputMu.Unlock()
-		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness\nRecent output:\n%s", out)
+		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness\nRecent output:\n%s", recentOutput.String())
 	}
 }
