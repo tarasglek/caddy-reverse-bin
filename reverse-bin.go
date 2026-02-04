@@ -298,7 +298,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	c.logger.Info("starting proxy subprocess",
 		zap.String("executable", cmd.Path),
 		zap.Strings("args", cmd.Args))
-
+	// why the fuck u still capturing output after Start AI!
 	if err := cmd.Start(); err != nil {
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
