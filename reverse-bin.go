@@ -171,11 +171,12 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 
 type logWriter struct {
 	name  string
-	drain func(string, io.Reader, *sync.WaitGroup)
+	drain func(string, io.Reader, *sync.WaitGroup, int)
+	pid   int
 }
 
 func (l *logWriter) Write(p []byte) (n int, err error) {
-	l.drain(l.name, strings.NewReader(string(p)), nil)
+	l.drain(l.name, strings.NewReader(string(p)), nil, l.pid)
 	return len(p), nil
 }
 
@@ -194,7 +195,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	var recentOutput []string
 	const maxRecentLines = 20
 
-	drainPipe := func(name string, pipe io.Reader, wg *sync.WaitGroup) {
+	drainPipe := func(name string, pipe io.Reader, wg *sync.WaitGroup, pid int) {
 		if wg != nil {
 			defer wg.Done()
 		}
@@ -203,9 +204,11 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			line, err := reader.ReadString('\n')
 			if len(line) > 0 {
 				trimmed := strings.TrimSuffix(line, "\n")
-				c.logger.Info("subprocess "+name, zap.String("msg", trimmed))
+				c.logger.Info("subprocess "+name,
+					zap.Int("pid", pid),
+					zap.String("msg", trimmed))
 				outputMu.Lock()
-				recentOutput = append(recentOutput, fmt.Sprintf("[%s] %s", name, trimmed))
+				recentOutput = append(recentOutput, fmt.Sprintf("[%d][%s] %s", pid, name, trimmed))
 				if len(recentOutput) > maxRecentLines {
 					recentOutput = recentOutput[1:]
 				}
@@ -230,17 +233,18 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		stderr, _ := detectorCmd.StderrPipe()
 
 		var outBuf strings.Builder
+		if err := detectorCmd.Start(); err != nil {
+			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
+		}
+		pid := detectorCmd.Process.Pid
+
 		var wg sync.WaitGroup
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			io.Copy(&outBuf, io.TeeReader(stdout, &logWriter{name: "detector-stdout", drain: drainPipe}))
+			io.Copy(&outBuf, io.TeeReader(stdout, &logWriter{name: "detector-stdout", drain: drainPipe, pid: pid}))
 		}()
-		go drainPipe("detector-stderr", stderr, &wg)
-
-		if err := detectorCmd.Start(); err != nil {
-			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
-		}
+		go drainPipe("detector-stderr", stderr, &wg, pid)
 		wg.Wait()
 		err := detectorCmd.Wait()
 
@@ -327,12 +331,6 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		return nil, err
 	}
 
-	exitChan := make(chan error, 1)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go drainPipe("stdout", stdoutPipe, &wg)
-	go drainPipe("stderr", stderrPipe, &wg)
-
 	c.logger.Info("starting proxy subprocess",
 		zap.String("executable", cmd.Path),
 		zap.Strings("args", cmd.Args))
@@ -344,6 +342,13 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		return nil, err
 	}
 	ps.process = cmd.Process
+	pid := ps.process.Pid
+
+	exitChan := make(chan error, 1)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go drainPipe("stdout", stdoutPipe, &wg, pid)
+	go drainPipe("stderr", stderrPipe, &wg, pid)
 
 	go func() {
 		wg.Wait()
@@ -361,6 +366,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		ps.mu.Unlock()
 
 		c.logger.Info("proxy subprocess terminated",
+			zap.Int("pid", pid),
 			zap.String("executable", cmd.Path),
 			zap.String("reason", reason),
 			zap.Error(err))
@@ -416,7 +422,9 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	select {
 	case <-readyChan:
-		c.logger.Info("reverse proxy process ready", zap.String("address", expected))
+		c.logger.Info("reverse proxy process ready",
+			zap.Int("pid", pid),
+			zap.String("address", expected))
 		return overrides, nil
 	case err := <-exitChan:
 		outputMu.Lock()
