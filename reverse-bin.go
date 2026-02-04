@@ -203,6 +203,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	recentOutput := &tailBuffer{max: 20}
 
 	overrides := new(proxyOverrides)
+	// explain what this code block does better using comments AI!
 	if len(c.DynamicProxyDetector) > 0 {
 		args := strings.Split(key, " ")
 
