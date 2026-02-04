@@ -84,6 +84,9 @@ func (c *ReverseBin) getProcessKey(r *http.Request) string {
 
 // GetUpstreams implements reverseproxy.UpstreamSource which allows dynamic selection of backend process
 // ensures process is running before returning the upstream address to the proxy.
+// Note: In Caddy's reverse_proxy, GetUpstreams is called before ServeHTTP. For the very first
+// request that triggers a process start, the request tracking must be initialized here
+// to ensure the idle timer starts correctly after the first request completes.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
 	key := c.getProcessKey(r)
 	ps := c.getOrCreateProcessState(key)
