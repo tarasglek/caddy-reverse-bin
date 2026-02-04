@@ -321,8 +321,18 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	pid := ps.process.Pid
 
 	// Update the writers with the actual PID now that the process has started.
-	cmd.Stdout.(*io.MultiWriter).Writers[0].(*zapWriter).pid = pid
-	cmd.Stderr.(*io.MultiWriter).Writers[0].(*zapWriter).pid = pid
+	// Note: cmd.Stdout/Stderr are io.Writer, we need to access the underlying MultiWriter's writers.
+	// Since we know the structure we set up above, we can cast and update.
+	if mw, ok := cmd.Stdout.(interface{ Writers() []io.Writer }); ok {
+		if zw, ok := mw.Writers()[0].(*zapWriter); ok {
+			zw.pid = pid
+		}
+	}
+	if mw, ok := cmd.Stderr.(interface{ Writers() []io.Writer }); ok {
+		if zw, ok := mw.Writers()[0].(*zapWriter); ok {
+			zw.pid = pid
+		}
+	}
 
 	exitChan := make(chan error, 1)
 	go func() {

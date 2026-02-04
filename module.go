@@ -17,6 +17,7 @@
 package reversebin
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
