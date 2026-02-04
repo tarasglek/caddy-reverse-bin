@@ -80,6 +80,7 @@ type ReverseBin struct {
 
 type processState struct {
 	process        *os.Process
+	cancel         context.CancelFunc
 	activeRequests int64
 	idleTimer      *time.Timer
 	terminationMsg string
