@@ -55,37 +55,10 @@ func passAll() (list []string) {
 // manages idle process killing
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	key := c.getProcessKey(r)
-	c.mu.Lock()
-	ps, ok := c.processes[key]
-	c.mu.Unlock()
+	ps := c.getOrCreateProcessState(key)
 
-	if ok {
-		ps.mu.Lock()
-		ps.activeRequests++
-		c.logger.Debug("incremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
-		ps.mu.Unlock()
-
-		defer func() {
-			ps.mu.Lock()
-			defer ps.mu.Unlock()
-
-			ps.activeRequests--
-			c.logger.Debug("decremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
-			if ps.activeRequests == 0 {
-				ps.idleTimer = time.AfterFunc(30*time.Second, func() {
-					ps.mu.Lock()
-					defer ps.mu.Unlock()
-					if ps.activeRequests == 0 && ps.process != nil {
-						ps.terminationMsg = "idle timeout"
-						if ps.cancel != nil {
-							ps.cancel()
-						}
-						ps.process = nil
-					}
-				})
-			}
-		}()
-	}
+	ps.incrementRequests(c.logger, key)
+	defer ps.decrementRequests(c.logger, key)
 
 	if c.reverseProxy == nil {
 		return fmt.Errorf("reverse proxy not initialized")
@@ -113,13 +86,7 @@ func (c *ReverseBin) getProcessKey(r *http.Request) string {
 // ensures process is running before returning the upstream address to the proxy.
 func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
 	key := c.getProcessKey(r)
-	c.mu.Lock()
-	ps, ok := c.processes[key]
-	if !ok {
-		ps = &processState{}
-		c.processes[key] = ps
-	}
-	c.mu.Unlock()
+	ps := c.getOrCreateProcessState(key)
 
 	ps.mu.Lock()
 	if ps.process == nil {
