@@ -145,23 +145,6 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 	}
 }
 
-type lineLogger struct {
-	logger    *zap.Logger
-	name      string
-	outputKey string
-	pid       int
-}
-
-func (ll *lineLogger) Write(p []byte) (n int, err error) {
-	scanner := bufio.NewScanner(strings.NewReader(string(p)))
-	for scanner.Scan() {
-		ll.logger.Info(ll.name,
-			zap.Int("pid", ll.pid),
-			zap.String(ll.outputKey, scanner.Text()))
-	}
-	return len(p), nil
-}
-
 type proxyOverrides struct {
 	Executable       *[]string `json:"executable"`
 	WorkingDirectory *string   `json:"working_directory"`
@@ -295,19 +278,6 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	stdoutLogger := &lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}
-	stderrLogger := &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
-
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(stdoutLogger, stdoutPipe)
-	}()
-
-	go func() {
-		defer wg.Done()
-		_, _ = io.Copy(stderrLogger, stderrPipe)
-	}()
-
 	if err := cmd.Start(); err != nil {
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
@@ -324,9 +294,22 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		zap.Int("pid", pid),
 		zap.String("executable", cmd.Path),
 		zap.Strings("args", cmd.Args))
-	// Update the writers with the actual PID now that the process has started.
-	stdoutLogger.pid = pid
-	stderrLogger.pid = pid
+
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdoutPipe)
+		for scanner.Scan() {
+			c.logger.Info("", zap.Int("pid", pid), zap.String("stdout", scanner.Text()))
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stderrPipe)
+		for scanner.Scan() {
+			c.logger.Info("", zap.Int("pid", pid), zap.String("stderr", scanner.Text()))
+		}
+	}()
 
 	exitChan := make(chan error, 1)
 	go func() {
