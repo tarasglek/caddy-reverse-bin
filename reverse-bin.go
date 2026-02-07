@@ -19,6 +19,7 @@ package reversebin
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -195,7 +196,6 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	// If a dynamic proxy detector is configured, execute it to determine
 	// the specific parameters (executable, args, env, etc.) for the backend
 	// process based on the request context.
-	// use go subprocess skill to fix detector lifetime AI!
 	if len(c.DynamicProxyDetector) > 0 {
 		args := strings.Split(key, " ")
 
@@ -203,30 +203,60 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			zap.String("command", args[0]),
 			zap.Strings("args", args[1:]))
 
-		detectorCmd := exec.Command(args[0], args[1:]...)
+		// Use a timeout for the detector to prevent hanging the request indefinitely
+		detCtx, detCancel := context.WithTimeout(c.ctx, 10*time.Second)
+		defer detCancel()
 
-		var outBuf strings.Builder
-		detectorCmd.Stdout = &outBuf
-		detectorCmd.Stderr = &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
+		detectorCmd := exec.CommandContext(detCtx, args[0], args[1:]...)
+
+		if runtime.GOOS == "linux" {
+			detectorCmd.SysProcAttr = &syscall.SysProcAttr{
+				Pdeathsig: syscall.SIGTERM,
+				Setpgid:   true,
+			}
+		}
+
+		stdoutPipe, err := detectorCmd.StdoutPipe()
+		if err != nil {
+			return nil, err
+		}
+		stderrPipe, err := detectorCmd.StderrPipe()
+		if err != nil {
+			return nil, err
+		}
+
+		var outBuf bytes.Buffer
+		var wg sync.WaitGroup
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+			_, _ = io.Copy(&outBuf, stdoutPipe)
+		}()
+
+		go func() {
+			defer wg.Done()
+			ll := &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
+			_, _ = io.Copy(ll, stderrPipe)
+			// Note: pid will remain 0 in logs for detector stderr as it's short-lived
+		}()
 
 		if err := detectorCmd.Start(); err != nil {
 			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
 		}
 
-		err := detectorCmd.Wait()
+		err = detectorCmd.Wait()
+		wg.Wait()
 
-		// Update the writers with the actual PID now that the detector has started.
-		if mw, ok := detectorCmd.Stderr.(interface{ Writers() []io.Writer }); ok {
-			if ll, ok := mw.Writers()[0].(*lineLogger); ok {
-				ll.pid = detectorCmd.Process.Pid
-			}
+		if detCtx.Err() == context.DeadlineExceeded {
+			return nil, fmt.Errorf("dynamic proxy detector timed out")
 		}
 
 		if err != nil {
-			return nil, fmt.Errorf("dynamic proxy detector failed: %v\nRecent output:\n%s", err, cmdOutput.String())
+			return nil, fmt.Errorf("dynamic proxy detector failed: %v\nOutput: %s", err, outBuf.String())
 		}
 
-		if err := json.Unmarshal([]byte(outBuf.String()), overrides); err != nil {
+		if err := json.Unmarshal(outBuf.Bytes(), overrides); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal detector output: %v\nOutput: %s", err, outBuf.String())
 		}
 	}
