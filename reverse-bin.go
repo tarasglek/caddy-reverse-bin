@@ -162,18 +162,16 @@ func (ol *OutputLogger) Clear() {
 }
 
 type lineLogger struct {
-	logger *zap.Logger
-	name   string
-	pid    int
+	logger    *zap.Logger
+	outputKey string
+	pid       int
 }
-
-// > line logger should not log subprocess name....instead just ensure we log pid on launch..and instead of msg field we should specify
-// >   stdin or stderr eg remove name member...and have a outputKey member AI!
 
 func (ll *lineLogger) Write(p []byte) (n int, err error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(p)))
 	for scanner.Scan() {
-		ll.logger.Info("child "+ll.pid, //make string
+		ll.logger.Info("child process output",
+			zap.Int("pid", ll.pid),
 			zap.String(ll.outputKey, scanner.Text()))
 	}
 	return len(p), nil
@@ -290,8 +288,8 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	// Set up output capturing before starting the process to ensure no output is missed.
 	// We use a dummy PID placeholder until the process starts and we get the real one.
-	cmd.Stdout = io.MultiWriter(&lineLogger{logger: c.logger, name: "stdout", pid: 0}, cmdOutput)
-	cmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, name: "stderr", pid: 0}, cmdOutput)
+	cmd.Stdout = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}, cmdOutput)
+	cmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}, cmdOutput)
 
 	if err := cmd.Start(); err != nil {
 		cancel()
