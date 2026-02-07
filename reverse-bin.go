@@ -30,6 +30,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -215,7 +216,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 				Setpgid:   true,
 			}
 		}
-
+		//just uyse string buggers to simpleify code AI!
 		stdoutPipe, err := detectorCmd.StdoutPipe()
 		if err != nil {
 			return nil, err
