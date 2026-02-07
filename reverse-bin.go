@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -323,7 +324,6 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 		c.logger.Info("proxy subprocess terminated",
 			zap.Int("pid", pid),
-			zap.String("executable", cmd.Path),
 			zap.String("reason", reason),
 			zap.Error(err))
 		exitChan <- err
