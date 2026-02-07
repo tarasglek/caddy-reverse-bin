@@ -23,7 +23,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -298,28 +297,27 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	cmdEnv = append(cmdEnv, *overrides.Envs...)
 	cmd.Env = cmdEnv
 
-	c.logger.Info("starting proxy subprocess",
-		zap.String("executable", cmd.Path),
-		zap.Strings("args", cmd.Args))
-
 	// Set up output capturing before starting the process to ensure no output is missed.
 	// We use a dummy PID placeholder until the process starts and we get the real one.
 	stdoutLogger := &lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}
 	stderrLogger := &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
-	cmd.Stdout = io.MultiWriter(stdoutLogger, cmdOutput)
-	cmd.Stderr = io.MultiWriter(stderrLogger, cmdOutput)
+	cmd.Stdout = stdoutLogger
+	cmd.Stderr = stderrLogger
 
 	if err := cmd.Start(); err != nil {
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
 			zap.String("executable", cmd.Path),
-			zap.Error(err))
+			zap.Error(err)) // log args here AI!
 		return nil, err
 	}
 	ps.process = cmd.Process
 	ps.cancel = cancel
 	pid := ps.process.Pid
 
+	c.logger.Info("started proxy subprocess",
+		zap.String("executable", cmd.Path),
+		zap.Strings("args", cmd.Args)) // add pid AI!
 	// Update the writers with the actual PID now that the process has started.
 	stdoutLogger.pid = pid
 	stderrLogger.pid = pid
