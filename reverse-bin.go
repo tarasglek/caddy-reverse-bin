@@ -167,12 +167,14 @@ type lineLogger struct {
 	pid    int
 }
 
+// > line logger should not log subprocess name....instead just ensure we log pid on launch..and instead of msg field we should specify
+// >   stdin or stderr eg remove name member...and have a outputKey member AI!
+
 func (ll *lineLogger) Write(p []byte) (n int, err error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(p)))
 	for scanner.Scan() {
-		ll.logger.Info("subprocess "+ll.name,
-			zap.Int("pid", ll.pid),
-			zap.String("msg", scanner.Text()))
+		ll.logger.Info("child "+ll.pid, //make string
+			zap.String(ll.outputKey, scanner.Text()))
 	}
 	return len(p), nil
 }
