@@ -87,12 +87,13 @@ def find_free_port() -> int:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-def detect_dir_and_port(working_dir: Path, port: int) -> tuple[list[str], list[str]]:
+def detect_dir_and_port(working_dir: Path, reverse_proxy_to: str) -> tuple[list[str], list[str]]:
     """Detects the application type and returns the command and envs."""
-    envs = [f"REVERSE_PROXY_TO=127.0.0.1:{port}"]
+    envs = [f"REVERSE_PROXY_TO={reverse_proxy_to}"]
 
     if (working_dir / "main.ts").exists():
-        return ["deno", "serve", "--allow-all", "--host", "127.0.0.1", "--port", str(port), "main.ts"], envs
+        port = reverse_proxy_to.split(':')[-1]
+        return ["deno", "serve", "--allow-all", "--host", "127.0.0.1", "--port", port, "main.ts"], envs
 
     for script in ["main.py", "main.sh"]:
         path = working_dir / script
@@ -114,17 +115,12 @@ def main() -> None:
     except Exception:
         pass
 
-    # Use port from .env if present, otherwise find a free one
-    env_proxy = dot_env_vars.get("REVERSE_PROXY_TO")
-    if env_proxy:
-        try:
-            port = int(env_proxy.split(':')[-1])
-        except (ValueError, IndexError):
-            port = find_free_port()
-    else:
-        port = find_free_port()
+    # Use address from .env if present, otherwise find a free port
+    reverse_proxy_to = dot_env_vars.get("REVERSE_PROXY_TO")
+    if not reverse_proxy_to:
+        reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
 
-    executable, envs = detect_dir_and_port(working_dir, port)
+    executable, envs = detect_dir_and_port(working_dir, reverse_proxy_to)
     
     # Add variables from .env to the environment list
     for k, v in dot_env_vars.items():
@@ -143,11 +139,18 @@ def main() -> None:
         rw_paths.append(resolved_data)
         envs.append(f"HOME={resolved_data}")
 
+    bind_tcp = []
+    if not reverse_proxy_to.startswith("unix/"):
+        try:
+            bind_tcp.append(int(reverse_proxy_to.split(':')[-1]))
+        except (ValueError, IndexError):
+            pass
+
     executable = wrap_landrun(
         executable,
         rox=[str(working_dir.resolve())],
         rw=rw_paths,
-        bind_tcp=[port],
+        bind_tcp=bind_tcp,
         unrestricted_network=True,
         envs=envs,
         include_std=True,
@@ -156,7 +159,7 @@ def main() -> None:
 
     result: dict[str, Any] = {
         "executable": executable,
-        "reverse_proxy_to": f":{port}",
+        "reverse_proxy_to": reverse_proxy_to,
         "working_directory": str(working_dir.resolve()),
     }
 
