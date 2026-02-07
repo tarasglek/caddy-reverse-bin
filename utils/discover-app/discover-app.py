@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "python-dotenv",
+# ]
+# ///
 import json
 import sys
 import socket
 import os
+from dotenv import load_dotenv
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +105,12 @@ def detect_dir_and_port(working_dir: Path) -> tuple[list[str], int, list[str]]:
 def main() -> None:
     working_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
     if not working_dir.is_dir():
+        print(f"Error: directory {working_dir} does not exist", file=sys.stderr)
+        sys.exit(1)
+
+    env_file = working_dir / ".env"
+    if env_file.exists():
+        load_dotenv(dotenv_path=env_file)
         print(f"Error: directory {working_dir} does not exist", file=sys.stderr)
         sys.exit(1)
 
