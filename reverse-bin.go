@@ -29,7 +29,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -205,6 +204,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		detectorCmd := exec.Command(args[0], args[1:]...)
 
 		var outBuf strings.Builder
+		// just put detector into outBuf no other teeing AI!
 		detectorCmd.Stdout = io.MultiWriter(&outBuf, &zapWriter{logger: c.logger, name: "detector-stdout", pid: 0}, cmdOutput)
 		detectorCmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "detector-stderr", pid: 0}, cmdOutput)
 
