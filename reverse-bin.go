@@ -144,26 +144,21 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 	}
 }
 
+// OutputLogger captures output into a string builder.
+// It is not thread-safe and should only be used in a single thread.
 type OutputLogger struct {
-	mu sync.Mutex
 	sb strings.Builder
 }
 
 func (ol *OutputLogger) Write(p []byte) (n int, err error) {
-	ol.mu.Lock()
-	defer ol.mu.Unlock()
 	return ol.sb.Write(p)
 }
 
 func (ol *OutputLogger) String() string {
-	ol.mu.Lock()
-	defer ol.mu.Unlock()
 	return ol.sb.String()
 }
 
 func (ol *OutputLogger) Clear() {
-	ol.mu.Lock()
-	defer ol.mu.Unlock()
 	ol.sb.Reset()
 }
 
