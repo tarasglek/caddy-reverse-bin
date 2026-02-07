@@ -87,18 +87,17 @@ def find_free_port() -> int:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-def detect_dir_and_port(working_dir: Path) -> tuple[list[str], int, list[str]]:
-    """Detects the application type and returns the command, port, and envs."""
-    port = find_free_port()
+def detect_dir_and_port(working_dir: Path, port: int) -> tuple[list[str], list[str]]:
+    """Detects the application type and returns the command and envs."""
     envs = [f"REVERSE_PROXY_TO=127.0.0.1:{port}"]
 
     if (working_dir / "main.ts").exists():
-        return ["deno", "serve", "--allow-all", "--host", "127.0.0.1", "--port", str(port), "main.ts"], port, envs
+        return ["deno", "serve", "--allow-all", "--host", "127.0.0.1", "--port", str(port), "main.ts"], envs
 
     for script in ["main.py", "main.sh"]:
         path = working_dir / script
         if path.exists() and os.access(path, os.X_OK):
-            return [f"./{script}"], port, envs
+            return [f"./{script}"], envs
 
     raise FileNotFoundError(f"No supported entry point (main.ts, executable main.py, or executable main.sh) found in {working_dir}")
 
@@ -115,20 +114,24 @@ def main() -> None:
     except Exception:
         pass
 
-    executable, port, envs = detect_dir_and_port(working_dir)
+    # Use port from .env if present, otherwise find a free one
+    env_proxy = dot_env_vars.get("REVERSE_PROXY_TO")
+    if env_proxy:
+        try:
+            port = int(env_proxy.split(':')[-1])
+        except (ValueError, IndexError):
+            port = find_free_port()
+    else:
+        port = find_free_port()
+
+    executable, envs = detect_dir_and_port(working_dir, port)
     
     # Add variables from .env to the environment list
     for k, v in dot_env_vars.items():
         if v is not None:
             if k == "REVERSE_PROXY_TO":
-                # Override the auto-detected port if specified in .env
-                try:
-                    _, port_str = v.split(':')
-                    port = int(port_str)
-                    # Update the envs list with the overridden value
-                    envs = [f"{k}={v}" if e.startswith("REVERSE_PROXY_TO=") else e for e in envs]
-                except (ValueError, IndexError):
-                    envs.append(f"{k}={v}")
+                # Ensure the envs list uses the value from .env
+                envs = [f"{k}={v}" if e.startswith("REVERSE_PROXY_TO=") else e for e in envs]
             else:
                 envs.append(f"{k}={v}")
 
