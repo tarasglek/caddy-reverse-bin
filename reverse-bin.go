@@ -25,6 +25,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -339,13 +340,33 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		if strings.HasPrefix(*overrides.ReverseProxyTo, "https://") {
 			scheme = "https"
 		}
-		checkURL := fmt.Sprintf("%s://%s%s", scheme, expected, *overrides.ReadinessPath)
+
+		var checkURL string
+		var client *http.Client
+
+		if strings.HasPrefix(*overrides.ReverseProxyTo, "unix/") {
+			socketPath := strings.TrimPrefix(*overrides.ReverseProxyTo, "unix/")
+			// For unix sockets, the host in the URL is ignored by the custom dialer
+			checkURL = fmt.Sprintf("%s://localhost%s", scheme, *overrides.ReadinessPath)
+			client = &http.Client{
+				Timeout: 500 * time.Millisecond,
+				Transport: &http.Transport{
+					DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+						return net.Dial("unix", socketPath)
+					},
+				},
+			}
+		} else {
+			checkURL = fmt.Sprintf("%s://%s%s", scheme, expected, *overrides.ReadinessPath)
+			client = &http.Client{Timeout: 500 * time.Millisecond}
+		}
+
 		c.logger.Info("waiting for reverse proxy process readiness via HTTP polling",
 			zap.String("method", *overrides.ReadinessMethod),
-			zap.String("url", checkURL))
+			zap.String("url", checkURL),
+			zap.String("target", *overrides.ReverseProxyTo))
 
 		go func() {
-			client := &http.Client{Timeout: 500 * time.Millisecond}
 			ticker := time.NewTicker(200 * time.Millisecond)
 			defer ticker.Stop()
 			for {
