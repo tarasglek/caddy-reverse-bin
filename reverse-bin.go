@@ -382,6 +382,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 					req, _ := http.NewRequest(*overrides.ReadinessMethod, checkURL, nil)
 					resp, err := client.Do(req)
 					if err == nil {
+						io.Copy(io.Discard, resp.Body)
 						resp.Body.Close()
 						if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 							readyChan <- true
