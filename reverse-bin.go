@@ -130,8 +130,13 @@ func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, er
 		return nil, fmt.Errorf("invalid reverse_proxy_to address: %v", err)
 	}
 
+	dialAddr := target.Host
+	if target.Scheme == "unix" {
+		dialAddr = "unix/" + target.Path
+	}
+
 	return []*reverseproxy.Upstream{
-		{Dial: target.Host},
+		{Dial: dialAddr},
 	}, nil
 }
 
