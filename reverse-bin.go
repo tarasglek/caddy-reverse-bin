@@ -308,7 +308,8 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
 			zap.String("executable", cmd.Path),
-			zap.Error(err)) // log args here AI!
+			zap.Strings("args", cmd.Args),
+			zap.Error(err))
 		return nil, err
 	}
 	ps.process = cmd.Process
@@ -316,8 +317,9 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	pid := ps.process.Pid
 
 	c.logger.Info("started proxy subprocess",
+		zap.Int("pid", pid),
 		zap.String("executable", cmd.Path),
-		zap.Strings("args", cmd.Args)) // add pid AI!
+		zap.Strings("args", cmd.Args))
 	// Update the writers with the actual PID now that the process has started.
 	stdoutLogger.pid = pid
 	stderrLogger.pid = pid
