@@ -211,12 +211,11 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		execArgs = (*overrides.Executable)[1:]
 	} else {
 		execPath = c.Executable
-	}
-
-	if overrides.Args != nil {
-		execArgs = append(execArgs, *overrides.Args...)
-	} else if overrides.Executable == nil {
-		execArgs = append(execArgs, c.Args...)
+		if overrides.Args != nil {
+			execArgs = *overrides.Args
+		} else {
+			execArgs = c.Args
+		}
 	}
 	if overrides.WorkingDirectory == nil {
 		overrides.WorkingDirectory = &c.WorkingDirectory
