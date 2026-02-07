@@ -304,6 +304,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	cmd.Stdout = stdoutLogger
 	cmd.Stderr = stderrLogger
 
+	// ensure that this long running process launch follows our skill AI!
 	if err := cmd.Start(); err != nil {
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
