@@ -195,6 +195,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	// If a dynamic proxy detector is configured, execute it to determine
 	// the specific parameters (executable, args, env, etc.) for the backend
 	// process based on the request context.
+	// use go subprocess skill to fix detector lifetime AI!
 	if len(c.DynamicProxyDetector) > 0 {
 		args := strings.Split(key, " ")
 
@@ -206,7 +207,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 		var outBuf strings.Builder
 		detectorCmd.Stdout = &outBuf
-		detectorCmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}, cmdOutput)
+		detectorCmd.Stderr = &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
 
 		if err := detectorCmd.Start(); err != nil {
 			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
@@ -228,8 +229,6 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		if err := json.Unmarshal([]byte(outBuf.String()), overrides); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal detector output: %v\nOutput: %s", err, outBuf.String())
 		}
-		// Clear recent output from detector so it doesn't clutter process launch errors
-		cmdOutput.Clear()
 	}
 	var execPath string
 	var execArgs []string
