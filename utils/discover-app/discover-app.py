@@ -9,7 +9,7 @@ import json
 import sys
 import socket
 import os
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 from pathlib import Path
 from typing import Any
 
@@ -109,12 +109,16 @@ def main() -> None:
         sys.exit(1)
 
     env_file = working_dir / ".env"
+    dot_env_vars = {}
     if env_file.exists():
-        load_dotenv(dotenv_path=env_file)
-        print(f"Error: directory {working_dir} does not exist", file=sys.stderr)
-        sys.exit(1)
+        dot_env_vars = dotenv_values(dotenv_path=env_file)
 
     executable, port, envs = detect_dir_and_port(working_dir)
+    
+    # Add variables from .env to the environment list
+    for k, v in dot_env_vars.items():
+        if v is not None:
+            envs.append(f"{k}={v}")
 
     # Wrap the executable with landrun for sandboxing
     data_dir = working_dir / "data"
