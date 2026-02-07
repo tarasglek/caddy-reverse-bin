@@ -307,6 +307,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	cmd.Stdout = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}, cmdOutput)
 	cmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}, cmdOutput)
 
+	// set pids after start AI!
 	if err := cmd.Start(); err != nil {
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
