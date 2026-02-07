@@ -30,7 +30,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -219,6 +218,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 		var outBuf bytes.Buffer
 		detectorCmd.Stdout = &outBuf
+		// use buffer and log in whole chunk AI!
 		detectorCmd.Stderr = &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
 
 		err := detectorCmd.Run()
