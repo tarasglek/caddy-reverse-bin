@@ -163,6 +163,7 @@ func (ol *OutputLogger) Clear() {
 
 type lineLogger struct {
 	logger    *zap.Logger
+	name      string
 	outputKey string
 	pid       int
 }
@@ -170,7 +171,7 @@ type lineLogger struct {
 func (ll *lineLogger) Write(p []byte) (n int, err error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(p)))
 	for scanner.Scan() {
-		ll.logger.Info("child process output",
+		ll.logger.Info(ll.name,
 			zap.Int("pid", ll.pid),
 			zap.String(ll.outputKey, scanner.Text()))
 	}
@@ -205,7 +206,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 		var outBuf strings.Builder
 		detectorCmd.Stdout = &outBuf
-		detectorCmd.Stderr = cmdOutput
+		detectorCmd.Stderr = cmdOutput // use lineLogger AI!
 
 		if err := detectorCmd.Start(); err != nil {
 			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
