@@ -307,7 +307,6 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	cmd.Stdout = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}, cmdOutput)
 	cmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}, cmdOutput)
 
-	// set pids after start AI!
 	if err := cmd.Start(); err != nil {
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
@@ -320,16 +319,18 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	pid := ps.process.Pid
 
 	// Update the writers with the actual PID now that the process has started.
-	// Note: cmd.Stdout/Stderr are io.Writer, we need to access the underlying MultiWriter's writers.
-	// Since we know the structure we set up above, we can cast and update.
 	if mw, ok := cmd.Stdout.(interface{ Writers() []io.Writer }); ok {
-		if ll, ok := mw.Writers()[0].(*lineLogger); ok {
-			ll.pid = pid
+		for _, w := range mw.Writers() {
+			if ll, ok := w.(*lineLogger); ok {
+				ll.pid = pid
+			}
 		}
 	}
 	if mw, ok := cmd.Stderr.(interface{ Writers() []io.Writer }); ok {
-		if ll, ok := mw.Writers()[0].(*lineLogger); ok {
-			ll.pid = pid
+		for _, w := range mw.Writers() {
+			if ll, ok := w.(*lineLogger); ok {
+				ll.pid = pid
+			}
 		}
 	}
 
