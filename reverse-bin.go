@@ -294,22 +294,16 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		zap.String("executable", cmd.Path),
 		zap.Strings("args", cmd.Args))
 
-	go func() {
+	logPipe := func(pipe io.ReadCloser, label string) {
 		defer wg.Done()
-		scanner := bufio.NewScanner(stdoutPipe)
+		scanner := bufio.NewScanner(pipe)
 		for scanner.Scan() {
-			c.logger.Info("", zap.Int("pid", pid), zap.String("stdout", scanner.Text()))
+			c.logger.Info("", zap.Int("pid", pid), zap.String(label, scanner.Text()))
 		}
-	}()
+	}
 
-	go func() {
-		defer wg.Done()
-		// make a util func to DRY below AI!
-		scanner := bufio.NewScanner(stderrPipe)
-		for scanner.Scan() {
-			c.logger.Info("", zap.Int("pid", pid), zap.String("stderr", scanner.Text()))
-		}
-	}()
+	go logPipe(stdoutPipe, "stdout")
+	go logPipe(stderrPipe, "stderr")
 
 	exitChan := make(chan error, 1)
 	go func() {
