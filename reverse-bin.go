@@ -299,12 +299,33 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	// Set up output capturing before starting the process to ensure no output is missed.
 	// We use a dummy PID placeholder until the process starts and we get the real one.
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	stdoutLogger := &lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}
 	stderrLogger := &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
-	cmd.Stdout = stdoutLogger
-	cmd.Stderr = stderrLogger
 
-	// ensure that this long running process launch follows our skill AI!
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(io.MultiWriter(stdoutLogger, cmdOutput), stdoutPipe)
+	}()
+
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(io.MultiWriter(stderrLogger, cmdOutput), stderrPipe)
+	}()
+
 	if err := cmd.Start(); err != nil {
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
@@ -328,6 +349,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	exitChan := make(chan error, 1)
 	go func() {
 		err := cmd.Wait()
+		wg.Wait()
 
 		ps.mu.Lock()
 		reason := ps.terminationMsg
