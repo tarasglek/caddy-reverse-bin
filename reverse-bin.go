@@ -161,17 +161,17 @@ func (ol *OutputLogger) Clear() {
 	ol.sb.Reset()
 }
 
-type zapWriter struct {
+type lineLogger struct {
 	logger *zap.Logger
 	name   string
 	pid    int
 }
 
-func (zw *zapWriter) Write(p []byte) (n int, err error) {
+func (ll *lineLogger) Write(p []byte) (n int, err error) {
 	scanner := bufio.NewScanner(strings.NewReader(string(p)))
 	for scanner.Scan() {
-		zw.logger.Info("subprocess "+zw.name,
-			zap.Int("pid", zw.pid),
+		ll.logger.Info("subprocess "+ll.name,
+			zap.Int("pid", ll.pid),
 			zap.String("msg", scanner.Text()))
 	}
 	return len(p), nil
@@ -288,8 +288,8 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	// Set up output capturing before starting the process to ensure no output is missed.
 	// We use a dummy PID placeholder until the process starts and we get the real one.
-	cmd.Stdout = io.MultiWriter(&zapWriter{logger: c.logger, name: "stdout", pid: 0}, cmdOutput)
-	cmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "stderr", pid: 0}, cmdOutput)
+	cmd.Stdout = io.MultiWriter(&lineLogger{logger: c.logger, name: "stdout", pid: 0}, cmdOutput)
+	cmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, name: "stderr", pid: 0}, cmdOutput)
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -306,13 +306,13 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	// Note: cmd.Stdout/Stderr are io.Writer, we need to access the underlying MultiWriter's writers.
 	// Since we know the structure we set up above, we can cast and update.
 	if mw, ok := cmd.Stdout.(interface{ Writers() []io.Writer }); ok {
-		if zw, ok := mw.Writers()[0].(*zapWriter); ok {
-			zw.pid = pid
+		if ll, ok := mw.Writers()[0].(*lineLogger); ok {
+			ll.pid = pid
 		}
 	}
 	if mw, ok := cmd.Stderr.(interface{ Writers() []io.Writer }); ok {
-		if zw, ok := mw.Writers()[0].(*zapWriter); ok {
-			zw.pid = pid
+		if ll, ok := mw.Writers()[0].(*lineLogger); ok {
+			ll.pid = pid
 		}
 	}
 
