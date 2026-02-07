@@ -194,7 +194,7 @@ type proxyOverrides struct {
 }
 
 func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string) (*proxyOverrides, error) {
-	recentOutput := &OutputLogger{}
+	cmdOutput := &OutputLogger{}
 
 	overrides := new(proxyOverrides)
 	// If a dynamic proxy detector is configured, execute it to determine
@@ -210,8 +210,8 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		detectorCmd := exec.Command(args[0], args[1:]...)
 
 		var outBuf strings.Builder
-		detectorCmd.Stdout = io.MultiWriter(&outBuf, &zapWriter{logger: c.logger, name: "detector-stdout", pid: 0}, recentOutput)
-		detectorCmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "detector-stderr", pid: 0}, recentOutput)
+		detectorCmd.Stdout = io.MultiWriter(&outBuf, &zapWriter{logger: c.logger, name: "detector-stdout", pid: 0}, cmdOutput)
+		detectorCmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "detector-stderr", pid: 0}, cmdOutput)
 
 		if err := detectorCmd.Start(); err != nil {
 			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
@@ -233,14 +233,14 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 		err := detectorCmd.Wait()
 
 		if err != nil {
-			return nil, fmt.Errorf("dynamic proxy detector failed: %v\nRecent output:\n%s", err, recentOutput.String())
+			return nil, fmt.Errorf("dynamic proxy detector failed: %v\nRecent output:\n%s", err, cmdOutput.String())
 		}
 
 		if err := json.Unmarshal([]byte(outBuf.String()), overrides); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal detector output: %v\nOutput: %s", err, outBuf.String())
 		}
 		// Clear recent output from detector so it doesn't clutter process launch errors
-		recentOutput.Clear()
+		cmdOutput.Clear()
 	}
 	var execPath string
 	var execArgs []string
@@ -307,8 +307,8 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	// Set up output capturing before starting the process to ensure no output is missed.
 	// We use a dummy PID placeholder until the process starts and we get the real one.
-	cmd.Stdout = io.MultiWriter(&zapWriter{logger: c.logger, name: "stdout", pid: 0}, recentOutput)
-	cmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "stderr", pid: 0}, recentOutput)
+	cmd.Stdout = io.MultiWriter(&zapWriter{logger: c.logger, name: "stdout", pid: 0}, cmdOutput)
+	cmd.Stderr = io.MultiWriter(&zapWriter{logger: c.logger, name: "stderr", pid: 0}, cmdOutput)
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -412,11 +412,11 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			zap.String("address", expected))
 		return overrides, nil
 	case err := <-exitChan:
-		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v\nRecent output:\n%s", err, recentOutput.String())
+		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v\nRecent output:\n%s", err, cmdOutput.String())
 	case <-time.After(10 * time.Second):
 		if ps.cancel != nil {
 			ps.cancel()
 		}
-		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness\nRecent output:\n%s", recentOutput.String())
+		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness\nRecent output:\n%s", cmdOutput.String())
 	}
 }
