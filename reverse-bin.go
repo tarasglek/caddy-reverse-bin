@@ -206,13 +206,20 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 		var outBuf strings.Builder
 		detectorCmd.Stdout = &outBuf
-		detectorCmd.Stderr = cmdOutput // use lineLogger AI!
+		detectorCmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}, cmdOutput)
 
 		if err := detectorCmd.Start(); err != nil {
 			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
 		}
 
 		err := detectorCmd.Wait()
+
+		// Update the writers with the actual PID now that the detector has started.
+		if mw, ok := detectorCmd.Stderr.(interface{ Writers() []io.Writer }); ok {
+			if ll, ok := mw.Writers()[0].(*lineLogger); ok {
+				ll.pid = detectorCmd.Process.Pid
+			}
+		}
 
 		if err != nil {
 			return nil, fmt.Errorf("dynamic proxy detector failed: %v\nRecent output:\n%s", err, cmdOutput.String())
