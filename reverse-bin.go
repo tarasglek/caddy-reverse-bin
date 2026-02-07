@@ -216,38 +216,12 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 				Setpgid:   true,
 			}
 		}
-		//just uyse string buggers to simpleify code AI!
-		stdoutPipe, err := detectorCmd.StdoutPipe()
-		if err != nil {
-			return nil, err
-		}
-		stderrPipe, err := detectorCmd.StderrPipe()
-		if err != nil {
-			return nil, err
-		}
 
 		var outBuf bytes.Buffer
-		var wg sync.WaitGroup
-		wg.Add(2)
+		detectorCmd.Stdout = &outBuf
+		detectorCmd.Stderr = &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
 
-		go func() {
-			defer wg.Done()
-			_, _ = io.Copy(&outBuf, stdoutPipe)
-		}()
-
-		go func() {
-			defer wg.Done()
-			ll := &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
-			_, _ = io.Copy(ll, stderrPipe)
-			// Note: pid will remain 0 in logs for detector stderr as it's short-lived
-		}()
-
-		if err := detectorCmd.Start(); err != nil {
-			return nil, fmt.Errorf("dynamic proxy detector failed to start: %v", err)
-		}
-
-		err = detectorCmd.Wait()
-		wg.Wait()
+		err := detectorCmd.Run()
 
 		if detCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("dynamic proxy detector timed out")
