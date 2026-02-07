@@ -304,9 +304,10 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	// Set up output capturing before starting the process to ensure no output is missed.
 	// We use a dummy PID placeholder until the process starts and we get the real one.
-	// dont need the tee..just use linelogger assign them to vars to make pid assingm,ent easier AI!
-	cmd.Stdout = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}, cmdOutput)
-	cmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}, cmdOutput)
+	stdoutLogger := &lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}
+	stderrLogger := &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
+	cmd.Stdout = io.MultiWriter(stdoutLogger, cmdOutput)
+	cmd.Stderr = io.MultiWriter(stderrLogger, cmdOutput)
 
 	if err := cmd.Start(); err != nil {
 		cancel()
@@ -320,20 +321,8 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	pid := ps.process.Pid
 
 	// Update the writers with the actual PID now that the process has started.
-	if mw, ok := cmd.Stdout.(interface{ Writers() []io.Writer }); ok {
-		for _, w := range mw.Writers() {
-			if ll, ok := w.(*lineLogger); ok {
-				ll.pid = pid
-			}
-		}
-	}
-	if mw, ok := cmd.Stderr.(interface{ Writers() []io.Writer }); ok {
-		for _, w := range mw.Writers() {
-			if ll, ok := w.(*lineLogger); ok {
-				ll.pid = pid
-			}
-		}
-	}
+	stdoutLogger.pid = pid
+	stderrLogger.pid = pid
 
 	exitChan := make(chan error, 1)
 	go func() {
