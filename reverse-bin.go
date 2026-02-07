@@ -134,7 +134,7 @@ func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, er
 	if target.Scheme == "unix" {
 		dialAddr = "unix/" + target.Path
 	}
-
+	// log dialAddr AI!
 	return []*reverseproxy.Upstream{
 		{Dial: dialAddr},
 	}, nil
