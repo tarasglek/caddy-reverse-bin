@@ -304,6 +304,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	// Set up output capturing before starting the process to ensure no output is missed.
 	// We use a dummy PID placeholder until the process starts and we get the real one.
+	// dont need the tee..just use linelogger assign them to vars to make pid assingm,ent easier AI!
 	cmd.Stdout = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stdout", pid: 0}, cmdOutput)
 	cmd.Stderr = io.MultiWriter(&lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}, cmdOutput)
 
