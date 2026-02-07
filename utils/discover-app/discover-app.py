@@ -117,7 +117,13 @@ def main() -> None:
 
     # Use address from .env if present, otherwise find a free port
     reverse_proxy_to = dot_env_vars.get("REVERSE_PROXY_TO")
-    if not reverse_proxy_to:
+    if reverse_proxy_to:
+        if reverse_proxy_to.startswith("unix/"):
+            socket_path = reverse_proxy_to[5:]
+            if os.path.isabs(socket_path):
+                print(f"Error: Unix socket path in REVERSE_PROXY_TO must be relative: {socket_path}", file=sys.stderr)
+                sys.exit(1)
+    else:
         reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
 
     executable, envs = detect_dir_and_port(working_dir, reverse_proxy_to)
@@ -157,9 +163,16 @@ def main() -> None:
         include_PATH=True
     )
 
+    # Ensure reverse_proxy_to is absolute if it's a unix socket
+    final_reverse_proxy_to = reverse_proxy_to
+    if reverse_proxy_to.startswith("unix/"):
+        socket_path = reverse_proxy_to[5:]
+        abs_socket_path = (working_dir / socket_path).resolve()
+        final_reverse_proxy_to = f"unix/{abs_socket_path}"
+
     result: dict[str, Any] = {
         "executable": executable,
-        "reverse_proxy_to": reverse_proxy_to,
+        "reverse_proxy_to": final_reverse_proxy_to,
         "working_directory": str(working_dir.resolve()),
     }
 
