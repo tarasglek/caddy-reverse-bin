@@ -148,7 +148,6 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 type proxyOverrides struct {
 	Executable       *[]string `json:"executable"`
 	WorkingDirectory *string   `json:"working_directory"`
-	Args             *[]string `json:"args"`
 	Envs             *[]string `json:"envs"`
 	ReverseProxyTo   *string   `json:"reverse_proxy_to"`
 	ReadinessMethod  *string   `json:"readiness_method"`
@@ -209,13 +208,9 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	if overrides.Executable != nil && len(*overrides.Executable) > 0 {
 		execPath = (*overrides.Executable)[0]
 		execArgs = (*overrides.Executable)[1:]
-	} else {
-		execPath = c.Executable
-		if overrides.Args != nil {
-			execArgs = *overrides.Args
-		} else {
-			execArgs = c.Args
-		}
+	} else if len(c.Executable) > 0 {
+		execPath = c.Executable[0]
+		execArgs = c.Executable[1:]
 	}
 	if overrides.WorkingDirectory == nil {
 		overrides.WorkingDirectory = &c.WorkingDirectory

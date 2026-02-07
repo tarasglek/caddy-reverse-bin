@@ -30,9 +30,8 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 	}
 
 	expected := ReverseBin{
-		Executable:       "/some/file",
+		Executable:       []string{"/some/file", "a", "b", "c", "d", "1"},
 		WorkingDirectory: "/somewhere",
-		Args:             []string{"a", "b", "c", "d", "1"},
 		Envs:             []string{"foo=bar", "what=ever"},
 		PassEnvs:         []string{"some_env", "other_env"},
 		PassAll:          true,

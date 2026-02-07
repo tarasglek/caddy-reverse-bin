@@ -47,12 +47,10 @@ func init() {
 // CGI protocol, passing parameters via environment variables and evaluating
 // the response as the HTTP response.
 type ReverseBin struct {
-	// Name of executable script or binary
-	Executable string `json:"executable"`
+	// Name of executable script or binary and its arguments
+	Executable []string `json:"executable"`
 	// Working directory (default, current Caddy working directory)
 	WorkingDirectory string `json:"workingDirectory,omitempty"`
-	// Arguments to submit to executable
-	Args []string `json:"args,omitempty"`
 	// Environment key value pairs (key=value) for this particular app
 	Envs []string `json:"envs,omitempty"`
 	// Environment keys to pass through for all apps
@@ -114,12 +112,10 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 		for d.NextBlock(0) {
 			switch d.Val() {
 			case "exec":
-				args := d.RemainingArgs()
-				if len(args) < 1 {
+				c.Executable = d.RemainingArgs()
+				if len(c.Executable) < 1 {
 					return d.Err("an executable needs to be specified")
 				}
-				c.Executable = args[0]
-				c.Args = args[1:]
 			case "dir":
 				if !d.Args(&c.WorkingDirectory) {
 					return d.ArgErr()
@@ -166,7 +162,7 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.processes = make(map[string]*processState)
 
 	if len(c.DynamicProxyDetector) == 0 {
-		if c.Executable == "" {
+		if len(c.Executable) == 0 {
 			return fmt.Errorf("exec (executable) is required when dynamic_proxy_detector is not set")
 		}
 
