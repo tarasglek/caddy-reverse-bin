@@ -145,24 +145,6 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 	}
 }
 
-// OutputLogger captures output into a string builder.
-// It is not thread-safe and should only be used in a single thread.
-type OutputLogger struct {
-	sb strings.Builder
-}
-
-func (ol *OutputLogger) Write(p []byte) (n int, err error) {
-	return ol.sb.Write(p)
-}
-
-func (ol *OutputLogger) String() string {
-	return ol.sb.String()
-}
-
-func (ol *OutputLogger) Clear() {
-	ol.sb.Reset()
-}
-
 type lineLogger struct {
 	logger    *zap.Logger
 	name      string
@@ -191,8 +173,6 @@ type proxyOverrides struct {
 }
 
 func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string) (*proxyOverrides, error) {
-	cmdOutput := &OutputLogger{}
-
 	overrides := new(proxyOverrides)
 	// If a dynamic proxy detector is configured, execute it to determine
 	// the specific parameters (executable, args, env, etc.) for the backend
@@ -320,12 +300,12 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(io.MultiWriter(stdoutLogger, cmdOutput), stdoutPipe)
+		_, _ = io.Copy(stdoutLogger, stdoutPipe)
 	}()
 
 	go func() {
 		defer wg.Done()
-		_, _ = io.Copy(io.MultiWriter(stderrLogger, cmdOutput), stderrPipe)
+		_, _ = io.Copy(stderrLogger, stderrPipe)
 	}()
 
 	if err := cmd.Start(); err != nil {
@@ -426,11 +406,11 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			zap.String("address", expected))
 		return overrides, nil
 	case err := <-exitChan:
-		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v\nRecent output:\n%s", err, cmdOutput.String())
+		return nil, fmt.Errorf("reverse proxy process exited during readiness check: %v", err)
 	case <-time.After(10 * time.Second):
 		if ps.cancel != nil {
 			ps.cancel()
 		}
-		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness\nRecent output:\n%s", cmdOutput.String())
+		return nil, fmt.Errorf("timeout waiting for reverse proxy process readiness")
 	}
 }
