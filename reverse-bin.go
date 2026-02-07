@@ -118,21 +118,23 @@ func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, er
 	if overrides != nil && overrides.ReverseProxyTo != nil {
 		toAddr = *overrides.ReverseProxyTo
 	}
-	if strings.HasPrefix(toAddr, ":") {
-		toAddr = "127.0.0.1" + toAddr
-	}
-	if !strings.HasPrefix(toAddr, "http://") && !strings.HasPrefix(toAddr, "https://") {
-		toAddr = "http://" + toAddr
-	}
 
-	target, err := url.Parse(toAddr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid reverse_proxy_to address: %v", err)
-	}
+	var dialAddr string
+	if strings.HasPrefix(toAddr, "unix/") {
+		dialAddr = toAddr
+	} else {
+		if strings.HasPrefix(toAddr, ":") {
+			toAddr = "127.0.0.1" + toAddr
+		}
+		if !strings.HasPrefix(toAddr, "http://") && !strings.HasPrefix(toAddr, "https://") {
+			toAddr = "http://" + toAddr
+		}
 
-	dialAddr := target.Host
-	if target.Scheme == "unix" {
-		dialAddr = "unix/" + target.Path
+		target, err := url.Parse(toAddr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid reverse_proxy_to address: %v", err)
+		}
+		dialAddr = target.Host
 	}
 	c.logger.Debug("selected upstream", zap.String("dial", dialAddr))
 	return []*reverseproxy.Upstream{
