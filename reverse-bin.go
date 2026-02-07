@@ -23,7 +23,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -305,6 +304,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	go func() {
 		defer wg.Done()
+		// make a util func to DRY below AI!
 		scanner := bufio.NewScanner(stderrPipe)
 		for scanner.Scan() {
 			c.logger.Info("", zap.Int("pid", pid), zap.String("stderr", scanner.Text()))
