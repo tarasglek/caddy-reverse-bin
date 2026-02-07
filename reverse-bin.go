@@ -144,38 +144,27 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 	}
 }
 
-type tailBuffer struct {
-	mu    sync.Mutex
-	lines []string
-	max   int
+type OutputLogger struct {
+	mu sync.Mutex
+	sb strings.Builder
 }
 
-func (tb *tailBuffer) Write(p []byte) (n int, err error) {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-	scanner := bufio.NewScanner(strings.NewReader(string(p)))
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line != "" {
-			tb.lines = append(tb.lines, line)
-			if len(tb.lines) > tb.max {
-				tb.lines = tb.lines[1:]
-			}
-		}
-	}
-	return len(p), nil
+func (ol *OutputLogger) Write(p []byte) (n int, err error) {
+	ol.mu.Lock()
+	defer ol.mu.Unlock()
+	return ol.sb.Write(p)
 }
 
-func (tb *tailBuffer) String() string {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-	return strings.Join(tb.lines, "\n")
+func (ol *OutputLogger) String() string {
+	ol.mu.Lock()
+	defer ol.mu.Unlock()
+	return ol.sb.String()
 }
 
-func (tb *tailBuffer) Clear() {
-	tb.mu.Lock()
-	defer tb.mu.Unlock()
-	tb.lines = nil
+func (ol *OutputLogger) Clear() {
+	ol.mu.Lock()
+	defer ol.mu.Unlock()
+	ol.sb.Reset()
 }
 
 type zapWriter struct {
@@ -205,7 +194,7 @@ type proxyOverrides struct {
 }
 
 func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string) (*proxyOverrides, error) {
-	recentOutput := &tailBuffer{max: 20}
+	recentOutput := &OutputLogger{}
 
 	overrides := new(proxyOverrides)
 	// If a dynamic proxy detector is configured, execute it to determine
