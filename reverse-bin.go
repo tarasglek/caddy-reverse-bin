@@ -216,12 +216,16 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			}
 		}
 
-		var outBuf bytes.Buffer
+		var outBuf, errBuf bytes.Buffer
 		detectorCmd.Stdout = &outBuf
-		// use buffer and log in whole chunk AI!
-		detectorCmd.Stderr = &lineLogger{logger: c.logger, outputKey: "stderr", pid: 0}
+		detectorCmd.Stderr = &errBuf
 
 		err := detectorCmd.Run()
+
+		if errBuf.Len() > 0 {
+			c.logger.Info("dynamic proxy detector stderr",
+				zap.String("stderr", errBuf.String()))
+		}
 
 		if detCtx.Err() == context.DeadlineExceeded {
 			return nil, fmt.Errorf("dynamic proxy detector timed out")
