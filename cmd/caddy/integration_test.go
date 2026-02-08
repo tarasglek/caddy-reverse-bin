@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// getRepoRoot returns the repository root directory
+// getRepoRoot returns the repository root directory.
 func getRepoRoot() string {
 	_, filename, _, ok := runtime.Caller(0)
 	if !ok {
@@ -20,7 +20,14 @@ func getRepoRoot() string {
 	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
 }
 
-// createSocketPath creates a unique temp socket path
+func requireIntegration(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+}
+
+// createSocketPath creates a unique temp socket path.
 func createSocketPath(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -32,9 +39,9 @@ func createSocketPath(t *testing.T) string {
 	}
 	socketPath := f.Name()
 	f.Close()
-	os.Remove(socketPath)
+	_ = os.Remove(socketPath)
 	t.Cleanup(func() {
-		os.Remove(socketPath)
+		_ = os.Remove(socketPath)
 	})
 	return socketPath
 }
@@ -71,6 +78,35 @@ func requirePaths(t *testing.T, checks ...pathCheck) {
 	}
 }
 
+type fixtures struct {
+	PythonApp string
+	AppDir    string
+	Detector  string
+}
+
+func mustFixtures(t *testing.T) fixtures {
+	t.Helper()
+	repoRoot := getRepoRoot()
+	f := fixtures{
+		PythonApp: filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py"),
+		AppDir:    filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo"),
+		Detector:  filepath.Join(repoRoot, "utils/discover-app/discover-app.py"),
+	}
+	requirePaths(t,
+		pathCheck{Label: "python test app", Path: f.PythonApp, MustBeRegular: true},
+		pathCheck{Label: "dynamic app dir", Path: f.AppDir, MustBeDir: true},
+		pathCheck{Label: "dynamic detector", Path: f.Detector, MustBeRegular: true},
+	)
+	return f
+}
+
+func startTestServer(t *testing.T, httpPort, httpsPort int, siteBlocks string) *Tester {
+	t.Helper()
+	tester := NewTester(t)
+	tester.InitServerWithDefaults(httpPort, httpsPort, siteBlocks)
+	return tester
+}
+
 func assertStatus5xx(t *testing.T, tester *Tester, rawURL string) string {
 	t.Helper()
 	resp, err := tester.Client.Get(rawURL)
@@ -91,6 +127,15 @@ func assertStatus5xx(t *testing.T, tester *Tester, rawURL string) string {
 	return body
 }
 
+func assertNonEmpty200(t *testing.T, tester *Tester, rawURL string) string {
+	t.Helper()
+	resp, body := tester.AssertGetResponse(rawURL, 200, "")
+	if body == "" {
+		t.Fatalf("expected non-empty response body for %s (status=%d headers=%v)", rawURL, resp.StatusCode, resp.Header)
+	}
+	return body
+}
+
 func reverseBinStaticAppBlock(appPath, socketPath string, extraDirectives ...string) string {
 	directives := []string{
 		fmt.Sprintf("exec uv run --script %s", appPath),
@@ -102,86 +147,42 @@ func reverseBinStaticAppBlock(appPath, socketPath string, extraDirectives ...str
 	return fmt.Sprintf("reverse-bin {\n\t\t%s\n\t}", strings.Join(directives, "\n\t\t"))
 }
 
+func reverseBinDynamicDetectorBlock(detectorArgs []string, extraDirectives ...string) string {
+	directives := []string{fmt.Sprintf("dynamic_proxy_detector %s", strings.Join(detectorArgs, " "))}
+	directives = append(directives, extraDirectives...)
+	return fmt.Sprintf("reverse-bin {\n\t\t%s\n\t}", strings.Join(directives, "\n\t\t"))
+}
+
 func siteWithReverseBin(host string, block string) string {
 	return fmt.Sprintf("\nhttp://%s {\n\t%s\n}\n", host, block)
 }
 
-// TestBasicReverseProxy tests basic Unix socket reverse proxy functionality
 func TestBasicReverseProxy(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	repoRoot := getRepoRoot()
-	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-
-	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
+	requireIntegration(t)
+	f := mustFixtures(t)
 
 	socketPath := createSocketPath(t)
-	tester := NewTester(t)
+	siteBlocks := siteWithReverseBin("localhost:9080", reverseBinStaticAppBlock(f.PythonApp, socketPath))
+	tester := startTestServer(t, 9080, 9443, siteBlocks)
 
-	siteBlocks := siteWithReverseBin("localhost:9080", reverseBinStaticAppBlock(pythonApp, socketPath))
-
-	tester.InitServerWithDefaults(9080, 9443, siteBlocks)
-
-	// Make a request - this should start the process and proxy
-	resp, body := tester.AssertGetResponse("http://localhost:9080/test/path", 200, "")
-
-	t.Logf("Response body: %s", body)
-
-	// Verify we got a response from the Python echo server
-	if body == "" {
-		t.Logf("empty body response status=%d headers=%v", resp.StatusCode, resp.Header)
-		t.Error("expected non-empty response body")
-	}
-
-	_ = resp
+	_ = assertNonEmpty200(t, tester, "http://localhost:9080/test/path")
 }
 
-// TestDynamicDiscovery tests dynamic proxy detector functionality
 func TestDynamicDiscovery(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireIntegration(t)
+	f := mustFixtures(t)
 
-	repoRoot := getRepoRoot()
-	detector := filepath.Join(repoRoot, "utils/discover-app/discover-app.py")
-
-	// Use the unix-echo app which has a .env with unix socket config
-	appDir := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo")
-	requirePaths(t,
-		pathCheck{Label: "dynamic detector", Path: detector, MustBeRegular: true},
-		pathCheck{Label: "dynamic app dir", Path: appDir, MustBeDir: true},
+	siteBlocks := siteWithReverseBin(
+		"localhost:9082",
+		reverseBinDynamicDetectorBlock([]string{"uv", "run", "--script", f.Detector, f.AppDir}),
 	)
+	tester := startTestServer(t, 9082, 9445, siteBlocks)
 
-	tester := NewTester(t)
-
-	siteBlocks := fmt.Sprintf(`
-http://localhost:9082 {
-	reverse-bin {
-		dynamic_proxy_detector uv run --script %s %s
-	}
-}
-`, detector, appDir)
-
-	tester.InitServerWithDefaults(9082, 9445, siteBlocks)
-
-	// Make a request
-	resp, body := tester.AssertGetResponse("http://localhost:9082/dynamic/test", 200, "")
-
-	t.Logf("Response body: %s", body)
-
-	if body == "" {
-		t.Error("expected non-empty response body from dynamically discovered app")
-	}
-
-	_ = resp
+	_ = assertNonEmpty200(t, tester, "http://localhost:9082/dynamic/test")
 }
 
 func TestDynamicDiscovery_DetectorFailure(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
+	requireIntegration(t)
 
 	tmpDir := t.TempDir()
 	failDetector := createExecutableScript(t, tmpDir, "detector-fail.py", `#!/usr/bin/env python3
@@ -190,16 +191,11 @@ print("detector failed on purpose", file=sys.stderr)
 sys.exit(2)
 `)
 
-	tester := NewTester(t)
-	siteBlocks := fmt.Sprintf(`
-http://localhost:9086 {
-	reverse-bin {
-		dynamic_proxy_detector %s {path}
-	}
-}
-`, failDetector)
-
-	tester.InitServerWithDefaults(9086, 9449, siteBlocks)
+	siteBlocks := siteWithReverseBin(
+		"localhost:9086",
+		reverseBinDynamicDetectorBlock([]string{failDetector, "{path}"}),
+	)
+	tester := startTestServer(t, 9086, 9449, siteBlocks)
 
 	body := assertStatus5xx(t, tester, "http://localhost:9086/fail")
 	if !strings.Contains(body, "dynamic proxy detector failed") {
@@ -208,13 +204,8 @@ http://localhost:9086 {
 }
 
 func TestDynamicDiscovery_FirstRequestOK_SecondPathFails(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	repoRoot := getRepoRoot()
-	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
+	requireIntegration(t)
+	f := mustFixtures(t)
 
 	socketPath := createSocketPath(t)
 	tmpDir := t.TempDir()
@@ -233,60 +224,32 @@ if path == "/ok":
 
 print("intentional detector failure for path=" + path, file=sys.stderr)
 sys.exit(3)
-`, pythonApp, "unix/"+socketPath, "REVERSE_PROXY_TO=unix/"+socketPath))
+`, f.PythonApp, "unix/"+socketPath, "REVERSE_PROXY_TO=unix/"+socketPath))
 
-	tester := NewTester(t)
-	siteBlocks := fmt.Sprintf(`
-http://localhost:9087 {
-	reverse-bin {
-		dynamic_proxy_detector %s {path}
-		pass_all_env
-	}
-}
-`, detector)
+	siteBlocks := siteWithReverseBin(
+		"localhost:9087",
+		reverseBinDynamicDetectorBlock([]string{detector, "{path}"}, "pass_all_env"),
+	)
+	tester := startTestServer(t, 9087, 9450, siteBlocks)
 
-	tester.InitServerWithDefaults(9087, 9450, siteBlocks)
-
-	_, body1 := tester.AssertGetResponse("http://localhost:9087/ok", 200, "")
-	if body1 == "" {
-		t.Fatal("expected non-empty response for /ok")
-	}
-
+	_ = assertNonEmpty200(t, tester, "http://localhost:9087/ok")
 	_ = assertStatus5xx(t, tester, "http://localhost:9087/bad")
-
-	_, body3 := tester.AssertGetResponse("http://localhost:9087/ok", 200, "")
-	if body3 == "" {
-		t.Fatal("expected non-empty response for second /ok")
-	}
+	_ = assertNonEmpty200(t, tester, "http://localhost:9087/ok")
 }
 
-// TestLifecycleIdleTimeout tests that processes are cleaned up after idle timeout
 func TestLifecycleIdleTimeout(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	repoRoot := getRepoRoot()
-	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
+	requireIntegration(t)
+	f := mustFixtures(t)
 
 	socketPath := createSocketPath(t)
-	tester := NewTester(t)
+	siteBlocks := siteWithReverseBin("localhost:9083", reverseBinStaticAppBlock(f.PythonApp, socketPath))
+	tester := startTestServer(t, 9083, 9446, siteBlocks)
 
-	siteBlocks := siteWithReverseBin("localhost:9083", reverseBinStaticAppBlock(pythonApp, socketPath))
-
-	tester.InitServerWithDefaults(9083, 9446, siteBlocks)
-
-	// First request should start the process
-	resp1, body1 := tester.AssertGetResponse("http://localhost:9083/first", 200, "")
+	body1 := assertNonEmpty200(t, tester, "http://localhost:9083/first")
 	t.Logf("First response: %s", body1)
 
-	// Second request should reuse the running process
-	resp2, body2 := tester.AssertGetResponse("http://localhost:9083/second", 200, "")
+	body2 := assertNonEmpty200(t, tester, "http://localhost:9083/second")
 	t.Logf("Second response: %s", body2)
-
-	_ = resp1
-	_ = resp2
 
 	// Note: Testing actual idle timeout cleanup would require:
 	// 1. Adding idle_timeout config option to reverse-bin
@@ -295,57 +258,40 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 	// This is left as a future enhancement
 }
 
-// TestReadinessCheck tests that reverse-bin waits for process readiness
 func TestReadinessCheck(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	repoRoot := getRepoRoot()
-	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
+	requireIntegration(t)
+	f := mustFixtures(t)
 
 	socketPath := createSocketPath(t)
-	tester := NewTester(t)
+	siteBlocks := siteWithReverseBin("localhost:9084", reverseBinStaticAppBlock(f.PythonApp, socketPath, "readiness_check GET /"))
+	tester := startTestServer(t, 9084, 9447, siteBlocks)
 
-	siteBlocks := siteWithReverseBin("localhost:9084", reverseBinStaticAppBlock(pythonApp, socketPath, "readiness_check GET /"))
-
-	tester.InitServerWithDefaults(9084, 9447, siteBlocks)
-
-	// The request should succeed after readiness check passes
-	resp, body := tester.AssertGetResponse("http://localhost:9084/ready", 200, "")
+	body := assertNonEmpty200(t, tester, "http://localhost:9084/ready")
 	t.Logf("Response after readiness: %s", body)
-
-	_ = resp
 }
 
-// TestMultipleApps tests multiple reverse-bin instances with different Unix sockets
 func TestMultipleApps(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	repoRoot := getRepoRoot()
-	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
+	requireIntegration(t)
+	f := mustFixtures(t)
 
 	socket1 := createSocketPath(t)
 	socket2 := createSocketPath(t)
-	tester := NewTester(t)
 
-	siteBlocks := siteWithReverseBin("localhost:9085/app1", reverseBinStaticAppBlock(pythonApp, socket1)) +
-		siteWithReverseBin("localhost:9085/app2", reverseBinStaticAppBlock(pythonApp, socket2))
+	siteBlocks := `
+http://localhost:9085 {
+	handle /app1* {
+		` + reverseBinStaticAppBlock(f.PythonApp, socket1) + `
+	}
+	handle /app2* {
+		` + reverseBinStaticAppBlock(f.PythonApp, socket2) + `
+	}
+}
+`
+	tester := startTestServer(t, 9085, 9448, siteBlocks)
 
-	tester.InitServerWithDefaults(9085, 9448, siteBlocks)
-
-	// Test app1
-	resp1, body1 := tester.AssertGetResponse("http://localhost:9085/app1/test", 200, "")
+	body1 := assertNonEmpty200(t, tester, "http://localhost:9085/app1/test")
 	t.Logf("App1 response: %s", body1)
 
-	// Test app2
-	resp2, body2 := tester.AssertGetResponse("http://localhost:9085/app2/test", 200, "")
+	body2 := assertNonEmpty200(t, tester, "http://localhost:9085/app2/test")
 	t.Logf("App2 response: %s", body2)
-
-	_ = resp1
-	_ = resp2
 }
