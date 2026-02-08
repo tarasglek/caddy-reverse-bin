@@ -12,15 +12,19 @@ The goal is to replace the legacy CGI-based tests with modern tests that validat
     - `readiness_check`
     - `dynamic_proxy_detector`
 - **Upstream Selection:** Test `GetUpstreams` logic, ensuring it correctly parses various `reverse_proxy_to` formats (IP, port-only, unix sockets).
+- **Process Key Generation:** Verify `getProcessKey` correctly handles replacers for dynamic discovery.
 
 ## 3. Integration Tests (`module_test.go`)
 - **Basic Reverse Proxy:**
-    - Use a simple python or go "echo" server as the backend.
+    - Use `examples/reverse-proxy/apps/python3-echo/main.py` as the backend.
     - Verify that `reverse-bin` starts the process on the first request.
     - Verify that the request is successfully proxied and receives a response.
+- **Unix Socket Proxy:**
+    - Use `examples/reverse-proxy/apps/python3-unix-echo/main.py`.
+    - Verify `reverse_proxy_to unix/...` works correctly.
 - **Dynamic Discovery:**
-    - Create a mock "detector" script that returns JSON overrides.
-    - Verify that `reverse-bin` executes the detector and uses the returned `reverse_proxy_to` and `executable`.
+    - Use `utils/discover-app/discover-app.py` as the detector.
+    - Verify that `reverse-bin` executes the detector and uses the returned JSON to configure the backend.
 - **Lifecycle Management:**
     - Verify that the process is terminated after the idle timeout (shortened for testing).
     - Verify that the process is cleaned up when Caddy stops.

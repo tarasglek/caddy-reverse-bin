@@ -42,17 +42,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// passAll returns a slice of strings made up of each environment key
-func passAll() (list []string) {
-	envList := os.Environ() // ["HOME=/home/foo", "LVL=2", ...]
-	for _, str := range envList {
-		pos := strings.Index(str, "=")
-		if pos > 0 {
-			list = append(list, str[:pos])
-		}
-	}
-	return
-}
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler; it handles the HTTP request
 // manages idle process killing
