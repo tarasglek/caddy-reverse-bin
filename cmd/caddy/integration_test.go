@@ -239,14 +239,18 @@ func TestBasicReverseProxy(t *testing.T) {
 	fixture := `
 {
 	admin off
+	http_port 9080
 }
 
-http://unix/{{CADDY_SOCKET}} {
-	reverse-bin {
-		exec uv run --script {{PYTHON_APP}}
-		reverse_proxy_to unix/{{APP_SOCKET}}
-		env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
-		pass_all_env
+http://localhost {
+	bind unix/{{CADDY_SOCKET}}
+	handle /test/path* {
+		reverse-bin {
+			exec uv run --script {{PYTHON_APP}}
+			reverse_proxy_to unix/{{APP_SOCKET}}
+			env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
+			pass_all_env
+		}
 	}
 }
 `
