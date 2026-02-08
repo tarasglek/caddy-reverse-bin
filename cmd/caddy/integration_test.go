@@ -48,6 +48,29 @@ func createExecutableScript(t *testing.T, dir, name, content string) string {
 	return path
 }
 
+type pathCheck struct {
+	Label         string
+	Path          string
+	MustBeDir     bool
+	MustBeRegular bool
+}
+
+func requirePaths(t *testing.T, checks ...pathCheck) {
+	t.Helper()
+	for _, c := range checks {
+		info, err := os.Stat(c.Path)
+		if err != nil {
+			t.Fatalf("required %s missing/unreadable at %s: %v", c.Label, c.Path, err)
+		}
+		if c.MustBeDir && !info.IsDir() {
+			t.Fatalf("required %s is not a directory: %s", c.Label, c.Path)
+		}
+		if c.MustBeRegular && !info.Mode().IsRegular() {
+			t.Fatalf("required %s is not a regular file: %s", c.Label, c.Path)
+		}
+	}
+}
+
 func assertStatus5xx(t *testing.T, tester *Tester, rawURL string) string {
 	t.Helper()
 	resp, err := tester.Client.Get(rawURL)
@@ -68,6 +91,21 @@ func assertStatus5xx(t *testing.T, tester *Tester, rawURL string) string {
 	return body
 }
 
+func reverseBinStaticAppBlock(appPath, socketPath string, extraDirectives ...string) string {
+	directives := []string{
+		fmt.Sprintf("exec uv run --script %s", appPath),
+		fmt.Sprintf("reverse_proxy_to unix/%s", socketPath),
+		fmt.Sprintf("env REVERSE_PROXY_TO=unix/%s", socketPath),
+		"pass_all_env",
+	}
+	directives = append(directives, extraDirectives...)
+	return fmt.Sprintf("reverse-bin {\n\t\t%s\n\t}", strings.Join(directives, "\n\t\t"))
+}
+
+func siteWithReverseBin(host string, block string) string {
+	return fmt.Sprintf("\nhttp://%s {\n\t%s\n}\n", host, block)
+}
+
 // TestBasicReverseProxy tests basic Unix socket reverse proxy functionality
 func TestBasicReverseProxy(t *testing.T) {
 	if testing.Short() {
@@ -77,24 +115,12 @@ func TestBasicReverseProxy(t *testing.T) {
 	repoRoot := getRepoRoot()
 	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
 
-	// Verify the test app exists
-	if _, err := os.Stat(pythonApp); os.IsNotExist(err) {
-		t.Skipf("test app not found: %s", pythonApp)
-	}
+	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
 
 	socketPath := createSocketPath(t)
 	tester := NewTester(t)
 
-	siteBlocks := fmt.Sprintf(`
-http://localhost:9080 {
-	reverse-bin {
-		exec uv run --script %s
-		reverse_proxy_to unix/%s
-		env REVERSE_PROXY_TO=unix/%s
-		pass_all_env
-	}
-}
-`, pythonApp, socketPath, socketPath)
+	siteBlocks := siteWithReverseBin("localhost:9080", reverseBinStaticAppBlock(pythonApp, socketPath))
 
 	tester.InitServerWithDefaults(9080, 9443, siteBlocks)
 
@@ -121,13 +147,12 @@ func TestDynamicDiscovery(t *testing.T) {
 	repoRoot := getRepoRoot()
 	detector := filepath.Join(repoRoot, "utils/discover-app/discover-app.py")
 
-	// Verify detector exists
-	if _, err := os.Stat(detector); os.IsNotExist(err) {
-		t.Skipf("detector not found: %s", detector)
-	}
-
 	// Use the unix-echo app which has a .env with unix socket config
 	appDir := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo")
+	requirePaths(t,
+		pathCheck{Label: "dynamic detector", Path: detector, MustBeRegular: true},
+		pathCheck{Label: "dynamic app dir", Path: appDir, MustBeDir: true},
+	)
 
 	tester := NewTester(t)
 
@@ -189,9 +214,7 @@ func TestDynamicDiscovery_FirstRequestOK_SecondPathFails(t *testing.T) {
 
 	repoRoot := getRepoRoot()
 	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-	if _, err := os.Stat(pythonApp); os.IsNotExist(err) {
-		t.Skipf("test app not found: %s", pythonApp)
-	}
+	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
 
 	socketPath := createSocketPath(t)
 	tmpDir := t.TempDir()
@@ -245,24 +268,12 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 
 	repoRoot := getRepoRoot()
 	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-
-	if _, err := os.Stat(pythonApp); os.IsNotExist(err) {
-		t.Skipf("test app not found: %s", pythonApp)
-	}
+	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
 
 	socketPath := createSocketPath(t)
 	tester := NewTester(t)
 
-	siteBlocks := fmt.Sprintf(`
-http://localhost:9083 {
-	reverse-bin {
-		exec uv run --script %s
-		reverse_proxy_to unix/%s
-		env REVERSE_PROXY_TO=unix/%s
-		pass_all_env
-	}
-}
-`, pythonApp, socketPath, socketPath)
+	siteBlocks := siteWithReverseBin("localhost:9083", reverseBinStaticAppBlock(pythonApp, socketPath))
 
 	tester.InitServerWithDefaults(9083, 9446, siteBlocks)
 
@@ -292,25 +303,12 @@ func TestReadinessCheck(t *testing.T) {
 
 	repoRoot := getRepoRoot()
 	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-
-	if _, err := os.Stat(pythonApp); os.IsNotExist(err) {
-		t.Skipf("test app not found: %s", pythonApp)
-	}
+	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
 
 	socketPath := createSocketPath(t)
 	tester := NewTester(t)
 
-	siteBlocks := fmt.Sprintf(`
-http://localhost:9084 {
-	reverse-bin {
-		exec uv run --script %s
-		reverse_proxy_to unix/%s
-		env REVERSE_PROXY_TO=unix/%s
-		pass_all_env
-		readiness_check GET /
-	}
-}
-`, pythonApp, socketPath, socketPath)
+	siteBlocks := siteWithReverseBin("localhost:9084", reverseBinStaticAppBlock(pythonApp, socketPath, "readiness_check GET /"))
 
 	tester.InitServerWithDefaults(9084, 9447, siteBlocks)
 
@@ -329,34 +327,14 @@ func TestMultipleApps(t *testing.T) {
 
 	repoRoot := getRepoRoot()
 	pythonApp := filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py")
-
-	if _, err := os.Stat(pythonApp); os.IsNotExist(err) {
-		t.Skipf("test app not found: %s", pythonApp)
-	}
+	requirePaths(t, pathCheck{Label: "python test app", Path: pythonApp, MustBeRegular: true})
 
 	socket1 := createSocketPath(t)
 	socket2 := createSocketPath(t)
 	tester := NewTester(t)
 
-	siteBlocks := fmt.Sprintf(`
-http://localhost:9085/app1 {
-	reverse-bin {
-		exec uv run --script %s
-		reverse_proxy_to unix/%s
-		env REVERSE_PROXY_TO=unix/%s
-		pass_all_env
-	}
-}
-
-http://localhost:9085/app2 {
-	reverse-bin {
-		exec uv run --script %s
-		reverse_proxy_to unix/%s
-		env REVERSE_PROXY_TO=unix/%s
-		pass_all_env
-	}
-}
-`, pythonApp, socket1, socket1, pythonApp, socket2, socket2)
+	siteBlocks := siteWithReverseBin("localhost:9085/app1", reverseBinStaticAppBlock(pythonApp, socket1)) +
+		siteWithReverseBin("localhost:9085/app2", reverseBinStaticAppBlock(pythonApp, socket2))
 
 	tester.InitServerWithDefaults(9085, 9448, siteBlocks)
 
