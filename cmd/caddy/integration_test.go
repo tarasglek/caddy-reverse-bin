@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	_ "github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
@@ -266,7 +265,7 @@ http://unix/{{CADDY_SOCKET}} {
 		t.Logf("adapter warning: %s", w.Message)
 	}
 
-	cfg, err := caddy.LoadConfig(configJSON, true)
+	cfg, err := caddy.Load(configJSON, true)
 	if err != nil {
 		t.Fatalf("failed to load config: %v", err)
 	}
