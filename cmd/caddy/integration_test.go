@@ -12,6 +12,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	_ "github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
 // getRepoRoot returns the repository root directory.
@@ -229,11 +234,12 @@ func TestBasicReverseProxy(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
+	caddySocketPath := createSocketPath(t)
+	appSocketPath := createSocketPath(t)
+
 	fixture := `
 {
-	admin localhost:2999
-	http_port 9080
-	https_port 9443
+	admin off
 }
 
 http://unix/{{CADDY_SOCKET}} {
@@ -245,18 +251,31 @@ http://unix/{{CADDY_SOCKET}} {
 	}
 }
 `
-
-	caddySocketPath := createSocketPath(t)
-	appSocketPath := createSocketPath(t)
-
 	rendered := renderTemplate(fixture, map[string]string{
 		"CADDY_SOCKET": caddySocketPath,
 		"PYTHON_APP":   f.PythonApp,
 		"APP_SOCKET":   appSocketPath,
 	})
 
-	tester := NewTester(t)
-	tester.InitServer(rendered, "caddyfile")
+	adapter := caddyfile.Adapter{}
+	configJSON, warn, err := adapter.Adapt([]byte(rendered), nil)
+	if err != nil {
+		t.Fatalf("failed to adapt caddyfile: %v", err)
+	}
+	for _, w := range warn {
+		t.Logf("adapter warning: %s", w.Message)
+	}
+
+	cfg, err := caddy.LoadConfig(configJSON, true)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	err = caddy.Run(cfg)
+	if err != nil {
+		t.Fatalf("failed to start caddy: %v", err)
+	}
+	t.Cleanup(func() { _ = caddy.Stop() })
 
 	_ = assertNonEmpty200Unix(t, caddySocketPath, "/test/path")
 }
