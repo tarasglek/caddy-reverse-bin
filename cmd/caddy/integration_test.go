@@ -138,8 +138,11 @@ func newUnixHTTPClient(socketPath string) *http.Client {
 	return &http.Client{Transport: transport, Timeout: 10 * time.Second}
 }
 
-func assertNonEmpty200Unix(t *testing.T, client *http.Client, rawURL string) string {
+func assertNonEmpty200Unix(t *testing.T, socketPath, requestPath string) string {
 	t.Helper()
+	client := newUnixHTTPClient(socketPath)
+	rawURL := "http://localhost" + requestPath
+
 	var (
 		resp *http.Response
 		err  error
@@ -151,7 +154,7 @@ func assertNonEmpty200Unix(t *testing.T, client *http.Client, rawURL string) str
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("request failed: %v", err)
+			t.Fatalf("request failed for %s via %s: %v", rawURL, socketPath, err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -164,10 +167,10 @@ func assertNonEmpty200Unix(t *testing.T, client *http.Client, rawURL string) str
 	body := string(bodyBytes)
 
 	if resp.StatusCode != 200 {
-		t.Fatalf("expected 200 for %s, got %d (body: %s)", rawURL, resp.StatusCode, body)
+		t.Fatalf("expected 200 for %s via %s, got %d (body: %s)", rawURL, socketPath, resp.StatusCode, body)
 	}
 	if body == "" {
-		t.Fatalf("expected non-empty response body for %s", rawURL)
+		t.Fatalf("expected non-empty response body for %s via %s", rawURL, socketPath)
 	}
 	return body
 }
@@ -255,8 +258,7 @@ http://unix/{{CADDY_SOCKET}} {
 	tester := NewTester(t)
 	tester.InitServer(rendered, "caddyfile")
 
-	client := newUnixHTTPClient(caddySocketPath)
-	_ = assertNonEmpty200Unix(t, client, "http://unix/test/path")
+	_ = assertNonEmpty200Unix(t, caddySocketPath, caddySocketPath+"/test/path")
 }
 
 func TestDynamicDiscovery(t *testing.T) {
