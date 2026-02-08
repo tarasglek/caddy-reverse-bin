@@ -115,15 +115,14 @@ def main() -> None:
     except Exception:
         pass
 
-    # Use address from .env if present, otherwise find a free port
-    reverse_proxy_to = dot_env_vars.get("REVERSE_PROXY_TO")
-    if reverse_proxy_to:
-        if reverse_proxy_to.startswith("unix/"):
-            socket_path = reverse_proxy_to[5:]
-            if os.path.isabs(socket_path):
-                print(f"Error: Unix socket path in REVERSE_PROXY_TO must be relative: {socket_path}", file=sys.stderr)
-                sys.exit(1)
-    else:
+    # Resolve address with precedence: .env > process env > free TCP port
+    reverse_proxy_to = dot_env_vars.get("REVERSE_PROXY_TO") or os.environ.get("REVERSE_PROXY_TO")
+    if reverse_proxy_to and reverse_proxy_to.startswith("unix/"):
+        socket_path = reverse_proxy_to[5:]
+        if os.path.isabs(socket_path):
+            print(f"Error: Unix socket path in REVERSE_PROXY_TO must be relative: {socket_path}", file=sys.stderr)
+            sys.exit(1)
+    if not reverse_proxy_to:
         reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
 
     executable, envs = detect_dir_and_port(working_dir, reverse_proxy_to)
