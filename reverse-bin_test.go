@@ -10,7 +10,6 @@ import (
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -23,7 +22,8 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 	}{
 		{
 			name: "basic executable with args",
-			input: `reverse-bin /some/file a b c d 1 {
+			input: `reverse-bin {
+  exec /some/file a b c d 1
   dir /somewhere
   env foo=bar what=ever
   pass_env some_env other_env
