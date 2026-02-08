@@ -1,0 +1,43 @@
+{
+  "admin": {
+    "listen": "localhost:2999"
+  },
+  "logging": {
+    "logs": {
+      "default": {
+        "level": "DEBUG"
+      }
+    }
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "srv0": {
+          "listen": [
+            "unix//{{CADDY_SOCKET}}"
+          ],
+          "routes": [
+            {
+              "handle": [
+                {
+                  "handler": "reverse-bin",
+                  "executable": [
+                    "uv",
+                    "run",
+                    "--script",
+                    "{{PYTHON_APP}}"
+                  ],
+                  "reverse_proxy_to": "unix//{{APP_SOCKET}}",
+                  "envs": [
+                    "REVERSE_PROXY_TO=unix//{{APP_SOCKET}}"
+                  ],
+                  "passAllEnvs": true
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}

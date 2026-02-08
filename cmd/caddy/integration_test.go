@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // getRepoRoot returns the repository root directory.
@@ -107,6 +111,67 @@ func startTestServer(t *testing.T, httpPort, httpsPort int, siteBlocks string) *
 	return tester
 }
 
+func readCaddyFixture(t *testing.T, fixturePath string) string {
+	t.Helper()
+	b, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("failed to read fixture %s: %v", fixturePath, err)
+	}
+	return string(b)
+}
+
+func renderTemplate(input string, values map[string]string) string {
+	replacements := make([]string, 0, len(values)*2)
+	for k, v := range values {
+		replacements = append(replacements, "{{"+k+"}}", v)
+	}
+	return strings.NewReplacer(replacements...).Replace(input)
+}
+
+func newUnixHTTPClient(socketPath string) *http.Client {
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", socketPath)
+		},
+	}
+	return &http.Client{Transport: transport, Timeout: 10 * time.Second}
+}
+
+func assertNonEmpty200Unix(t *testing.T, client *http.Client, rawURL string) string {
+	t.Helper()
+	var (
+		resp *http.Response
+		err  error
+	)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, err = client.Get(rawURL)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("request failed: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed reading response body: %v", err)
+	}
+	body := string(bodyBytes)
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200 for %s, got %d (body: %s)", rawURL, resp.StatusCode, body)
+	}
+	if body == "" {
+		t.Fatalf("expected non-empty response body for %s", rawURL)
+	}
+	return body
+}
+
 func assertStatus5xx(t *testing.T, tester *Tester, rawURL string) string {
 	t.Helper()
 	resp, err := tester.Client.Get(rawURL)
@@ -161,11 +226,24 @@ func TestBasicReverseProxy(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
-	socketPath := createSocketPath(t)
-	siteBlocks := siteWithReverseBin("localhost:9080", reverseBinStaticAppBlock(f.PythonApp, socketPath))
-	tester := startTestServer(t, 9080, 9443, siteBlocks)
+	repoRoot := getRepoRoot()
+	fixturePath := filepath.Join(repoRoot, "cmd/caddy/testdata/integration/caddyfiles/basic_static.json")
+	fixture := readCaddyFixture(t, fixturePath)
 
-	_ = assertNonEmpty200(t, tester, "http://localhost:9080/test/path")
+	caddySocketPath := createSocketPath(t)
+	appSocketPath := createSocketPath(t)
+
+	rendered := renderTemplate(fixture, map[string]string{
+		"CADDY_SOCKET": caddySocketPath,
+		"PYTHON_APP":   f.PythonApp,
+		"APP_SOCKET":   appSocketPath,
+	})
+
+	tester := NewTester(t)
+	tester.InitServer(rendered, "json")
+
+	client := newUnixHTTPClient(caddySocketPath)
+	_ = assertNonEmpty200Unix(t, client, "http://unix/test/path")
 }
 
 func TestDynamicDiscovery(t *testing.T) {
