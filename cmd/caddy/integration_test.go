@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	caddycmd "github.com/caddyserver/caddy/v2/cmd"
 	_ "github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
@@ -256,24 +256,18 @@ http://unix/{{CADDY_SOCKET}} {
 		"APP_SOCKET":   appSocketPath,
 	})
 
-	adapter := caddyfile.Adapter{}
-	configJSON, warn, err := adapter.Adapt([]byte(rendered), nil)
+	tmpCaddyfile, err := os.CreateTemp("", "Caddyfile-*")
 	if err != nil {
-		t.Fatalf("failed to adapt caddyfile: %v", err)
+		t.Fatalf("failed to create temp Caddyfile: %v", err)
 	}
-	for _, w := range warn {
-		t.Logf("adapter warning: %s", w.Message)
+	defer os.Remove(tmpCaddyfile.Name())
+	if _, err := tmpCaddyfile.WriteString(rendered); err != nil {
+		t.Fatalf("failed to write temp Caddyfile: %v", err)
 	}
+	tmpCaddyfile.Close()
 
-	cfg, err := caddy.Load(configJSON, true)
-	if err != nil {
-		t.Fatalf("failed to load config: %v", err)
-	}
-
-	err = caddy.Run(cfg)
-	if err != nil {
-		t.Fatalf("failed to start caddy: %v", err)
-	}
+	os.Args = []string{"caddy", "run", "--config", tmpCaddyfile.Name(), "--adapter", "caddyfile"}
+	go caddycmd.Main()
 	t.Cleanup(func() { _ = caddy.Stop() })
 
 	_ = assertNonEmpty200Unix(t, caddySocketPath, "/test/path")
