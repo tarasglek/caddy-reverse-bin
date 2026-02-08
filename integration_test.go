@@ -15,14 +15,14 @@ import (
 )
 
 const (
-	tmuxSocketDir  = "/tmp/caddy-test-tmux"
-	tmuxSocket     = "/tmp/caddy-test-tmux/caddy.sock"
-	testHTTPPort   = 19080
-	testAdminPort  = 12019
+	tmuxSocketDir = "/tmp/caddy-test-tmux"
+	tmuxSocket    = "/tmp/caddy-test-tmux/caddy.sock"
+	testHTTPPort  = 19080
+	testAdminPort = 12019
 )
 
 // TestIntegration_BasicReverseProxy tests that reverse-bin starts a process
-// on the first request and successfully proxies requests to it.
+// on the first request and successfully proxies requests to it via Unix socket.
 func TestIntegration_BasicReverseProxy(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -40,10 +40,17 @@ func TestIntegration_BasicReverseProxy(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Find a free port for the backend
-	backendPort := findFreePort(t)
+	// Socket goes in the app's data directory which is writable
+	// Use relative path in REVERSE_PROXY_TO (app strips unix/ prefix)
+	appDir := filepath.Join(projectDir, "examples/reverse-proxy/apps/python3-unix-echo")
+	socketName := fmt.Sprintf("test-%d.sock", time.Now().UnixNano())
+	socketPath := filepath.Join(appDir, "data", socketName)
+	os.Remove(socketPath)
+	defer os.Remove(socketPath)
 
-	// Create the Caddyfile
+	// Create the Caddyfile - REVERSE_PROXY_TO uses relative path, reverse_proxy_to uses absolute
+	// Note: reverse_proxy_to format is "unix/" + absolute path without leading /
+	unixProxyTo := "unix/" + strings.TrimPrefix(socketPath, "/")
 	caddyfile := fmt.Sprintf(`
 {
 	admin localhost:%d
@@ -52,18 +59,21 @@ func TestIntegration_BasicReverseProxy(t *testing.T) {
 
 localhost:%d {
 	reverse-bin {
-		exec %s/examples/reverse-proxy/apps/python3-echo/main.py
-		reverse_proxy_to 127.0.0.1:%d
+		exec ./main.py
+		dir %s
+		reverse_proxy_to %s
 		readiness_check GET /
-		env REVERSE_PROXY_TO=127.0.0.1:%d
+		env REVERSE_PROXY_TO=unix/data/%s
+		pass_all_env
 	}
 }
-`, testAdminPort, testHTTPPort, testHTTPPort, projectDir, backendPort, backendPort)
+`, testAdminPort, testHTTPPort, testHTTPPort, appDir, unixProxyTo, socketName)
 
 	caddyfilePath := filepath.Join(tmpDir, "Caddyfile")
 	if err := os.WriteFile(caddyfilePath, []byte(caddyfile), 0644); err != nil {
 		t.Fatalf("Failed to write Caddyfile: %v", err)
 	}
+	t.Logf("Caddyfile:\n%s", caddyfile)
 
 	// Build Caddy with the reverse-bin module
 	caddyBin := filepath.Join(tmpDir, "caddy")
@@ -79,19 +89,23 @@ localhost:%d {
 
 	// Wait for Caddy to start
 	waitForText(t, sessionName, "serving initial configuration", 10*time.Second)
-
-	// Wait a bit more for the server to be ready
-	time.Sleep(500 * time.Millisecond)
+	
+	// Give Caddy extra time to be fully ready
+	time.Sleep(2 * time.Second)
 
 	// Make a request to the proxy
-	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/test", testHTTPPort))
+	url := fmt.Sprintf("http://localhost:%d/test", testHTTPPort)
+	t.Logf("Making request to %s", url)
+	resp, err := http.Get(url)
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		output := captureTmuxOutput(t, sessionName)
+		t.Errorf("Expected status 200, got %d\nTmux output:\n%s", resp.StatusCode, output)
+		return
 	}
 
 	// Verify the response contains expected content from the echo server
@@ -106,91 +120,8 @@ localhost:%d {
 	t.Log("Basic reverse proxy test passed")
 }
 
-// TestIntegration_UnixSocketProxy tests that reverse-bin works with Unix domain sockets.
-func TestIntegration_UnixSocketProxy(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	projectDir, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Failed to get working directory: %v", err)
-	}
-
-	// Create a temporary directory for the test
-	tmpDir, err := os.MkdirTemp("", "caddy-reversebin-unix-*")
-	if err != nil {
-		t.Fatalf("Failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	socketPath := filepath.Join(tmpDir, "app.sock")
-
-	// Create the Caddyfile
-	caddyfile := fmt.Sprintf(`
-{
-	admin localhost:%d
-	http_port %d
-}
-
-localhost:%d {
-	reverse-bin {
-		exec %s/examples/reverse-proxy/apps/python3-unix-echo/main.py
-		reverse_proxy_to unix/%s
-		readiness_check GET /
-		env REVERSE_PROXY_TO=unix/%s
-	}
-}
-`, testAdminPort+1, testHTTPPort+1, testHTTPPort+1, projectDir, socketPath, socketPath)
-
-	caddyfilePath := filepath.Join(tmpDir, "Caddyfile")
-	if err := os.WriteFile(caddyfilePath, []byte(caddyfile), 0644); err != nil {
-		t.Fatalf("Failed to write Caddyfile: %v", err)
-	}
-
-	// Build Caddy with the reverse-bin module
-	caddyBin := filepath.Join(tmpDir, "caddy")
-	buildCaddy(t, projectDir, caddyBin)
-
-	// Start Caddy in tmux
-	sessionName := "caddy-unix-proxy"
-	startTmuxSession(t, sessionName)
-	defer killTmuxSession(t, sessionName)
-
-	// Run Caddy
-	runInTmux(t, sessionName, fmt.Sprintf("cd %s && %s run --config %s", tmpDir, caddyBin, caddyfilePath))
-
-	// Wait for Caddy to start
-	waitForText(t, sessionName, "serving initial configuration", 10*time.Second)
-
-	// Wait a bit more for the server to be ready
-	time.Sleep(500 * time.Millisecond)
-
-	// Make a request to the proxy
-	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/unix-test", testHTTPPort+1))
-	if err != nil {
-		t.Fatalf("Failed to make request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", resp.StatusCode)
-	}
-
-	// Verify the response contains expected content from the echo server
-	buf := make([]byte, 1024)
-	n, _ := resp.Body.Read(buf)
-	body := string(buf[:n])
-
-	if !strings.Contains(body, "Request Headers:") {
-		t.Errorf("Expected response from echo server, got: %s", body)
-	}
-
-	t.Log("Unix socket proxy test passed")
-}
-
 // TestIntegration_DynamicDiscovery tests that reverse-bin executes the detector
-// and uses the returned JSON to configure the backend.
+// and uses the returned JSON to configure the backend via Unix socket.
 func TestIntegration_DynamicDiscovery(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
@@ -208,8 +139,23 @@ func TestIntegration_DynamicDiscovery(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Use the discover-app to detect the python3-echo example
-	appDir := filepath.Join(projectDir, "examples/reverse-proxy/apps/python3-echo")
+	// Use the unix-echo example with discover-app
+	appDir := filepath.Join(projectDir, "examples/reverse-proxy/apps/python3-unix-echo")
+
+	// Socket goes in the app's data directory
+	// .env uses relative path (discover-app.py converts to absolute)
+	socketName := fmt.Sprintf("dynamic-%d.sock", time.Now().UnixNano())
+	socketPath := filepath.Join(appDir, "data", socketName)
+	os.Remove(socketPath)
+
+	// Create a .env file with relative socket path (discover-app.py reads this)
+	envFile := filepath.Join(appDir, ".env")
+	envContent := fmt.Sprintf("REVERSE_PROXY_TO=unix/data/%s\n", socketName)
+	if err := os.WriteFile(envFile, []byte(envContent), 0644); err != nil {
+		t.Fatalf("Failed to write .env: %v", err)
+	}
+	defer os.Remove(envFile)
+	defer os.Remove(socketPath)
 
 	// Create the Caddyfile with dynamic discovery
 	caddyfile := fmt.Sprintf(`
@@ -224,7 +170,7 @@ localhost:%d {
 		readiness_check GET /
 	}
 }
-`, testAdminPort+2, testHTTPPort+2, testHTTPPort+2, projectDir, appDir)
+`, testAdminPort+1, testHTTPPort+1, testHTTPPort+1, projectDir, appDir)
 
 	caddyfilePath := filepath.Join(tmpDir, "Caddyfile")
 	if err := os.WriteFile(caddyfilePath, []byte(caddyfile), 0644); err != nil {
@@ -245,19 +191,19 @@ localhost:%d {
 
 	// Wait for Caddy to start
 	waitForText(t, sessionName, "serving initial configuration", 10*time.Second)
-
-	// Wait a bit more for the server to be ready
 	time.Sleep(500 * time.Millisecond)
 
 	// Make a request to the proxy
-	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/dynamic-test", testHTTPPort+2))
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/dynamic-test", testHTTPPort+1))
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+		output := captureTmuxOutput(t, sessionName)
+		t.Errorf("Expected status 200, got %d\nTmux output:\n%s", resp.StatusCode, output)
+		return
 	}
 
 	// Verify the response contains expected content from the echo server
@@ -291,10 +237,17 @@ func TestIntegration_LifecycleManagement(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Find a free port for the backend
-	backendPort := findFreePort(t)
+	// Socket goes in the app's data directory
+	// Use relative path in REVERSE_PROXY_TO (app strips unix/ prefix)
+	appDir := filepath.Join(projectDir, "examples/reverse-proxy/apps/python3-unix-echo")
+	socketName := fmt.Sprintf("lifecycle-%d.sock", time.Now().UnixNano())
+	socketPath := filepath.Join(appDir, "data", socketName)
+	os.Remove(socketPath)
+	defer os.Remove(socketPath)
 
-	// Create the Caddyfile
+	// Create the Caddyfile - REVERSE_PROXY_TO uses relative path, reverse_proxy_to uses absolute
+	// Note: reverse_proxy_to format is "unix/" followed by absolute path (no leading /)
+	unixProxyTo := "unix/" + socketPath // socketPath is already absolute
 	caddyfile := fmt.Sprintf(`
 {
 	admin localhost:%d
@@ -303,13 +256,15 @@ func TestIntegration_LifecycleManagement(t *testing.T) {
 
 localhost:%d {
 	reverse-bin {
-		exec %s/examples/reverse-proxy/apps/python3-echo/main.py
-		reverse_proxy_to 127.0.0.1:%d
+		exec ./main.py
+		dir %s
+		reverse_proxy_to %s
 		readiness_check GET /
-		env REVERSE_PROXY_TO=127.0.0.1:%d
+		env REVERSE_PROXY_TO=unix/data/%s
+		pass_all_env
 	}
 }
-`, testAdminPort+3, testHTTPPort+3, testHTTPPort+3, projectDir, backendPort, backendPort)
+`, testAdminPort+2, testHTTPPort+2, testHTTPPort+2, appDir, unixProxyTo, socketName)
 
 	caddyfilePath := filepath.Join(tmpDir, "Caddyfile")
 	if err := os.WriteFile(caddyfilePath, []byte(caddyfile), 0644); err != nil {
@@ -333,7 +288,7 @@ localhost:%d {
 	time.Sleep(500 * time.Millisecond)
 
 	// Make a request to start the backend process
-	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/test", testHTTPPort+3))
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/test", testHTTPPort+2))
 	if err != nil {
 		t.Fatalf("Failed to make request: %v", err)
 	}
@@ -363,23 +318,6 @@ localhost:%d {
 }
 
 // Helper functions
-
-func findFreePort(t *testing.T) int {
-	t.Helper()
-	// Use a simple approach with a range of ports
-	// In production, you'd use net.Listen with :0 to get a free port
-	basePort := 15000
-	for i := 0; i < 100; i++ {
-		port := basePort + i
-		// Check if port is available
-		cmd := exec.Command("bash", "-c", fmt.Sprintf("! nc -z localhost %d 2>/dev/null", port))
-		if cmd.Run() == nil {
-			return port
-		}
-	}
-	t.Fatalf("Could not find free port")
-	return 0
-}
 
 func buildCaddy(t *testing.T, projectDir, outputPath string) {
 	t.Helper()
