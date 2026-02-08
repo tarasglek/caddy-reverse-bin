@@ -118,6 +118,7 @@ http://localhost:9080 {
 
 	// Verify we got a response from the Python echo server
 	if body == "" {
+		t.Logf("empty body response status=%d headers=%v", resp.StatusCode, resp.Header)
 		t.Error("expected non-empty response body")
 	}
 
