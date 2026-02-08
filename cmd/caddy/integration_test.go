@@ -226,9 +226,22 @@ func TestBasicReverseProxy(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
-	repoRoot := getRepoRoot()
-	fixturePath := filepath.Join(repoRoot, "cmd/caddy/testdata/integration/caddyfiles/basic_static.json")
-	fixture := readCaddyFixture(t, fixturePath)
+	fixture := `
+{
+	admin localhost:2999
+	http_port 9080
+	https_port 9443
+}
+
+http://unix/{{CADDY_SOCKET}} {
+	reverse-bin {
+		exec uv run --script {{PYTHON_APP}}
+		reverse_proxy_to unix/{{APP_SOCKET}}
+		env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
+		pass_all_env
+	}
+}
+`
 
 	caddySocketPath := createSocketPath(t)
 	appSocketPath := createSocketPath(t)
@@ -240,7 +253,7 @@ func TestBasicReverseProxy(t *testing.T) {
 	})
 
 	tester := NewTester(t)
-	tester.InitServer(rendered, "json")
+	tester.InitServer(rendered, "caddyfile")
 
 	client := newUnixHTTPClient(caddySocketPath)
 	_ = assertNonEmpty200Unix(t, client, "http://unix/test/path")
