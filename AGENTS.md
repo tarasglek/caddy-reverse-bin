@@ -12,7 +12,8 @@ All integration tests must use Unix domain sockets for the reverse proxy backend
 
 ## Commit Policy
 
-Always commit your work after making progress.
+Always commit your work after making progress once relevant tests pass.
+- Default behavior: create a local commit automatically unless the user explicitly says not to commit.
 - Use a concise Conventional Commits-style message.
 - Commit locally only (do not push unless explicitly asked).
 

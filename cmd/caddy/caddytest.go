@@ -72,6 +72,25 @@ func (tc *Tester) InitServer(rawConfig, configType string) {
 	}
 
 	tc.configLoaded = true
+
+	// Give Caddy a brief moment to swap handlers after config load.
+	time.Sleep(100 * time.Millisecond)
+}
+
+// InitServerWithDefaults wraps site blocks with common integration-test global options.
+func (tc *Tester) InitServerWithDefaults(httpPort, httpsPort int, siteBlocks string) {
+	tc.t.Helper()
+	config := fmt.Sprintf(`{
+	skip_install_trust
+	admin localhost:%d
+	http_port %d
+	https_port %d
+	grace_period 1ns
+}
+
+%s
+`, adminPort, httpPort, httpsPort, siteBlocks)
+	tc.InitServer(config, "caddyfile")
 }
 
 func (tc *Tester) ensureCaddyRunning() error {
@@ -124,9 +143,21 @@ func createTestingTransport() *http.Transport {
 
 func (tc *Tester) AssertGetResponse(requestURI string, expectedStatusCode int, expectedBodyContains string) (*http.Response, string) {
 	tc.t.Helper()
-	resp, err := tc.Client.Get(requestURI)
-	if err != nil {
-		tc.t.Fatalf("failed to call server: %v", err)
+
+	var (
+		resp *http.Response
+		err  error
+	)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, err = tc.Client.Get(requestURI)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			tc.t.Fatalf("failed to call server: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 	defer resp.Body.Close()
 
