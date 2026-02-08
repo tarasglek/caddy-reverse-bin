@@ -8,7 +8,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 // getRepoRoot returns the repository root directory
@@ -86,16 +85,7 @@ func TestBasicReverseProxy(t *testing.T) {
 	socketPath := createSocketPath(t)
 	tester := NewTester(t)
 
-	// Caddyfile config with reverse-bin handler using Unix socket
-	config := fmt.Sprintf(`
-{
-	skip_install_trust
-	admin localhost:2999
-	http_port 9080
-	https_port 9443
-	grace_period 1ns
-}
-
+	siteBlocks := fmt.Sprintf(`
 http://localhost:9080 {
 	reverse-bin {
 		exec uv run --script %s
@@ -106,10 +96,7 @@ http://localhost:9080 {
 }
 `, pythonApp, socketPath, socketPath)
 
-	tester.InitServer(config, "caddyfile")
-
-	// Give the server a moment to be ready
-	time.Sleep(100 * time.Millisecond)
+	tester.InitServerWithDefaults(9080, 9443, siteBlocks)
 
 	// Make a request - this should start the process and proxy
 	resp, body := tester.AssertGetResponse("http://localhost:9080/test/path", 200, "")
@@ -144,15 +131,7 @@ func TestDynamicDiscovery(t *testing.T) {
 
 	tester := NewTester(t)
 
-	config := fmt.Sprintf(`
-{
-	skip_install_trust
-	admin localhost:2999
-	http_port 9082
-	https_port 9445
-	grace_period 1ns
-}
-
+	siteBlocks := fmt.Sprintf(`
 http://localhost:9082 {
 	reverse-bin {
 		dynamic_proxy_detector uv run --script %s %s
@@ -160,10 +139,7 @@ http://localhost:9082 {
 }
 `, detector, appDir)
 
-	tester.InitServer(config, "caddyfile")
-
-	// Give the server a moment
-	time.Sleep(100 * time.Millisecond)
+	tester.InitServerWithDefaults(9082, 9445, siteBlocks)
 
 	// Make a request
 	resp, body := tester.AssertGetResponse("http://localhost:9082/dynamic/test", 200, "")
@@ -190,15 +166,7 @@ sys.exit(2)
 `)
 
 	tester := NewTester(t)
-	config := fmt.Sprintf(`
-{
-	skip_install_trust
-	admin localhost:2999
-	http_port 9086
-	https_port 9449
-	grace_period 1ns
-}
-
+	siteBlocks := fmt.Sprintf(`
 http://localhost:9086 {
 	reverse-bin {
 		dynamic_proxy_detector %s {path}
@@ -206,8 +174,7 @@ http://localhost:9086 {
 }
 `, failDetector)
 
-	tester.InitServer(config, "caddyfile")
-	time.Sleep(100 * time.Millisecond)
+	tester.InitServerWithDefaults(9086, 9449, siteBlocks)
 
 	body := assertStatus5xx(t, tester, "http://localhost:9086/fail")
 	if !strings.Contains(body, "dynamic proxy detector failed") {
@@ -246,15 +213,7 @@ sys.exit(3)
 `, pythonApp, "unix/"+socketPath, "REVERSE_PROXY_TO=unix/"+socketPath))
 
 	tester := NewTester(t)
-	config := fmt.Sprintf(`
-{
-	skip_install_trust
-	admin localhost:2999
-	http_port 9087
-	https_port 9450
-	grace_period 1ns
-}
-
+	siteBlocks := fmt.Sprintf(`
 http://localhost:9087 {
 	reverse-bin {
 		dynamic_proxy_detector %s {path}
@@ -263,8 +222,7 @@ http://localhost:9087 {
 }
 `, detector)
 
-	tester.InitServer(config, "caddyfile")
-	time.Sleep(100 * time.Millisecond)
+	tester.InitServerWithDefaults(9087, 9450, siteBlocks)
 
 	_, body1 := tester.AssertGetResponse("http://localhost:9087/ok", 200, "")
 	if body1 == "" {
@@ -295,15 +253,7 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 	socketPath := createSocketPath(t)
 	tester := NewTester(t)
 
-	config := fmt.Sprintf(`
-{
-	skip_install_trust
-	admin localhost:2999
-	http_port 9083
-	https_port 9446
-	grace_period 1ns
-}
-
+	siteBlocks := fmt.Sprintf(`
 http://localhost:9083 {
 	reverse-bin {
 		exec uv run --script %s
@@ -314,7 +264,7 @@ http://localhost:9083 {
 }
 `, pythonApp, socketPath, socketPath)
 
-	tester.InitServer(config, "caddyfile")
+	tester.InitServerWithDefaults(9083, 9446, siteBlocks)
 
 	// First request should start the process
 	resp1, body1 := tester.AssertGetResponse("http://localhost:9083/first", 200, "")
@@ -350,15 +300,7 @@ func TestReadinessCheck(t *testing.T) {
 	socketPath := createSocketPath(t)
 	tester := NewTester(t)
 
-	config := fmt.Sprintf(`
-{
-	skip_install_trust
-	admin localhost:2999
-	http_port 9084
-	https_port 9447
-	grace_period 1ns
-}
-
+	siteBlocks := fmt.Sprintf(`
 http://localhost:9084 {
 	reverse-bin {
 		exec uv run --script %s
@@ -370,7 +312,7 @@ http://localhost:9084 {
 }
 `, pythonApp, socketPath, socketPath)
 
-	tester.InitServer(config, "caddyfile")
+	tester.InitServerWithDefaults(9084, 9447, siteBlocks)
 
 	// The request should succeed after readiness check passes
 	resp, body := tester.AssertGetResponse("http://localhost:9084/ready", 200, "")
@@ -396,15 +338,7 @@ func TestMultipleApps(t *testing.T) {
 	socket2 := createSocketPath(t)
 	tester := NewTester(t)
 
-	config := fmt.Sprintf(`
-{
-	skip_install_trust
-	admin localhost:2999
-	http_port 9085
-	https_port 9448
-	grace_period 1ns
-}
-
+	siteBlocks := fmt.Sprintf(`
 http://localhost:9085/app1 {
 	reverse-bin {
 		exec uv run --script %s
@@ -424,9 +358,7 @@ http://localhost:9085/app2 {
 }
 `, pythonApp, socket1, socket1, pythonApp, socket2, socket2)
 
-	tester.InitServer(config, "caddyfile")
-
-	time.Sleep(100 * time.Millisecond)
+	tester.InitServerWithDefaults(9085, 9448, siteBlocks)
 
 	// Test app1
 	resp1, body1 := tester.AssertGetResponse("http://localhost:9085/app1/test", 200, "")
