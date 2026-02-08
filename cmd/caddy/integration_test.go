@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/caddyserver/caddy/v2"
+	caddycmd "github.com/caddyserver/caddy/v2/cmd"
 	_ "github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
@@ -200,12 +205,44 @@ func TestBasicReverseProxy(t *testing.T) {
 	}
 	appSocketPath := createSocketPath(t)
 
-	siteBlocks := siteWithReverseBin(
-		fmt.Sprintf("localhost:%d", port),
-		reverseBinStaticAppBlock(f.PythonApp, appSocketPath),
-	)
-	tester := startTestServer(t, port, port+1000, siteBlocks)
+	fixture := `
+{
+	admin off
+	http_port {{HTTP_PORT}}
+}
 
+http://localhost:{{HTTP_PORT}} {
+	handle /test/path* {
+		reverse-bin {
+			exec uv run --script {{PYTHON_APP}}
+			reverse_proxy_to unix/{{APP_SOCKET}}
+			env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
+			pass_all_env
+		}
+	}
+}
+`
+	rendered := renderTemplate(fixture, map[string]string{
+		"HTTP_PORT":  fmt.Sprintf("%d", port),
+		"PYTHON_APP": f.PythonApp,
+		"APP_SOCKET": appSocketPath,
+	})
+
+	tmpCaddyfile, err := os.CreateTemp("", "Caddyfile-*")
+	if err != nil {
+		t.Fatalf("failed to create temp Caddyfile: %v", err)
+	}
+	defer os.Remove(tmpCaddyfile.Name())
+	if _, err := tmpCaddyfile.WriteString(rendered); err != nil {
+		t.Fatalf("failed to write temp Caddyfile: %v", err)
+	}
+	tmpCaddyfile.Close()
+
+	os.Args = []string{"caddy", "run", "--config", tmpCaddyfile.Name(), "--adapter", "caddyfile"}
+	go caddycmd.Main()
+	t.Cleanup(func() { _ = caddy.Stop() })
+
+	tester := NewTester(t)
 	_ = assertNonEmpty200(t, tester, fmt.Sprintf("http://localhost:%d/test/path", port))
 }
 
