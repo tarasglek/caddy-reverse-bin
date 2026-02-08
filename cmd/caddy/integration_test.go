@@ -258,7 +258,7 @@ http://unix/{{CADDY_SOCKET}} {
 	tester := NewTester(t)
 	tester.InitServer(rendered, "caddyfile")
 
-	_ = assertNonEmpty200Unix(t, caddySocketPath, caddySocketPath+"/test/path")
+	_ = assertNonEmpty200Unix(t, caddySocketPath, "/test/path")
 }
 
 func TestDynamicDiscovery(t *testing.T) {
