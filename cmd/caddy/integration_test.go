@@ -35,6 +35,19 @@ func requireIntegration(t *testing.T) {
 	}
 }
 
+// GetFreePort asks the kernel for a free open port that is ready to use.
+func GetFreePort() (port int, err error) {
+	var a *net.TCPAddr
+	if a, err = net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
+		var l *net.TCPListener
+		if l, err = net.ListenTCP("tcp", a); err == nil {
+			defer l.Close()
+			return l.Addr().(*net.TCPAddr).Port, nil
+		}
+	}
+	return
+}
+
 // createSocketPath creates a unique temp socket path.
 func createSocketPath(t *testing.T) string {
 	t.Helper()
@@ -132,53 +145,6 @@ func renderTemplate(input string, values map[string]string) string {
 	return strings.NewReplacer(replacements...).Replace(input)
 }
 
-func newUnixHTTPClient(socketPath string) *http.Client {
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", socketPath)
-		},
-	}
-	return &http.Client{Transport: transport, Timeout: 10 * time.Second}
-}
-
-func assertNonEmpty200Unix(t *testing.T, socketPath, requestPath string) string {
-	t.Helper()
-	client := newUnixHTTPClient(socketPath)
-	rawURL := "http://localhost" + requestPath
-
-	var (
-		resp *http.Response
-		err  error
-	)
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		resp, err = client.Get(rawURL)
-		if err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("request failed for %s via %s: %v", rawURL, socketPath, err)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("failed reading response body: %v", err)
-	}
-	body := string(bodyBytes)
-
-	if resp.StatusCode != 200 {
-		t.Fatalf("expected 200 for %s via %s, got %d (body: %s)", rawURL, socketPath, resp.StatusCode, body)
-	}
-	if body == "" {
-		t.Fatalf("expected non-empty response body for %s via %s", rawURL, socketPath)
-	}
-	return body
-}
-
 func assertStatus5xx(t *testing.T, tester *Tester, rawURL string) string {
 	t.Helper()
 	resp, err := tester.Client.Get(rawURL)
@@ -233,48 +199,19 @@ func TestBasicReverseProxy(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
-	caddySocketPath := createSocketPath(t)
+	port, err := GetFreePort()
+	if err != nil {
+		t.Fatalf("failed to get free port: %v", err)
+	}
 	appSocketPath := createSocketPath(t)
 
-	fixture := `
-{
-	admin off
-	http_port 9080
-}
+	siteBlocks := siteWithReverseBin(
+		fmt.Sprintf("localhost:%d", port),
+		reverseBinStaticAppBlock(f.PythonApp, appSocketPath),
+	)
+	tester := startTestServer(t, port, port+1000, siteBlocks)
 
-http://localhost {
-	bind unix/{{CADDY_SOCKET}}
-	handle /test/path* {
-		reverse-bin {
-			exec uv run --script {{PYTHON_APP}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-			env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
-			pass_all_env
-		}
-	}
-}
-`
-	rendered := renderTemplate(fixture, map[string]string{
-		"CADDY_SOCKET": caddySocketPath,
-		"PYTHON_APP":   f.PythonApp,
-		"APP_SOCKET":   appSocketPath,
-	})
-
-	tmpCaddyfile, err := os.CreateTemp("", "Caddyfile-*")
-	if err != nil {
-		t.Fatalf("failed to create temp Caddyfile: %v", err)
-	}
-	defer os.Remove(tmpCaddyfile.Name())
-	if _, err := tmpCaddyfile.WriteString(rendered); err != nil {
-		t.Fatalf("failed to write temp Caddyfile: %v", err)
-	}
-	tmpCaddyfile.Close()
-
-	os.Args = []string{"caddy", "run", "--config", tmpCaddyfile.Name(), "--adapter", "caddyfile"}
-	go caddycmd.Main()
-	t.Cleanup(func() { _ = caddy.Stop() })
-
-	_ = assertNonEmpty200Unix(t, caddySocketPath, "/test/path")
+	_ = assertNonEmpty200(t, tester, fmt.Sprintf("http://localhost:%d/test/path", port))
 }
 
 func TestDynamicDiscovery(t *testing.T) {
