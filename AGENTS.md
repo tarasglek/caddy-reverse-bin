@@ -10,10 +10,6 @@ All integration tests must use Unix domain sockets for the reverse proxy backend
 - No need to find free ports
 
 
-### Running Tests
-
-run tests in tmux
-
 ## Commit Policy
 
 Always commit your work after making progress.
