@@ -41,5 +41,8 @@ build :
 	./caddy -plugins | grep reverse-bin
 	./caddy -version
 
+release-dry-run :
+	$$(go env GOPATH)/bin/goreleaser release --snapshot --clean --skip=publish
+
 clean :
 	rm -f coverage.html coverage ok/* doc/index.html doc.go README.md
