@@ -44,7 +44,7 @@ checksum:
 release:
   github:
     owner: tarasglek
-    name: reverse-bin
+    name: caddy-reverse-bin
 
 changelog:
   use: github-native
