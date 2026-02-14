@@ -51,7 +51,7 @@ func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 	ps := c.getOrCreateProcessState(key)
 
 	ps.incrementRequests(c.logger, key)
-	defer ps.decrementRequests(c.logger, key)
+	defer ps.decrementRequests(c.logger, key, time.Duration(c.IdleTimeoutMS)*time.Millisecond)
 
 	if c.reverseProxy == nil {
 		return fmt.Errorf("reverse proxy not initialized")
@@ -109,8 +109,16 @@ func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, er
 	}
 
 	var dialAddr string
-	if strings.HasPrefix(toAddr, "unix/") {
+	if isUnixUpstream(toAddr) {
 		dialAddr = toAddr
+		socketPath := strings.TrimPrefix(dialAddr, "unix/")
+		info, err := os.Stat(socketPath)
+		if err != nil {
+			return nil, fmt.Errorf("unix socket not ready: %s: %w", socketPath, err)
+		}
+		if info.Mode()&os.ModeSocket == 0 {
+			return nil, fmt.Errorf("unix socket path is not a socket: %s", socketPath)
+		}
 	} else {
 		if strings.HasPrefix(toAddr, ":") {
 			toAddr = "127.0.0.1" + toAddr
@@ -224,6 +232,17 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 	}
 	if overrides.ReadinessPath == nil {
 		overrides.ReadinessPath = &c.ReadinessPath
+	}
+
+	if !isUnixUpstream(*overrides.ReverseProxyTo) && !readinessConfigured(*overrides.ReadinessMethod, *overrides.ReadinessPath) {
+		return nil, fmt.Errorf("readiness_check is required for non-unix reverse_proxy_to targets")
+	}
+
+	if isUnixUpstream(*overrides.ReverseProxyTo) {
+		socketPath := strings.TrimPrefix(*overrides.ReverseProxyTo, "unix/")
+		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+			return nil, fmt.Errorf("failed to remove pre-existing unix socket %s: %w", socketPath, err)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(c.ctx)
@@ -383,10 +402,28 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 				}
 			}
 		}()
+	} else if isUnixUpstream(*overrides.ReverseProxyTo) {
+		socketPath := strings.TrimPrefix(*overrides.ReverseProxyTo, "unix/")
+		c.logger.Info("waiting for reverse proxy process readiness via unix socket creation",
+			zap.String("target", *overrides.ReverseProxyTo))
+		go func() {
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					info, err := os.Stat(socketPath)
+					if err == nil && info.Mode()&os.ModeSocket != 0 {
+						readyChan <- true
+						return
+					}
+				case <-c.ctx.Done():
+					return
+				}
+			}
+		}()
 	} else {
-		// If no HTTP check, we assume it's ready immediately as we are draining stdout
-		// (The previous stdout-substring logic was fragile and blocked the drainer)
-		readyChan <- true
+		return nil, fmt.Errorf("readiness_check is required for non-unix reverse_proxy_to targets")
 	}
 
 	select {

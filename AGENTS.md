@@ -2,13 +2,10 @@
 
 ## Testing Policy
 
-All integration tests must use Unix domain sockets for the reverse proxy backend, not TCP ports.
-
-### Why Unix Sockets?
-- No port conflicts between parallel test runs
-- Cleaner test isolation
-- No need to find free ports
-
+- Tests must be concise 
+- Every test should have a comment of intent of test
+- When making http requests ensure comment on what http request is testing
+- When making http requests, asserts should be super specific and anti-fragile
 
 ## Commit Policy
 

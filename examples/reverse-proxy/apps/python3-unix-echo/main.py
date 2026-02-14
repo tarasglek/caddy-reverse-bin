@@ -3,9 +3,12 @@
 # requires-python = ">=3.13"
 # ///
 import http.server
+import json
 import os
 import sys
 import socket
+
+LAST_HEALTH_METHOD = None
 
 class UnixHTTPServer(http.server.HTTPServer):
     address_family = socket.AF_UNIX
@@ -26,15 +29,43 @@ class EchoHandler(http.server.BaseHTTPRequestHandler):
         except (IndexError, TypeError):
             return "unix"
 
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
+    def _send_json(self, payload, status=200):
+        self.send_response(status)
+        self.send_header('Content-type', 'application/json')
         self.end_headers()
-        
-        response = f"echo-backend\nRequest Headers:\n{self.headers}\nLocation: {self.path}"
-        self.wfile.write(response.encode('utf-8'))
+        self.wfile.write(json.dumps(payload).encode('utf-8'))
+
+    def _base_payload(self):
+        return {
+            "backend": "echo-backend",
+            "pid": os.getpid(),
+            "headers": dict(self.headers.items()),
+            "path": self.path,
+        }
+
+    def do_GET(self):
+        global LAST_HEALTH_METHOD
+
+        if self.path == "/crash":
+            self._send_json({"status": "crashing", "pid": os.getpid()})
+            self.wfile.flush()
+            os._exit(42)
+
+        if self.path == "/health":
+            LAST_HEALTH_METHOD = "GET"
+            self._send_json({"status": "ok", "method": "GET"})
+            return
+
+        if self.path == "/health-last":
+            self._send_json({"last_health_method": LAST_HEALTH_METHOD})
+            return
+
+        self._send_json(self._base_payload())
 
     def do_HEAD(self):
+        global LAST_HEALTH_METHOD
+        if self.path == "/health":
+            LAST_HEALTH_METHOD = "HEAD"
         self.send_response(200)
         self.end_headers()
 
