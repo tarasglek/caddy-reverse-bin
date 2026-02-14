@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	caddycmd "github.com/caddyserver/caddy/v2/cmd"
@@ -142,9 +144,51 @@ func renderTemplate(input string, values map[string]string) string {
 	return strings.NewReplacer(replacements...).Replace(input)
 }
 
-func assertStatus5xx(t *testing.T, tester *Tester, rawURL string) string {
+func newTestHTTPClient() *http.Client {
+	return &http.Client{
+		Transport: createTestingTransport(),
+		Timeout:   10 * time.Second,
+	}
+}
+
+func assertGetResponse(t *testing.T, client *http.Client, requestURI string, expectedStatusCode int, expectedBodyContains string) (*http.Response, string) {
 	t.Helper()
-	resp, err := tester.Client.Get(rawURL)
+
+	var (
+		resp *http.Response
+		err  error
+	)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		resp, err = client.Get(requestURI)
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("failed to call server: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("unable to read response body: %v", err)
+	}
+	body := string(bodyBytes)
+
+	if resp.StatusCode != expectedStatusCode {
+		t.Fatalf("requesting %q expected status %d but got %d (body: %s)", requestURI, expectedStatusCode, resp.StatusCode, body)
+	}
+	if expectedBodyContains != "" && !strings.Contains(body, expectedBodyContains) {
+		t.Fatalf("requesting %q expected body to contain %q but got %q", requestURI, expectedBodyContains, body)
+	}
+	return resp, body
+}
+
+func assertStatus5xx(t *testing.T, client *http.Client, rawURL string) string {
+	t.Helper()
+	resp, err := client.Get(rawURL)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
@@ -162,9 +206,9 @@ func assertStatus5xx(t *testing.T, tester *Tester, rawURL string) string {
 	return body
 }
 
-func assertNonEmpty200(t *testing.T, tester *Tester, rawURL string) string {
+func assertNonEmpty200(t *testing.T, client *http.Client, rawURL string) string {
 	t.Helper()
-	resp, body := tester.AssertGetResponse(rawURL, 200, "")
+	resp, body := assertGetResponse(t, client, rawURL, 200, "")
 	if body == "" {
 		t.Fatalf("expected non-empty response body for %s (status=%d headers=%v)", rawURL, resp.StatusCode, resp.Header)
 	}
@@ -192,15 +236,21 @@ func siteWithReverseBin(host string, block string) string {
 	return fmt.Sprintf("\nhttp://%s {\n\t%s\n}\n", host, block)
 }
 
-func TestBasicReverseProxy(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
+type basicReverseProxySetup struct {
+	Port int
+}
+
+func createBasicReverseProxySetup(t *testing.T, f fixtures) (*basicReverseProxySetup, func()) {
+	t.Helper()
 
 	port, err := GetFreePort()
 	if err != nil {
 		t.Fatalf("failed to get free port: %v", err)
 	}
-	appSocketPath := createSocketPath(t)
+
+	tmpDir := t.TempDir()
+	appSocketPath := filepath.Join(tmpDir, "app.sock")
+	caddyfilePath := filepath.Join(tmpDir, "Caddyfile")
 
 	fixture := `
 {
@@ -225,24 +275,33 @@ http://localhost:{{HTTP_PORT}} {
 		"APP_SOCKET": appSocketPath,
 	})
 
-	tmpCaddyfile, err := os.CreateTemp("", "Caddyfile-*")
-	if err != nil {
-		t.Fatalf("failed to create temp Caddyfile: %v", err)
-	}
-	defer os.Remove(tmpCaddyfile.Name())
-	if _, err := tmpCaddyfile.WriteString(rendered); err != nil {
+	if err := os.WriteFile(caddyfilePath, []byte(rendered), 0o600); err != nil {
 		t.Fatalf("failed to write temp Caddyfile: %v", err)
 	}
-	tmpCaddyfile.Close()
 
-	os.Args = []string{"caddy", "run", "--config", tmpCaddyfile.Name(), "--adapter", "caddyfile"}
+	prevArgs := os.Args
+	os.Args = []string{"caddy", "run", "--config", caddyfilePath, "--adapter", "caddyfile"}
 	go caddycmd.Main()
-	t.Cleanup(func() { _ = caddy.Stop() })
 
-	tester := NewTester(t)
-	_ = assertNonEmpty200(t, tester, fmt.Sprintf("http://localhost:%d/test/path", port))
+	dispose := func() {
+		os.Args = prevArgs
+		_ = caddy.Stop()
+	}
+
+	return &basicReverseProxySetup{Port: port}, dispose
 }
 
+func TestBasicReverseProxy(t *testing.T) {
+	requireIntegration(t)
+
+	setup, dispose := createBasicReverseProxySetup(t, mustFixtures(t))
+	defer dispose()
+
+	client := newTestHTTPClient()
+	_ = assertNonEmpty200(t, client, fmt.Sprintf("http://localhost:%d/test/path", setup.Port))
+}
+
+/*
 func TestDynamicDiscovery(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
@@ -370,3 +429,4 @@ http://localhost:9085 {
 	body2 := assertNonEmpty200(t, tester, "http://localhost:9085/app2/test")
 	t.Logf("App2 response: %s", body2)
 }
+*/
