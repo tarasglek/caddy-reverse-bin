@@ -12,14 +12,14 @@ print(
             "--env",
             "REVERSE_PROXY_TO=unix/data/echo.sock",
             "--env",
-            "HOME=/home/taras/Documents/caddy-reverseweb/examples/reverse-proxy/apps/python3-unix-echo/data",
+            "HOME=/home/taras/Documents/caddy-reverse-bin/examples/reverse-proxy/apps/python3-unix-echo/data",
             "--env",
             "PATH=/home/taras/.cache/uv/environments-v2/discover-app-8dc84c106b9c82e8/bin:/home/taras/.go/bin:/home/taras/go/bin/:/home/taras/.cargo/bin:/home/taras/.local/bin:/home/taras/.deno/bin:/home/taras/.nvm/versions/node/v24.13.0/bin:/home/taras/.yarn/switch/bin:/home/taras/.local/share/../bin:/home/taras/.cargo/bin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games:/home/taras/.go/bin:/home/taras/go/bin:/home/taras/Documents/dotfiles/bin:/usr/local/go/bin",
             "--unrestricted-network",
             "--rw",
-            "/home/taras/Documents/caddy-reverseweb/examples/reverse-proxy/apps/python3-unix-echo/data",
+            "/home/taras/Documents/caddy-reverse-bin/examples/reverse-proxy/apps/python3-unix-echo/data",
             "--rox",
-            "/home/taras/Documents/caddy-reverseweb/examples/reverse-proxy/apps/python3-unix-echo,/home/taras/.cache/uv/environments-v2/discover-app-8dc84c106b9c82e8/bin,/home/taras/.go/bin,/home/taras/go/bin/,/home/taras/.cargo/bin,/home/taras/.local/bin,/home/taras/.deno/bin,/home/taras/.nvm/versions/node/v24.13.0/bin,/home/taras/.yarn/switch/bin,/home/taras/.local/share/../bin,/home/taras/.cargo/bin,/usr/local/bin,/usr/bin,/bin,/usr/local/games,/usr/games,/home/taras/.go/bin,/home/taras/go/bin,/home/taras/Documents/dotfiles/bin",
+            "/home/taras/Documents/caddy-reverse-bin/examples/reverse-proxy/apps/python3-unix-echo,/home/taras/.cache/uv/environments-v2/discover-app-8dc84c106b9c82e8/bin,/home/taras/.go/bin,/home/taras/go/bin/,/home/taras/.cargo/bin,/home/taras/.local/bin,/home/taras/.deno/bin,/home/taras/.nvm/versions/node/v24.13.0/bin,/home/taras/.yarn/switch/bin,/home/taras/.local/share/../bin,/home/taras/.cargo/bin,/usr/local/bin,/usr/bin,/bin,/usr/local/games,/usr/games,/home/taras/.go/bin,/home/taras/go/bin,/home/taras/Documents/dotfiles/bin",
             "./main.py",
         ]
     )
