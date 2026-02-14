@@ -123,15 +123,6 @@ func mustFixtures(t *testing.T) fixtures {
 	return f
 }
 
-func readCaddyFixture(t *testing.T, fixturePath string) string {
-	t.Helper()
-	b, err := os.ReadFile(fixturePath)
-	if err != nil {
-		t.Fatalf("failed to read fixture %s: %v", fixturePath, err)
-	}
-	return string(b)
-}
-
 func renderTemplate(input string, values map[string]string) string {
 	replacements := make([]string, 0, len(values)*2)
 	for k, v := range values {
@@ -192,59 +183,8 @@ func assertGetResponse(t *testing.T, client *http.Client, requestURI string, exp
 	return resp, body
 }
 
-func assertStatus5xx(t *testing.T, client *http.Client, rawURL string, invariant string) string {
-	t.Helper()
-
-	resp, err := client.Get(rawURL)
-	if err != nil {
-		t.Fatalf("%s: request failed: %v", invariant, err)
-	}
-	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("%s: failed reading response body: %v", invariant, err)
-	}
-	body := string(bodyBytes)
-
-	if resp.StatusCode < 500 || resp.StatusCode > 599 {
-		t.Fatalf("%s: expected 5xx for %s, got %d (body: %s)", invariant, rawURL, resp.StatusCode, body)
-	}
-	return body
-}
-
-func assertNonEmpty200(t *testing.T, client *http.Client, rawURL string, invariant string) string {
-	t.Helper()
-
-	resp, body := assertGetResponse(t, client, rawURL, 200, "", invariant)
-	if body == "" {
-		t.Fatalf("%s: expected non-empty response body for %s (status=%d headers=%v)", invariant, rawURL, resp.StatusCode, resp.Header)
-	}
-	return body
-}
-
 func ptr(s string) *string {
 	return &s
-}
-
-func reverseBinStaticAppBlock(appPath, socketPath string, extraDirectives ...string) string {
-	directives := []string{
-		fmt.Sprintf("exec uv run --script %s", appPath),
-		fmt.Sprintf("reverse_proxy_to unix/%s", socketPath),
-		fmt.Sprintf("env REVERSE_PROXY_TO=unix/%s", socketPath),
-	}
-	directives = append(directives, extraDirectives...)
-	return fmt.Sprintf("reverse-bin {\n\t\t%s\n\t}", strings.Join(directives, "\n\t\t"))
-}
-
-func reverseBinDynamicDetectorBlock(detectorArgs []string, extraDirectives ...string) string {
-	directives := []string{fmt.Sprintf("dynamic_proxy_detector %s", strings.Join(detectorArgs, " "))}
-	directives = append(directives, extraDirectives...)
-	return fmt.Sprintf("reverse-bin {\n\t\t%s\n\t}", strings.Join(directives, "\n\t\t"))
-}
-
-func siteWithReverseBin(host string, block string) string {
-	return fmt.Sprintf("\nhttp://%s {\n\t%s\n}\n", host, block)
 }
 
 type reverseProxySetup struct {
@@ -662,63 +602,3 @@ func TestMultipleApps(t *testing.T) {
 	}
 }
 
-/*
-func TestLifecycleIdleTimeout(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	socketPath := createSocketPath(t)
-	siteBlocks := siteWithReverseBin("localhost:9083", reverseBinStaticAppBlock(f.PythonApp, socketPath))
-	tester := startTestServer(t, 9083, 9446, siteBlocks)
-
-	body1 := assertNonEmpty200(t, tester, "http://localhost:9083/first")
-	t.Logf("First response: %s", body1)
-
-	body2 := assertNonEmpty200(t, tester, "http://localhost:9083/second")
-	t.Logf("Second response: %s", body2)
-
-	// Note: Testing actual idle timeout cleanup would require:
-	// 1. Adding idle_timeout config option to reverse-bin
-	// 2. Waiting for the timeout period
-	// 3. Verifying the process is terminated
-	// This is left as a future enhancement
-}
-
-func TestReadinessCheck(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	socketPath := createSocketPath(t)
-	siteBlocks := siteWithReverseBin("localhost:9084", reverseBinStaticAppBlock(f.PythonApp, socketPath, "readiness_check GET /"))
-	tester := startTestServer(t, 9084, 9447, siteBlocks)
-
-	body := assertNonEmpty200(t, tester, "http://localhost:9084/ready")
-	t.Logf("Response after readiness: %s", body)
-}
-
-func TestMultipleApps(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	socket1 := createSocketPath(t)
-	socket2 := createSocketPath(t)
-
-	siteBlocks := `
-http://localhost:9085 {
-	handle /app1* {
-		` + reverseBinStaticAppBlock(f.PythonApp, socket1) + `
-	}
-	handle /app2* {
-		` + reverseBinStaticAppBlock(f.PythonApp, socket2) + `
-	}
-}
-`
-	tester := startTestServer(t, 9085, 9448, siteBlocks)
-
-	body1 := assertNonEmpty200(t, tester, "http://localhost:9085/app1/test")
-	t.Logf("App1 response: %s", body1)
-
-	body2 := assertNonEmpty200(t, tester, "http://localhost:9085/app2/test")
-	t.Logf("App2 response: %s", body2)
-}
-*/
