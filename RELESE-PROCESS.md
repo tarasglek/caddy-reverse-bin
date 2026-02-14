@@ -128,15 +128,36 @@ Use SemVer tags:
 - Minor: backward-compatible features
 - Major: breaking changes
 
+## Dry Run (No Publish)
+
+Use GoReleaser snapshot mode to validate the release process without creating a GitHub Release.
+
+```bash
+goreleaser release --snapshot --clean --skip=publish
+```
+
+What to verify after the command finishes:
+
+1. `dist/` contains archives for all supported targets (`linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`).
+2. `dist/checksums.txt` exists.
+3. Archive names and artifact layout match expectations.
+4. Version metadata is embedded (CLI version output + startup log fields).
+
+Notes:
+
+- Snapshot builds intentionally use a snapshot version string (not a real release tag).
+- No GitHub release is created and no assets are uploaded in this mode.
+
 ## Maintainer Checklist
 
 1. Ensure tests/lint are green on `main`.
-2. Merge release-ready changes.
-3. Create and push SemVer tag.
-4. Verify release workflow passed.
-5. Verify all expected assets are attached.
-6. Verify release notes are present and readable.
-7. If draft mode is enabled, review and publish the draft release.
+2. (Recommended) Run the dry run command successfully.
+3. Merge release-ready changes.
+4. Create and push SemVer tag.
+5. Verify release workflow passed.
+6. Verify all expected assets are attached.
+7. Verify release notes are present and readable.
+8. If draft mode is enabled, review and publish the draft release.
 
 ## Failure Handling
 
