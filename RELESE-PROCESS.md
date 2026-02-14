@@ -40,7 +40,6 @@ For each tag, build binaries for supported targets:
 
 - `linux/amd64`
 - `linux/arm64`
-- `darwin/amd64`
 - `darwin/arm64`
 
 Artifacts should include:
@@ -138,7 +137,7 @@ goreleaser release --snapshot --clean --skip=publish
 
 What to verify after the command finishes:
 
-1. `dist/` contains archives for all supported targets (`linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64`).
+1. `dist/` contains archives for all supported targets (`linux/amd64`, `linux/arm64`, `darwin/arm64`).
 2. `dist/checksums.txt` exists.
 3. Archive names and artifact layout match expectations.
 4. Version metadata is embedded (CLI version output + startup log fields).

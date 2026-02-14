@@ -269,12 +269,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 		detectorCmd := exec.CommandContext(detCtx, args[0], args[1:]...)
 
-		if runtime.GOOS == "linux" {
-			detectorCmd.SysProcAttr = &syscall.SysProcAttr{
-				Pdeathsig: syscall.SIGTERM,
-				Setpgid:   true,
-			}
-		}
+		configureDetectorProcAttrs(detectorCmd)
 
 		var outBuf, errBuf bytes.Buffer
 		detectorCmd.Stdout = &outBuf
@@ -338,14 +333,7 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 
 	ctx, cancel := context.WithCancel(c.ctx)
 	cmd := exec.CommandContext(ctx, execPath, execArgs...)
-	if runtime.GOOS != "windows" {
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
-		}
-		if runtime.GOOS == "linux" {
-			cmd.SysProcAttr.Pdeathsig = syscall.SIGTERM
-		}
-	}
+	configureBackendProcAttrs(cmd)
 	cmd.Dir = *overrides.WorkingDirectory
 	if cmd.Dir == "" {
 		cmd.Dir = "."

@@ -186,6 +186,11 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.logger = ctx.Logger(c)
 	c.processes = make(map[string]*processState)
 
+	c.logger.Info("reverse-bin module provisioned",
+		zap.String("version", Version),
+		zap.String("commit", Commit),
+		zap.String("build_date", BuildDate))
+
 	if len(c.DynamicProxyDetector) == 0 {
 		if len(c.Executable) == 0 {
 			return fmt.Errorf("exec (executable) is required when dynamic_proxy_detector is not set")

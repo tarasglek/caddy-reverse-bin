@@ -1,0 +1,50 @@
+version: 2
+
+project_name: caddy-reverse-bin
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: caddy-reverse-bin
+    main: ./cmd/caddy
+    binary: caddy-reverse-bin
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: amd64
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/caddyserver/caddy/v2.CustomVersion={{ .Version }}
+        -X github.com/tarasglek/reverse-bin.Version={{ .Version }}
+        -X github.com/tarasglek/reverse-bin.Commit={{ .Commit }}
+        -X github.com/tarasglek/reverse-bin.BuildDate={{ .Date }}
+
+archives:
+  - id: binaries
+    ids:
+      - caddy-reverse-bin
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: tarasglek
+    name: reverse-bin
+
+changelog:
+  use: github-native
