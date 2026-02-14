@@ -38,7 +38,7 @@ jobs:
     strategy:
       matrix:
         # Without quotes, 1.20 becomes 1.2!
-        go-version: ["1.25"]
+        go-version: ["1.25.7"]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -65,20 +65,14 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Install jq
+      - name: Install eget and landrun
         run: |
           set -euxo pipefail
-          sudo apt-get update
-          sudo apt-get install -y jq
-          jq --version
-
-      - name: Install landrun
-        run: |
-          set -euxo pipefail
-          VERSION=$(curl -fsSL https://api.github.com/repos/Zouuup/landrun/releases/latest | jq -r .tag_name)
-          curl -fsSL -o /tmp/landrun "https://github.com/Zouuup/landrun/releases/download/${VERSION}/landrun-linux-amd64"
-          install -m 0755 /tmp/landrun /usr/local/bin/landrun
-          landrun --version
+          GOBIN="$HOME/.local/bin" go install github.com/zyedidia/eget@v1.3.4
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/eget" Zouuup/landrun --to "$HOME/.local/bin/landrun"
+          "$HOME/.local/bin/eget" --version
+          "$HOME/.local/bin/landrun" --version
 
       - name: Verify runtime dependencies
         run: |

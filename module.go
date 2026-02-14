@@ -34,7 +34,7 @@ import (
 )
 
 func init() {
-	caddy.RegisterModule(ReverseBin{})
+	caddy.RegisterModule(&ReverseBin{})
 	// RegisterHandlerDirective associates the "reverse-bin" directive in the Caddyfile
 	// with the parseCaddyfile function to create a reverse-bin handler instance.
 	httpcaddyfile.RegisterHandlerDirective("reverse-bin", parseCaddyfile)
@@ -104,7 +104,7 @@ var (
 	_ caddy.CleanerUpper          = (*ReverseBin)(nil)
 )
 
-func (c ReverseBin) CaddyModule() caddy.ModuleInfo {
+func (c *ReverseBin) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.reverse-bin",
 		New: func() caddy.Module { return &ReverseBin{} },

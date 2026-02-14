@@ -2,10 +2,12 @@ package reversebin
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
@@ -13,11 +15,39 @@ import (
 	"go.uber.org/zap/zaptest"
 )
 
+type reverseBinConfig struct {
+	Executable           []string
+	WorkingDirectory     string
+	Envs                 []string
+	PassEnvs             []string
+	PassAll              bool
+	ReverseProxyTo       string
+	ReadinessMethod      string
+	ReadinessPath        string
+	DynamicProxyDetector []string
+	IdleTimeoutMS        int
+}
+
+func asConfig(c *ReverseBin) reverseBinConfig {
+	return reverseBinConfig{
+		Executable:           c.Executable,
+		WorkingDirectory:     c.WorkingDirectory,
+		Envs:                 c.Envs,
+		PassEnvs:             c.PassEnvs,
+		PassAll:              c.PassAll,
+		ReverseProxyTo:       c.ReverseProxyTo,
+		ReadinessMethod:      c.ReadinessMethod,
+		ReadinessPath:        c.ReadinessPath,
+		DynamicProxyDetector: c.DynamicProxyDetector,
+		IdleTimeoutMS:        c.IdleTimeoutMS,
+	}
+}
+
 func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 	tests := []struct {
 		name     string
 		input    string
-		expected ReverseBin
+		expected reverseBinConfig
 		wantErr  bool
 	}{
 		{
@@ -29,7 +59,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   pass_env some_env other_env
   pass_all_env
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				Executable:       []string{"/some/file", "a", "b", "c", "d", "1"},
 				WorkingDirectory: "/somewhere",
 				Envs:             []string{"foo=bar", "what=ever"},
@@ -44,7 +74,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   exec ./main.py
   reverse_proxy_to 127.0.0.1:8080
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				Executable:       []string{"./main.py"},
 				ReverseProxyTo:   "127.0.0.1:8080",
 			},
@@ -56,7 +86,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   exec ./main.py
   reverse_proxy_to :8080
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				Executable:       []string{"./main.py"},
 				ReverseProxyTo:   ":8080",
 			},
@@ -68,7 +98,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   exec ./main.py
   reverse_proxy_to unix//tmp/app.sock
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				Executable:       []string{"./main.py"},
 				ReverseProxyTo:   "unix//tmp/app.sock",
 			},
@@ -81,7 +111,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   reverse_proxy_to 127.0.0.1:8080
   readiness_check GET /health
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				Executable:       []string{"./main.py"},
 				ReverseProxyTo:   "127.0.0.1:8080",
 				ReadinessMethod:  "GET",
@@ -96,7 +126,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   reverse_proxy_to 127.0.0.1:8080
   readiness_check head /ready
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				Executable:       []string{"./main.py"},
 				ReverseProxyTo:   "127.0.0.1:8080",
 				ReadinessMethod:  "HEAD",
@@ -111,7 +141,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   reverse_proxy_to unix//tmp/app.sock
   readiness_check null
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				Executable:     []string{"./main.py"},
 				ReverseProxyTo: "unix//tmp/app.sock",
 			},
@@ -122,7 +152,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 			input: `reverse-bin {
   dynamic_proxy_detector ./discover.py {path}
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				DynamicProxyDetector: []string{"./discover.py", "{path}"},
 			},
 			wantErr: false,
@@ -140,7 +170,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   dynamic_proxy_detector /bin/detect {host} {path}
   idle_timeout_ms 100
 }`,
-			expected: ReverseBin{
+			expected: reverseBinConfig{
 				Executable:           []string{"./main.py", "arg1", "arg2"},
 				WorkingDirectory:     "/app",
 				Envs:                 []string{"FOO=bar", "BAZ=qux"},
@@ -159,7 +189,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 			input: `reverse-bin {
   exec
 }`,
-			expected: ReverseBin{},
+			expected: reverseBinConfig{},
 			wantErr:  true,
 		},
 		{
@@ -168,7 +198,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   exec ./main.py
   unknown_option value
 }`,
-			expected: ReverseBin{},
+			expected: reverseBinConfig{},
 			wantErr:  true,
 		},
 	}
@@ -190,92 +220,60 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 				t.Fatalf("Cannot parse caddyfile: %v", err)
 			}
 
-			if !reflect.DeepEqual(c, tt.expected) {
-				t.Errorf("Parsing yielded invalid result.\nGot:      %#v\nExpected: %#v", c, tt.expected)
+			if !reflect.DeepEqual(asConfig(&c), tt.expected) {
+				t.Errorf("Parsing yielded invalid result.\nGot:      %#v\nExpected: %#v", asConfig(&c), tt.expected)
 			}
 		})
 	}
 }
 
-func TestReverseBin_GetUpstreams(t *testing.T) {
+func TestResolveDialAddress(t *testing.T) {
 	tests := []struct {
-		name         string
+		name           string
 		reverseProxyTo string
-		wantDial     string
-		wantErr      bool
+		wantDial       string
+		wantErr        bool
 	}{
-		{
-			name:           "IP and port",
-			reverseProxyTo: "127.0.0.1:8080",
-			wantDial:       "127.0.0.1:8080",
-			wantErr:        false,
-		},
-		{
-			name:           "port only",
-			reverseProxyTo: ":8080",
-			wantDial:       "127.0.0.1:8080",
-			wantErr:        false,
-		},
-		{
-			name:           "with http scheme",
-			reverseProxyTo: "http://127.0.0.1:8080",
-			wantDial:       "127.0.0.1:8080",
-			wantErr:        false,
-		},
-		{
-			name:           "unix socket",
-			reverseProxyTo: "unix//tmp/test.sock",
-			wantDial:       "unix//tmp/test.sock",
-			wantErr:        false,
-		},
-		{
-			name:           "unix socket with single slash",
-			reverseProxyTo: "unix//tmp/test.sock",
-			wantDial:       "unix//tmp/test.sock",
-			wantErr:        false,
-		},
+		{name: "IP and port", reverseProxyTo: "127.0.0.1:8080", wantDial: "127.0.0.1:8080"},
+		{name: "port only", reverseProxyTo: ":8080", wantDial: "127.0.0.1:8080"},
+		{name: "with http scheme", reverseProxyTo: "http://127.0.0.1:8080", wantDial: "127.0.0.1:8080"},
+		{name: "invalid host", reverseProxyTo: "http://", wantErr: true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := &ReverseBin{
-				ReverseProxyTo: tt.reverseProxyTo,
-				logger:         zaptest.NewLogger(t),
-				processes:      make(map[string]*processState),
-			}
-
-			req := httptest.NewRequest(http.MethodGet, "http://localhost/test", nil)
-			repl := caddy.NewReplacer()
-			req = req.WithContext(context.WithValue(req.Context(), caddy.ReplacerCtxKey, repl))
-
-			// For these tests we don't actually start a process, so we mock the state
-			ps := &processState{
-				overrides: &proxyOverrides{
-					ReverseProxyTo: &tt.reverseProxyTo,
-				},
-			}
-			c.processes[""] = ps
-
-			// Test upstream address parsing logic
-			toAddr := tt.reverseProxyTo
-			var dialAddr string
-			if strings.HasPrefix(toAddr, "unix/") {
-				dialAddr = toAddr
-			} else {
-				if strings.HasPrefix(toAddr, ":") {
-					toAddr = "127.0.0.1" + toAddr
+			dialAddr, err := resolveDialAddress(tt.reverseProxyTo)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got dial=%q", dialAddr)
 				}
-				if !strings.HasPrefix(toAddr, "http://") && !strings.HasPrefix(toAddr, "https://") {
-					toAddr = "http://" + toAddr
-				}
-				dialAddr = strings.TrimPrefix(toAddr, "http://")
-				dialAddr = strings.TrimPrefix(dialAddr, "https://")
+				return
 			}
-
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 			if dialAddr != tt.wantDial {
-				t.Errorf("expected dial %q, got %q", tt.wantDial, dialAddr)
+				t.Fatalf("expected dial %q, got %q", tt.wantDial, dialAddr)
 			}
 		})
+	}
+}
+
+func TestResolveDialAddress_UnixSocket(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "app.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatalf("failed to listen on unix socket: %v", err)
+	}
+	defer ln.Close()
+	defer os.Remove(sock)
+
+	dialAddr, err := resolveDialAddress("unix/" + sock)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dialAddr != "unix/"+sock {
+		t.Fatalf("expected unix dial address, got %q", dialAddr)
 	}
 }
 
@@ -332,12 +330,12 @@ func TestReverseBin_GetProcessKey(t *testing.T) {
 func TestReverseBin_ProvisionValidation(t *testing.T) {
 	tests := []struct {
 		name    string
-		cfg     ReverseBin
+		cfg     reverseBinConfig
 		wantErr bool
 	}{
 		{
 			name: "invalid static non-unix without readiness_check",
-			cfg: ReverseBin{
+			cfg: reverseBinConfig{
 				Executable:     []string{"./main.py"},
 				ReverseProxyTo: "127.0.0.1:8080",
 			},
@@ -345,7 +343,7 @@ func TestReverseBin_ProvisionValidation(t *testing.T) {
 		},
 		{
 			name: "valid static non-unix with readiness_check",
-			cfg: ReverseBin{
+			cfg: reverseBinConfig{
 				Executable:      []string{"./main.py"},
 				ReverseProxyTo:  "127.0.0.1:8080",
 				ReadinessMethod: "GET",
@@ -355,7 +353,7 @@ func TestReverseBin_ProvisionValidation(t *testing.T) {
 		},
 		{
 			name: "valid static unix without readiness_check",
-			cfg: ReverseBin{
+			cfg: reverseBinConfig{
 				Executable:     []string{"./main.py"},
 				ReverseProxyTo: "unix//tmp/app.sock",
 			},
@@ -363,21 +361,21 @@ func TestReverseBin_ProvisionValidation(t *testing.T) {
 		},
 		{
 			name: "valid dynamic config",
-			cfg: ReverseBin{
+			cfg: reverseBinConfig{
 				DynamicProxyDetector: []string{"./detect.py"},
 			},
 			wantErr: false,
 		},
 		{
 			name: "missing executable without detector",
-			cfg: ReverseBin{
+			cfg: reverseBinConfig{
 				ReverseProxyTo: "127.0.0.1:8080",
 			},
 			wantErr: true,
 		},
 		{
 			name: "missing reverse_proxy_to without detector",
-			cfg: ReverseBin{
+			cfg: reverseBinConfig{
 				Executable: []string{"./main.py"},
 			},
 			wantErr: true,

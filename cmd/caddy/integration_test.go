@@ -104,7 +104,6 @@ func requirePaths(t *testing.T, checks ...pathCheck) {
 type fixtures struct {
 	PythonApp string
 	AppDir    string
-	Detector  string
 }
 
 func mustFixtures(t *testing.T) fixtures {
@@ -113,12 +112,10 @@ func mustFixtures(t *testing.T) fixtures {
 	f := fixtures{
 		PythonApp: filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py"),
 		AppDir:    filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo"),
-		Detector:  filepath.Join(repoRoot, "utils/discover-app/discover-app.py"),
 	}
 	requirePaths(t,
 		pathCheck{Label: "python test app", Path: f.PythonApp, MustBeRegular: true},
 		pathCheck{Label: "dynamic app dir", Path: f.AppDir, MustBeDir: true},
-		pathCheck{Label: "dynamic detector", Path: f.Detector, MustBeRegular: true},
 	)
 	return f
 }
@@ -320,6 +317,7 @@ func TestProcessCrashAndRestart(t *testing.T) {
 	directClient := &http.Client{Transport: directTransport, Timeout: 5 * time.Second}
 	resp, err := directClient.Get("http://unix/crash")
 	if err == nil && resp != nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 	}
 
@@ -354,18 +352,36 @@ func TestDynamicDiscovery(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
+	socketPath := createSocketPath(t)
+	detector := createExecutableScript(t, t.TempDir(), "detector-static.py", `#!/usr/bin/env python3
+import json
+import sys
+from pathlib import Path
+
+app_dir = Path(sys.argv[1]).resolve()
+socket_path = Path(sys.argv[2]).resolve()
+result = {
+    "executable": ["python3", str(app_dir / "main.py")],
+    "reverse_proxy_to": f"unix/{socket_path}",
+    "working_directory": str(app_dir),
+    "envs": [f"REVERSE_PROXY_TO=unix/{socket_path}"],
+}
+print(json.dumps(result))
+`)
+
 	setup, dispose := createReverseProxySetup(t, `# Only /dynamic/* routes use dynamic discovery.
 	handle /dynamic/* {
 		reverse-bin {
-			dynamic_proxy_detector uv run --script {{DETECTOR}} {{APP_DIR}}
+			dynamic_proxy_detector {{DETECTOR}} {{APP_DIR}} {{SOCKET_PATH}}
 		}
 	}
 	# Explicit non-dynamic route for matcher verification.
 	handle /path {
 		respond "non-dynamic"
 	}`, map[string]string{
-		"DETECTOR": f.Detector,
-		"APP_DIR":  f.AppDir,
+		"DETECTOR":    detector,
+		"APP_DIR":     f.AppDir,
+		"SOCKET_PATH": socketPath,
 	})
 	defer dispose()
 
@@ -482,6 +498,39 @@ func TestReadinessCheck(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestReadinessFailureTimeout validates that readiness polling timeout surfaces as 503.
+// Strategy: start a long-running process that never binds reverse_proxy_to, so readiness
+// cannot succeed and reverse-bin must fail request with service unavailable.
+func TestReadinessFailureTimeout(t *testing.T) {
+	requireIntegration(t)
+
+	port, err := GetFreePort()
+	if err != nil {
+		t.Fatalf("failed to get free backend port: %v", err)
+	}
+
+	sleeper := createExecutableScript(t, t.TempDir(), "sleep-forever.sh", `#!/usr/bin/env sh
+sleep 30
+`)
+
+	setup, dispose := createReverseProxySetup(t, `handle /fail/* {
+		reverse-bin {
+			exec {{SLEEPER}}
+			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
+			readiness_check GET /health
+		}
+	}`, map[string]string{
+		"SLEEPER":      sleeper,
+		"BACKEND_PORT": fmt.Sprintf("%d", port),
+	})
+	defer dispose()
+
+	client := &http.Client{Transport: createTestingTransport(), Timeout: 20 * time.Second}
+	// Request a proxied route to trigger backend startup + readiness polling.
+	// Invariant: backend never binds the configured upstream, so readiness times out and reverse-bin must return 503.
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/fail/test", setup.Port), 503, "", "request must fail with 503 when readiness polling times out")
 }
 
 // TestLifecycleIdleTimeout verifies a backend process is terminated after configured idle_timeout_ms.
