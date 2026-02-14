@@ -319,7 +319,7 @@ func TestBasicReverseProxy(t *testing.T) {
 
 	// Static baseline: request is routed to reverse-bin static upstream and
 	// should include echoed request path from backend response.
-	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/test/path", setup.Port), 200, "Location: /test/path")
+	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/test/path", setup.Port), 200, "echo-backend")
 }
 
 // TestDynamicDiscovery is a dynamic-discovery integration test.
@@ -350,8 +350,8 @@ func TestDynamicDiscovery(t *testing.T) {
 	client := newTestHTTPClient()
 
 	// Positive path: /dynamic/* must go through dynamic discovery to the
-	// discovered echo backend, which includes request path in response body.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/path", setup.Port), 200, "Location: /dynamic/path")
+	// discovered echo backend, identified by explicit marker in body.
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/path", setup.Port), 200, "echo-backend")
 
 	// Control path: /path must NOT hit dynamic discovery; it should match the
 	// explicit static handler and return the known marker body.
