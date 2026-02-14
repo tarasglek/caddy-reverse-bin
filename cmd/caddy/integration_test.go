@@ -157,13 +157,8 @@ func newTestHTTPClient() *http.Client {
 	}
 }
 
-func assertGetResponse(t *testing.T, client *http.Client, requestURI string, expectedStatusCode int, expectedBodyContains string, must ...string) (*http.Response, string) {
+func assertGetResponse(t *testing.T, client *http.Client, requestURI string, expectedStatusCode int, expectedBodyContains string, invariant string) (*http.Response, string) {
 	t.Helper()
-
-	mustMsg := ""
-	if len(must) > 0 {
-		mustMsg = must[0]
-	}
 
 	var (
 		resp *http.Response
@@ -176,10 +171,7 @@ func assertGetResponse(t *testing.T, client *http.Client, requestURI string, exp
 			break
 		}
 		if time.Now().After(deadline) {
-			if mustMsg != "" {
-				t.Fatalf("%s: failed to call server: %v", mustMsg, err)
-			}
-			t.Fatalf("failed to call server: %v", err)
+			t.Fatalf("%s: failed to call server: %v", invariant, err)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -187,75 +179,46 @@ func assertGetResponse(t *testing.T, client *http.Client, requestURI string, exp
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		if mustMsg != "" {
-			t.Fatalf("%s: unable to read response body: %v", mustMsg, err)
-		}
-		t.Fatalf("unable to read response body: %v", err)
+		t.Fatalf("%s: unable to read response body: %v", invariant, err)
 	}
 	body := string(bodyBytes)
 
 	if resp.StatusCode != expectedStatusCode {
-		if mustMsg != "" {
-			t.Fatalf("%s: requesting %q expected status %d but got %d (body: %s)", mustMsg, requestURI, expectedStatusCode, resp.StatusCode, body)
-		}
-		t.Fatalf("requesting %q expected status %d but got %d (body: %s)", requestURI, expectedStatusCode, resp.StatusCode, body)
+		t.Fatalf("%s: requesting %q expected status %d but got %d (body: %s)", invariant, requestURI, expectedStatusCode, resp.StatusCode, body)
 	}
 	if expectedBodyContains != "" && !strings.Contains(body, expectedBodyContains) {
-		if mustMsg != "" {
-			t.Fatalf("%s: requesting %q expected body to contain %q but got %q", mustMsg, requestURI, expectedBodyContains, body)
-		}
-		t.Fatalf("requesting %q expected body to contain %q but got %q", requestURI, expectedBodyContains, body)
+		t.Fatalf("%s: requesting %q expected body to contain %q but got %q", invariant, requestURI, expectedBodyContains, body)
 	}
 	return resp, body
 }
 
-func assertStatus5xx(t *testing.T, client *http.Client, rawURL string, must ...string) string {
+func assertStatus5xx(t *testing.T, client *http.Client, rawURL string, invariant string) string {
 	t.Helper()
-	mustMsg := ""
-	if len(must) > 0 {
-		mustMsg = must[0]
-	}
 
 	resp, err := client.Get(rawURL)
 	if err != nil {
-		if mustMsg != "" {
-			t.Fatalf("%s: request failed: %v", mustMsg, err)
-		}
-		t.Fatalf("request failed: %v", err)
+		t.Fatalf("%s: request failed: %v", invariant, err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		if mustMsg != "" {
-			t.Fatalf("%s: failed reading response body: %v", mustMsg, err)
-		}
-		t.Fatalf("failed reading response body: %v", err)
+		t.Fatalf("%s: failed reading response body: %v", invariant, err)
 	}
 	body := string(bodyBytes)
 
 	if resp.StatusCode < 500 || resp.StatusCode > 599 {
-		if mustMsg != "" {
-			t.Fatalf("%s: expected 5xx for %s, got %d (body: %s)", mustMsg, rawURL, resp.StatusCode, body)
-		}
-		t.Fatalf("expected 5xx for %s, got %d (body: %s)", rawURL, resp.StatusCode, body)
+		t.Fatalf("%s: expected 5xx for %s, got %d (body: %s)", invariant, rawURL, resp.StatusCode, body)
 	}
 	return body
 }
 
-func assertNonEmpty200(t *testing.T, client *http.Client, rawURL string, must ...string) string {
+func assertNonEmpty200(t *testing.T, client *http.Client, rawURL string, invariant string) string {
 	t.Helper()
-	mustMsg := ""
-	if len(must) > 0 {
-		mustMsg = must[0]
-	}
 
-	resp, body := assertGetResponse(t, client, rawURL, 200, "", mustMsg)
+	resp, body := assertGetResponse(t, client, rawURL, 200, "", invariant)
 	if body == "" {
-		if mustMsg != "" {
-			t.Fatalf("%s: expected non-empty response body for %s (status=%d headers=%v)", mustMsg, rawURL, resp.StatusCode, resp.Header)
-		}
-		t.Fatalf("expected non-empty response body for %s (status=%d headers=%v)", rawURL, resp.StatusCode, resp.Header)
+		t.Fatalf("%s: expected non-empty response body for %s (status=%d headers=%v)", invariant, rawURL, resp.StatusCode, resp.Header)
 	}
 	return body
 }
@@ -362,7 +325,7 @@ func TestBasicReverseProxy(t *testing.T) {
 
 	// Static baseline: request is routed to reverse-bin static upstream and
 	// should include echoed request path from backend response.
-	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/test/path", setup.Port), 200, "echo-backend")
+	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/test/path", setup.Port), 200, "echo-backend", "basic reverse proxy must route request to echo backend")
 }
 
 // TestProcessCrashAndRestart verifies reverse-bin restarts a crashed backend process.
@@ -404,7 +367,7 @@ func TestProcessCrashAndRestart(t *testing.T) {
 	client := newTestHTTPClient()
 
 	// First request via Caddy proves backend starts and serves traffic.
-	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/first", setup.Port), 200, "\"pid\":")
+	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/first", setup.Port), 200, "\"pid\":", "first request must return backend pid before crash")
 	pid1 := parsePID(t, body1)
 
 	// Direct Unix-socket request to /crash intentionally terminates backend process.
@@ -434,7 +397,7 @@ func TestProcessCrashAndRestart(t *testing.T) {
 	}
 
 	// Second request via Caddy must succeed and come from a new backend PID.
-	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/second", setup.Port), 200, "\"pid\":")
+	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/second", setup.Port), 200, "\"pid\":", "second request must succeed with restarted backend pid")
 	pid2 := parsePID(t, body2)
 	if pid1 == pid2 {
 		t.Fatalf("expected backend restart with different pid, got same pid=%d (first=%q second=%q)", pid1, body1, body2)
@@ -470,11 +433,11 @@ func TestDynamicDiscovery(t *testing.T) {
 
 	// Positive path: /dynamic/* must go through dynamic discovery to the
 	// discovered echo backend, identified by explicit marker in body.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/path", setup.Port), 200, "echo-backend")
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/path", setup.Port), 200, "echo-backend", "dynamic route must be served by discovered backend")
 
 	// Control path: /path must NOT hit dynamic discovery; it should match the
 	// explicit static handler and return the known marker body.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "non-dynamic")
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "non-dynamic", "non-dynamic route must match static handler")
 }
 
 // TestDynamicDiscovery_DetectorFailure validates failure handling when the
@@ -501,10 +464,10 @@ sys.exit(2)
 	client := newTestHTTPClient()
 
 	// Control request: non-dynamic route should remain healthy and return static body.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ok", setup.Port), 200, "ok")
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ok", setup.Port), 200, "ok", "control route must remain healthy when detector fails")
 
 	// Dynamic request: failing detector must surface as service unavailable.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/fail", setup.Port), 503, "")
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/fail", setup.Port), 503, "", "dynamic route must return 503 when detector exits non-zero")
 }
 
 // TestReadinessCheck verifies Unix readiness behavior for GET, HEAD, and null readiness_check.
@@ -545,7 +508,7 @@ func TestReadinessCheck(t *testing.T) {
 			client := newTestHTTPClient()
 
 			// Request through Caddy to prove proxying works with the configured readiness mode.
-			_, pingBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/ping", setup.Port), 200, "")
+			_, pingBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/ping", setup.Port), 200, "", "ready endpoint must proxy request to backend")
 			var pingPayload struct {
 				Backend string `json:"backend"`
 				Path    string `json:"path"`
@@ -558,7 +521,7 @@ func TestReadinessCheck(t *testing.T) {
 			}
 
 			// Request backend debug endpoint to verify whether /health was probed and by which method.
-			_, healthBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/health-last", setup.Port), 200, "")
+			_, healthBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/health-last", setup.Port), 200, "", "health-last endpoint must return readiness probe metadata")
 			if !strings.Contains(healthBody, "last_health_method") {
 				t.Fatalf("/ready/health-last response must include last_health_method (body=%s)", healthBody)
 			}
@@ -619,14 +582,14 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 	client := newTestHTTPClient()
 
 	// First request starts backend process and returns its PID.
-	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/first", setup.Port), 200, "")
+	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/first", setup.Port), 200, "", "first idle-timeout request must start backend and return pid")
 	pid1 := parsePID(t, body1)
 
 	// Wait without traffic so idle timeout can fire naturally.
 	time.Sleep(250 * time.Millisecond)
 
 	// Next request should be served by a newly spawned process.
-	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/second", setup.Port), 200, "")
+	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/second", setup.Port), 200, "", "second idle-timeout request must succeed after respawn")
 	pid2 := parsePID(t, body2)
 	if pid2 == pid1 {
 		t.Fatalf("expected new pid after idle timeout; got same pid=%d (first=%s second=%s)", pid1, body1, body2)
@@ -682,13 +645,13 @@ func TestMultipleApps(t *testing.T) {
 
 	client := newTestHTTPClient()
 
-	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/app1/test", setup.Port), 200, "")
+	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/app1/test", setup.Port), 200, "", "app1 route must be served by its backend")
 	pid1, path1, backend1 := parse(t, body1)
 	if backend1 != "echo-backend" || path1 != "/test" {
 		t.Fatalf("unexpected app1 payload: %s", body1)
 	}
 
-	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/app2/test", setup.Port), 200, "")
+	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/app2/test", setup.Port), 200, "", "app2 route must be served by its backend")
 	pid2, path2, backend2 := parse(t, body2)
 	if backend2 != "echo-backend" || path2 != "/test" {
 		t.Fatalf("unexpected app2 payload: %s", body2)
