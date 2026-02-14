@@ -240,11 +240,11 @@ func siteWithReverseBin(host string, block string) string {
 	return fmt.Sprintf("\nhttp://%s {\n\t%s\n}\n", host, block)
 }
 
-type basicReverseProxySetup struct {
+type reverseProxySetup struct {
 	Port int
 }
 
-func createBasicReverseProxySetup(t *testing.T, f fixtures) (*basicReverseProxySetup, func()) {
+func createReverseProxySetup(t *testing.T, handleBlock string, values map[string]string) (*reverseProxySetup, func()) {
 	t.Helper()
 
 	port, err := GetFreePort()
@@ -252,10 +252,13 @@ func createBasicReverseProxySetup(t *testing.T, f fixtures) (*basicReverseProxyS
 		t.Fatalf("failed to get free port: %v", err)
 	}
 
-	tmpDir := t.TempDir()
-	appSocketPath := filepath.Join(tmpDir, "app.sock")
-	caddyfilePath := filepath.Join(tmpDir, "Caddyfile")
+	vars := map[string]string{}
+	for k, v := range values {
+		vars[k] = v
+	}
+	resolvedHandle := renderTemplate(handleBlock, vars)
 
+	caddyfilePath := filepath.Join(t.TempDir(), "Caddyfile")
 	fixture := `
 {
 	admin off
@@ -263,22 +266,13 @@ func createBasicReverseProxySetup(t *testing.T, f fixtures) (*basicReverseProxyS
 }
 
 http://localhost:{{HTTP_PORT}} {
-	handle /test/path* {
-		reverse-bin {
-			exec uv run --script {{PYTHON_APP}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-			env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
-			pass_all_env
-		}
-	}
+	{{HANDLE_BLOCK}}
 }
 `
 	rendered := renderTemplate(fixture, map[string]string{
-		"HTTP_PORT":  fmt.Sprintf("%d", port),
-		"PYTHON_APP": f.PythonApp,
-		"APP_SOCKET": appSocketPath,
+		"HTTP_PORT":    fmt.Sprintf("%d", port),
+		"HANDLE_BLOCK": resolvedHandle,
 	})
-
 	if err := os.WriteFile(caddyfilePath, []byte(rendered), 0o600); err != nil {
 		t.Fatalf("failed to write temp Caddyfile: %v", err)
 	}
@@ -292,7 +286,26 @@ http://localhost:{{HTTP_PORT}} {
 		_ = caddy.Stop()
 	}
 
-	return &basicReverseProxySetup{Port: port}, dispose
+	return &reverseProxySetup{Port: port}, dispose
+}
+
+func createBasicReverseProxySetup(t *testing.T, f fixtures) (*reverseProxySetup, func()) {
+	t.Helper()
+
+	tmpDir := t.TempDir()
+	handleBlock := `handle /test/path* {
+		reverse-bin {
+			exec uv run --script {{PYTHON_APP}}
+			reverse_proxy_to unix/{{APP_SOCKET}}
+			env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
+			pass_all_env
+		}
+	}`
+
+	return createReverseProxySetup(t, handleBlock, map[string]string{
+		"PYTHON_APP": f.PythonApp,
+		"APP_SOCKET": filepath.Join(tmpDir, "app.sock"),
+	})
 }
 
 func TestBasicReverseProxy(t *testing.T) {
@@ -301,24 +314,27 @@ func TestBasicReverseProxy(t *testing.T) {
 	setup, dispose := createBasicReverseProxySetup(t, mustFixtures(t))
 	defer dispose()
 
-	client := newTestHTTPClient()
-	_ = assertNonEmpty200(t, client, fmt.Sprintf("http://localhost:%d/test/path", setup.Port))
+	_ = assertNonEmpty200(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/test/path", setup.Port))
 }
 
-/*
 func TestDynamicDiscovery(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
-	siteBlocks := siteWithReverseBin(
-		"localhost:9082",
-		reverseBinDynamicDetectorBlock([]string{"uv", "run", "--script", f.Detector, f.AppDir}),
-	)
-	tester := startTestServer(t, 9082, 9445, siteBlocks)
+	setup, dispose := createReverseProxySetup(t, `handle {
+		reverse-bin {
+			dynamic_proxy_detector uv run --script {{DETECTOR}} {{APP_DIR}}
+		}
+	}`, map[string]string{
+		"DETECTOR": f.Detector,
+		"APP_DIR":  f.AppDir,
+	})
+	defer dispose()
 
-	_ = assertNonEmpty200(t, tester, "http://localhost:9082/dynamic/test")
+	_ = assertNonEmpty200(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/dynamic/test", setup.Port))
 }
 
+/*
 func TestDynamicDiscovery_DetectorFailure(t *testing.T) {
 	requireIntegration(t)
 
