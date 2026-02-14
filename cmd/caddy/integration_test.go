@@ -321,7 +321,8 @@ func TestDynamicDiscovery(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
-	setup, dispose := createReverseProxySetup(t, `handle {
+	setup, dispose := createReverseProxySetup(t, `# Only /dynamic/* routes use dynamic discovery.
+	handle /dynamic/* {
 		reverse-bin {
 			dynamic_proxy_detector uv run --script {{DETECTOR}} {{APP_DIR}}
 		}
@@ -331,7 +332,12 @@ func TestDynamicDiscovery(t *testing.T) {
 	})
 	defer dispose()
 
-	_ = assertNonEmpty200(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/dynamic/test", setup.Port))
+	client := newTestHTTPClient()
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/path", setup.Port), 200, "Location: /dynamic/path")
+	_, body := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "")
+	if strings.Contains(body, "Location: /path") {
+		t.Fatalf("expected /path not to be handled by dynamic matcher")
+	}
 }
 
 /*
