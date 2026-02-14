@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -120,13 +121,6 @@ func mustFixtures(t *testing.T) fixtures {
 	return f
 }
 
-func startTestServer(t *testing.T, httpPort, httpsPort int, siteBlocks string) *Tester {
-	t.Helper()
-	tester := NewTester(t)
-	tester.InitServerWithDefaults(httpPort, httpsPort, siteBlocks)
-	return tester
-}
-
 func readCaddyFixture(t *testing.T, fixturePath string) string {
 	t.Helper()
 	b, err := os.ReadFile(fixturePath)
@@ -142,6 +136,16 @@ func renderTemplate(input string, values map[string]string) string {
 		replacements = append(replacements, "{{"+k+"}}", v)
 	}
 	return strings.NewReplacer(replacements...).Replace(input)
+}
+
+func createTestingTransport() *http.Transport {
+	dialer := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 5 * time.Second}
+	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
+		parts := strings.Split(addr, ":")
+		destAddr := fmt.Sprintf("127.0.0.1:%s", parts[len(parts)-1])
+		return dialer.DialContext(ctx, network, destAddr)
+	}
+	return &http.Transport{DialContext: dialContext}
 }
 
 func newTestHTTPClient() *http.Client {
