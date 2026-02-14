@@ -1,4 +1,4 @@
-module github.com/aksdb/caddy-cgi/v2
+module github.com/tarasglek/caddy-reverseweb/v2
 
 go 1.24.0
 

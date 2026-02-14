@@ -36,7 +36,7 @@ import (
 func init() {
 	caddy.RegisterModule(ReverseBin{})
 	// RegisterHandlerDirective associates the "reverse-bin" directive in the Caddyfile
-	// with the parseCaddyfile function to create a CGI handler instance.
+	// with the parseCaddyfile function to create a reverse-bin handler instance.
 	httpcaddyfile.RegisterHandlerDirective("reverse-bin", parseCaddyfile)
 	// RegisterDirectiveOrder ensures the "reverse-bin" handler is executed before the
 	// "respond" handler in the HTTP middleware chain. This makes the "order"
@@ -44,9 +44,7 @@ func init() {
 	httpcaddyfile.RegisterDirectiveOrder("reverse-bin", httpcaddyfile.Before, "respond")
 }
 
-// ReverseBin implements a CGI handler that executes binary files following the
-// CGI protocol, passing parameters via environment variables and evaluating
-// the response as the HTTP response.
+// ReverseBin supervises executable backends and proxies HTTP traffic to them.
 type ReverseBin struct {
 	// Name of executable script or binary and its arguments
 	Executable []string `json:"executable"`
@@ -56,7 +54,7 @@ type ReverseBin struct {
 	Envs []string `json:"envs,omitempty"`
 	// Environment keys to pass through for all apps
 	PassEnvs []string `json:"passEnvs,omitempty"`
-	// True to pass all environment variables to CGI executable
+	// True to pass all environment variables to the executable
 	PassAll bool `json:"passAllEnvs,omitempty"`
 
 	// Address to proxy to (for proxy mode)

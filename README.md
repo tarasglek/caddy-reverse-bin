@@ -1,1 +1,3 @@
-Based on the original caddy-cgi project: https://github.com/aksdb/caddy-cgi
+# caddy-reverseweb
+
+On-demand managed reverse proxy handler for Caddy.
