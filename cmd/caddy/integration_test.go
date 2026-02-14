@@ -326,6 +326,10 @@ func TestDynamicDiscovery(t *testing.T) {
 		reverse-bin {
 			dynamic_proxy_detector uv run --script {{DETECTOR}} {{APP_DIR}}
 		}
+	}
+	# Explicit non-dynamic route for matcher verification.
+	handle /path {
+		respond "non-dynamic"
 	}`, map[string]string{
 		"DETECTOR": f.Detector,
 		"APP_DIR":  f.AppDir,
@@ -334,10 +338,7 @@ func TestDynamicDiscovery(t *testing.T) {
 
 	client := newTestHTTPClient()
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/path", setup.Port), 200, "Location: /dynamic/path")
-	_, body := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "")
-	if strings.Contains(body, "Location: /path") {
-		t.Fatalf("expected /path not to be handled by dynamic matcher")
-	}
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "non-dynamic")
 }
 
 /*
