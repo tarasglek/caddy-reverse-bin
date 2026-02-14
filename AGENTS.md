@@ -1,4 +1,4 @@
-# Agent Guidelines for caddy-reverseweb
+# Agent Guidelines for caddy-reverse-bin
 
 ## Testing Policy
 
