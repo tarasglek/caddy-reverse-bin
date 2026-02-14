@@ -157,8 +157,13 @@ func newTestHTTPClient() *http.Client {
 	}
 }
 
-func assertGetResponse(t *testing.T, client *http.Client, requestURI string, expectedStatusCode int, expectedBodyContains string) (*http.Response, string) {
+func assertGetResponse(t *testing.T, client *http.Client, requestURI string, expectedStatusCode int, expectedBodyContains string, must ...string) (*http.Response, string) {
 	t.Helper()
+
+	mustMsg := ""
+	if len(must) > 0 {
+		mustMsg = must[0]
+	}
 
 	var (
 		resp *http.Response
@@ -171,6 +176,9 @@ func assertGetResponse(t *testing.T, client *http.Client, requestURI string, exp
 			break
 		}
 		if time.Now().After(deadline) {
+			if mustMsg != "" {
+				t.Fatalf("%s: failed to call server: %v", mustMsg, err)
+			}
 			t.Fatalf("failed to call server: %v", err)
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -179,43 +187,74 @@ func assertGetResponse(t *testing.T, client *http.Client, requestURI string, exp
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if mustMsg != "" {
+			t.Fatalf("%s: unable to read response body: %v", mustMsg, err)
+		}
 		t.Fatalf("unable to read response body: %v", err)
 	}
 	body := string(bodyBytes)
 
 	if resp.StatusCode != expectedStatusCode {
+		if mustMsg != "" {
+			t.Fatalf("%s: requesting %q expected status %d but got %d (body: %s)", mustMsg, requestURI, expectedStatusCode, resp.StatusCode, body)
+		}
 		t.Fatalf("requesting %q expected status %d but got %d (body: %s)", requestURI, expectedStatusCode, resp.StatusCode, body)
 	}
 	if expectedBodyContains != "" && !strings.Contains(body, expectedBodyContains) {
+		if mustMsg != "" {
+			t.Fatalf("%s: requesting %q expected body to contain %q but got %q", mustMsg, requestURI, expectedBodyContains, body)
+		}
 		t.Fatalf("requesting %q expected body to contain %q but got %q", requestURI, expectedBodyContains, body)
 	}
 	return resp, body
 }
 
-func assertStatus5xx(t *testing.T, client *http.Client, rawURL string) string {
+func assertStatus5xx(t *testing.T, client *http.Client, rawURL string, must ...string) string {
 	t.Helper()
+	mustMsg := ""
+	if len(must) > 0 {
+		mustMsg = must[0]
+	}
+
 	resp, err := client.Get(rawURL)
 	if err != nil {
+		if mustMsg != "" {
+			t.Fatalf("%s: request failed: %v", mustMsg, err)
+		}
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if mustMsg != "" {
+			t.Fatalf("%s: failed reading response body: %v", mustMsg, err)
+		}
 		t.Fatalf("failed reading response body: %v", err)
 	}
 	body := string(bodyBytes)
 
 	if resp.StatusCode < 500 || resp.StatusCode > 599 {
+		if mustMsg != "" {
+			t.Fatalf("%s: expected 5xx for %s, got %d (body: %s)", mustMsg, rawURL, resp.StatusCode, body)
+		}
 		t.Fatalf("expected 5xx for %s, got %d (body: %s)", rawURL, resp.StatusCode, body)
 	}
 	return body
 }
 
-func assertNonEmpty200(t *testing.T, client *http.Client, rawURL string) string {
+func assertNonEmpty200(t *testing.T, client *http.Client, rawURL string, must ...string) string {
 	t.Helper()
-	resp, body := assertGetResponse(t, client, rawURL, 200, "")
+	mustMsg := ""
+	if len(must) > 0 {
+		mustMsg = must[0]
+	}
+
+	resp, body := assertGetResponse(t, client, rawURL, 200, "", mustMsg)
 	if body == "" {
+		if mustMsg != "" {
+			t.Fatalf("%s: expected non-empty response body for %s (status=%d headers=%v)", mustMsg, rawURL, resp.StatusCode, resp.Header)
+		}
 		t.Fatalf("expected non-empty response body for %s (status=%d headers=%v)", rawURL, resp.StatusCode, resp.Header)
 	}
 	return body
@@ -520,6 +559,9 @@ func TestReadinessCheck(t *testing.T) {
 
 			// Request backend debug endpoint to verify whether /health was probed and by which method.
 			_, healthBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/health-last", setup.Port), 200, "")
+			if !strings.Contains(healthBody, "last_health_method") {
+				t.Fatalf("/ready/health-last response must include last_health_method (body=%s)", healthBody)
+			}
 			var healthPayload struct {
 				LastHealthMethod *string `json:"last_health_method"`
 			}
@@ -588,6 +630,72 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 	pid2 := parsePID(t, body2)
 	if pid2 == pid1 {
 		t.Fatalf("expected new pid after idle timeout; got same pid=%d (first=%s second=%s)", pid1, body1, body2)
+	}
+}
+
+// TestMultipleApps verifies two independent reverse-bin handlers can run side-by-side
+// with separate Unix sockets and processes.
+func TestMultipleApps(t *testing.T) {
+	requireIntegration(t)
+	f := mustFixtures(t)
+
+	socket1 := createSocketPath(t)
+	socket2 := createSocketPath(t)
+
+	setup, dispose := createReverseProxySetup(t, `handle_path /app1/* {
+		reverse-bin {
+			exec uv run --script {{PYTHON_APP}}
+			reverse_proxy_to unix/{{APP_SOCKET_1}}
+			env REVERSE_PROXY_TO=unix/{{APP_SOCKET_1}}
+			pass_all_env
+		}
+	}
+	handle_path /app2/* {
+		reverse-bin {
+			exec uv run --script {{PYTHON_APP}}
+			reverse_proxy_to unix/{{APP_SOCKET_2}}
+			env REVERSE_PROXY_TO=unix/{{APP_SOCKET_2}}
+			pass_all_env
+		}
+	}`, map[string]string{
+		"PYTHON_APP":   f.PythonApp,
+		"APP_SOCKET_1": socket1,
+		"APP_SOCKET_2": socket2,
+	})
+	defer dispose()
+
+	parse := func(t *testing.T, body string) (pid int, path string, backend string) {
+		t.Helper()
+		var payload struct {
+			PID     int    `json:"pid"`
+			Path    string `json:"path"`
+			Backend string `json:"backend"`
+		}
+		if err := json.Unmarshal([]byte(body), &payload); err != nil {
+			t.Fatalf("failed to parse response JSON %q: %v", body, err)
+		}
+		if payload.PID <= 0 {
+			t.Fatalf("invalid pid in payload: %s", body)
+		}
+		return payload.PID, payload.Path, payload.Backend
+	}
+
+	client := newTestHTTPClient()
+
+	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/app1/test", setup.Port), 200, "")
+	pid1, path1, backend1 := parse(t, body1)
+	if backend1 != "echo-backend" || path1 != "/test" {
+		t.Fatalf("unexpected app1 payload: %s", body1)
+	}
+
+	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/app2/test", setup.Port), 200, "")
+	pid2, path2, backend2 := parse(t, body2)
+	if backend2 != "echo-backend" || path2 != "/test" {
+		t.Fatalf("unexpected app2 payload: %s", body2)
+	}
+
+	if pid1 == pid2 {
+		t.Fatalf("expected distinct backend processes for app1/app2, got same pid=%d (app1=%s app2=%s)", pid1, body1, body2)
 	}
 }
 
