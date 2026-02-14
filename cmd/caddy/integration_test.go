@@ -358,6 +358,8 @@ func TestDynamicDiscovery(t *testing.T) {
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "non-dynamic")
 }
 
+// TestDynamicDiscovery_DetectorFailure validates failure handling when the
+// dynamic detector exits non-zero for a dynamic route.
 func TestDynamicDiscovery_DetectorFailure(t *testing.T) {
 	requireIntegration(t)
 
@@ -378,7 +380,11 @@ sys.exit(2)
 	defer dispose()
 
 	client := newTestHTTPClient()
+
+	// Control request: non-dynamic route should remain healthy and return static body.
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ok", setup.Port), 200, "ok")
+
+	// Dynamic request: failing detector must surface as service unavailable.
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/fail", setup.Port), 503, "")
 }
 
