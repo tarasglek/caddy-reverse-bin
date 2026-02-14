@@ -1,4 +1,4 @@
-module github.com/tarasglek/caddy-reverseweb/v2
+module github.com/tarasglek/caddy-reverse-bin/v2
 
 go 1.25.0
 
