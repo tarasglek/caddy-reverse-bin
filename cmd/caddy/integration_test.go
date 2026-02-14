@@ -318,8 +318,8 @@ func TestBasicReverseProxy(t *testing.T) {
 	defer dispose()
 
 	// Static baseline: request is routed to reverse-bin static upstream and
-	// must return a non-empty backend response.
-	_ = assertNonEmpty200(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/test/path", setup.Port))
+	// should include echoed request path from backend response.
+	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/test/path", setup.Port), 200, "Location: /test/path")
 }
 
 // TestDynamicDiscovery is a dynamic-discovery integration test.
