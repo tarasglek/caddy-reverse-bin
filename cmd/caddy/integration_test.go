@@ -358,29 +358,31 @@ func TestDynamicDiscovery(t *testing.T) {
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "non-dynamic")
 }
 
-/*
 func TestDynamicDiscovery_DetectorFailure(t *testing.T) {
 	requireIntegration(t)
 
-	tmpDir := t.TempDir()
-	failDetector := createExecutableScript(t, tmpDir, "detector-fail.py", `#!/usr/bin/env python3
+	failDetector := createExecutableScript(t, t.TempDir(), "detector-fail.py", `#!/usr/bin/env python3
 import sys
 print("detector failed on purpose", file=sys.stderr)
 sys.exit(2)
 `)
 
-	siteBlocks := siteWithReverseBin(
-		"localhost:9086",
-		reverseBinDynamicDetectorBlock([]string{failDetector, "{path}"}),
-	)
-	tester := startTestServer(t, 9086, 9449, siteBlocks)
-
-	body := assertStatus5xx(t, tester, "http://localhost:9086/fail")
-	if !strings.Contains(body, "dynamic proxy detector failed") {
-		t.Logf("expected detector failure text, got: %s", body)
+	setup, dispose := createReverseProxySetup(t, `handle /dynamic/* {
+		reverse-bin {
+			dynamic_proxy_detector {{DETECTOR}} {path}
+		}
 	}
+	handle /ok {
+		respond "ok"
+	}`, map[string]string{"DETECTOR": failDetector})
+	defer dispose()
+
+	client := newTestHTTPClient()
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ok", setup.Port), 200, "ok")
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/fail", setup.Port), 503, "")
 }
 
+/*
 func TestDynamicDiscovery_FirstRequestOK_SecondPathFails(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
