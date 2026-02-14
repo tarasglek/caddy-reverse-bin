@@ -6,6 +6,7 @@
 - Every test should have a comment of intent of test
 - When making http requests ensure comment on what http request is testing
 - When making http requests, asserts should be super specific and anti-fragile
+- Make test invariants clear
 
 ## Commit Policy
 
