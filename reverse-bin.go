@@ -86,6 +86,22 @@ func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, er
 	ps := c.getOrCreateProcessState(key)
 
 	ps.mu.Lock()
+	if ps.process != nil && !isProcessAlive(ps.process) {
+		c.logger.Warn("detected dead backend process before proxying; restarting",
+			zap.String("key", key),
+			zap.Int("pid", ps.process.Pid))
+		ps.process = nil
+		ps.cancel = nil
+		// Clean up stale unix socket path if present; readiness/startup will recreate it.
+		staleAddr := c.ReverseProxyTo
+		if ps.overrides != nil && ps.overrides.ReverseProxyTo != nil {
+			staleAddr = *ps.overrides.ReverseProxyTo
+		}
+		if isUnixUpstream(staleAddr) {
+			socketPath := strings.TrimPrefix(staleAddr, "unix/")
+			_ = os.Remove(socketPath)
+		}
+	}
 	if ps.process == nil {
 		overrides, err := c.startProcess(r, ps, key)
 		if err != nil {
@@ -149,6 +165,17 @@ func (c *ReverseBin) killProcessGroup(proc *os.Process) {
 	} else {
 		proc.Kill()
 	}
+}
+
+func isProcessAlive(proc *os.Process) bool {
+	if proc == nil {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		// Best-effort on Windows; cmd.Wait() watcher will eventually clear state.
+		return true
+	}
+	return proc.Signal(syscall.Signal(0)) == nil
 }
 
 type proxyOverrides struct {
