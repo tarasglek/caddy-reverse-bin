@@ -28,17 +28,17 @@ README.md : doc/document.md
 
 doc/index.html : doc/document.md doc/html.txt doc/caddy.xml
 	pandoc --read=markdown --write=html --template=doc/html.txt \
-		--metadata pagetitle="CGI for Caddy" --syntax-definition=doc/caddy.xml < $< > $@
+		--metadata pagetitle="reverse-bin for Caddy" --syntax-definition=doc/caddy.xml < $< > $@
 
 doc.go : doc/document.md doc/go.awk
-	pandoc --read=markdown --write=plain $< | awk --assign=package_name=cgi --file=doc/go.awk > $@
+	pandoc --read=markdown --write=plain $< | awk --assign=package_name=reversebin --file=doc/go.awk > $@
 	gofmt -s -w $@
 
 build :
 	cd ../caddy-custom
 	go build -v
 	sudo setcap cap_net_bind_service=+ep ./caddy
-	./caddy -plugins | grep cgi
+	./caddy -plugins | grep reverse-bin
 	./caddy -version
 
 clean :

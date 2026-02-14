@@ -1,36 +1,32 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE language SYSTEM "language.dtd">
-<language name="caddyfile" version="2" kateversion="5.0" section="3D" extensions="*.caddyfile" mimetype="application/sla" author="jung" license="mit">
-	<highlighting>
-		<list name="keywords">
-			<item>cgi</item>
-			<item>dir</item>
-			<item>empty_env</item>
-			<item>env</item>
-			<item>except</item>
-			<item>exec</item>
-			<item>inspect</item>
-			<item>match</item>
-			<item>pass_all_env</item>
-			<item>pass_env</item>
-			<item>root</item>
-			<item>script_name</item>
-			<item>buffer_limit</item>
-			<item>unbuffered_output</item>
-		</list>
-		<contexts>
-			<context name="Normal" attribute="Normal Text" lineEndContext="#stay">
-				<DetectSpaces/>
-				<Float attribute="Float" context="#stay"/>
-				<Int attribute="Decimal" context="#stay"/>
-				<keyword attribute="Keyword" context="#stay" String="keywords"/>
-			</context>
-		</contexts>
-		<itemDatas>
-			<itemData name="Normal Text" defStyleNum="dsNormal"/>
-			<itemData name="Keyword"     defStyleNum="dsKeyword"/>
-			<itemData name="Decimal"     defStyleNum="dsDecVal"/>
-			<itemData name="Float"       defStyleNum="dsFloat"/>
-		</itemDatas>
-	</highlighting>
+<language name="caddyfile" version="2" kateversion="5.0" section="Other" extensions="*.caddyfile" mimetype="text/plain" author="project" license="mit">
+  <highlighting>
+    <list name="keywords">
+      <item>reverse-bin</item>
+      <item>exec</item>
+      <item>dir</item>
+      <item>env</item>
+      <item>pass_env</item>
+      <item>pass_all_env</item>
+      <item>reverse_proxy_to</item>
+      <item>readiness_check</item>
+      <item>dynamic_proxy_detector</item>
+      <item>idle_timeout_ms</item>
+    </list>
+    <contexts>
+      <context name="Normal" attribute="Normal Text" lineEndContext="#stay">
+        <DetectSpaces/>
+        <Float attribute="Float" context="#stay"/>
+        <Int attribute="Decimal" context="#stay"/>
+        <keyword attribute="Keyword" context="#stay" String="keywords"/>
+      </context>
+    </contexts>
+    <itemDatas>
+      <itemData name="Normal Text" defStyleNum="dsNormal"/>
+      <itemData name="Keyword" defStyleNum="dsKeyword"/>
+      <itemData name="Decimal" defStyleNum="dsDecVal"/>
+      <itemData name="Float" defStyleNum="dsFloat"/>
+    </itemDatas>
+  </highlighting>
 </language>
