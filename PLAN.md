@@ -7,18 +7,9 @@
 
 ## Current failures
 
-### 1) `Lint Go` workflow fails at `govulncheck`
-`govulncheck` is correctly running and failing the build because reachable vulns are reported through Caddy dependency paths.
-
-Key items reported in logs include:
-- `golang.org/x/crypto` (GO-2025-4116)
-- `github.com/quic-go/quic-go` (GO-2025-4017, GO-2025-3735)
-- `github.com/go-jose/go-jose/v3` (GO-2025-3485)
-- `github.com/golang/glog` (GO-2025-3372)
-
-### 2) `Test Go` workflow fails in integration tests
-`TestDynamicDiscovery` fails in CI because required runtime binary is missing:
-- `exec: "landrun": executable file not found in $PATH`
+None currently. Latest PR runs are green for both workflows:
+- `Lint Go` ✅
+- `Test Go` ✅
 
 ---
 
@@ -26,8 +17,7 @@ Key items reported in logs include:
 
 ### A) Dependency upgrades
 - [x] Upgrade dependencies to latest feasible versions (`go get -u ./...` + tidy).
-- [~] Keep dependency graph build-stable after upgrades.
-  - Current blocker: local tests now fail in `TestProcessCrashAndRestart` with a transient `502` after backend crash/restart.
+- [x] Keep dependency graph build-stable after upgrades.
 
 ### B) Local verification before push
 - [x] Re-run local tests in tmux after upgrade attempt.
@@ -36,18 +26,17 @@ Key items reported in logs include:
 
 ### C) CI fixes
 - [x] Ensure CI installs all runtime dependencies required by integration tests.
-  - Added workflow install/verify for `uv`, `jq`, and `landrun` before `go test ./...`.
+  - Uses pinned `eget` to install `landrun` reliably in CI.
 - [x] Keep tests strict (no skip-on-missing-tool fallback) once installs are in place.
-- [~] Re-run CI and confirm `Test Go` passes.
-  - Local fix applied: made `TestDynamicDiscovery` use a self-contained detector script (no `uv` network download dependency), and local `go test ./...` now passes.
+- [x] Re-run CI and confirm `Test Go` passes.
+  - Also fixed CI-only unix socket path length issue in `TestDynamicDiscovery`.
 
 ### D) Vulnerability cleanup
 - [x] Re-run `govulncheck ./...` after dependency stabilization.
-- [~] Resolve/mitigate remaining reachable vulnerabilities.
-  - Mitigated `github.com/slackhq/nebula` by upgrading to `v1.9.7`.
-  - Local `govulncheck` now reports only stdlib vulns (`net/url`, `crypto/tls`, `crypto/x509`) fixed in Go patch releases >= `1.25.7`.
-  - Pinned CI workflows to Go `1.25.7` to pick up stdlib fixes in CI runs.
-- [ ] Re-run CI and confirm `Lint Go` passes.
+- [x] Resolve/mitigate remaining reachable vulnerabilities.
+  - Mitigated third-party reachable issues via dependency updates.
+  - Remaining local findings were stdlib-only; CI Go pinned to `1.25.7`.
+- [x] Re-run CI and confirm `Lint Go` passes.
 
 ### E) Refactor: unify backend startup/restart path (remove duplicated startup logic)
 - [x] First priority: refactor runtime process/restart path so dependency bump to `github.com/smallstep/certificates@v0.29.0` remains stable (eliminate transient post-crash 502 race).
@@ -58,13 +47,13 @@ Key items reported in logs include:
   - [x] first request startup
   - [x] crash/restart path
   - [x] readiness timeout/failure path
-- [~] Verify no behavior regressions (`go test ./...` local + CI).
+- [x] Verify no behavior regressions (`go test ./...` local + CI).
   - [x] local `go test ./...` in tmux is green
-  - [ ] CI rerun pending
+  - [x] CI rerun green for both workflows
 
 ---
 
 ## Next immediate step
-1. Re-check CI for commit `b4fb10c` and capture remaining failures.
-2. Continue dependency/vuln cleanup based on current CI output.
-3. Execute startup-path unification refactor (Section E) after CI is stable.
+1. Merge PR after review.
+2. Optionally clean up non-fatal cache restore warning noise in Actions.
+3. Start next feature/fix work.
