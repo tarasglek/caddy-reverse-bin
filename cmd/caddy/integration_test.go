@@ -352,14 +352,14 @@ func TestDynamicDiscovery(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
+	socketPath := createSocketPath(t)
 	detector := createExecutableScript(t, t.TempDir(), "detector-static.py", `#!/usr/bin/env python3
 import json
-import os
 import sys
 from pathlib import Path
 
 app_dir = Path(sys.argv[1]).resolve()
-socket_path = (app_dir / "data" / "echo.sock").resolve()
+socket_path = Path(sys.argv[2]).resolve()
 result = {
     "executable": ["python3", str(app_dir / "main.py")],
     "reverse_proxy_to": f"unix/{socket_path}",
@@ -372,15 +372,16 @@ print(json.dumps(result))
 	setup, dispose := createReverseProxySetup(t, `# Only /dynamic/* routes use dynamic discovery.
 	handle /dynamic/* {
 		reverse-bin {
-			dynamic_proxy_detector {{DETECTOR}} {{APP_DIR}}
+			dynamic_proxy_detector {{DETECTOR}} {{APP_DIR}} {{SOCKET_PATH}}
 		}
 	}
 	# Explicit non-dynamic route for matcher verification.
 	handle /path {
 		respond "non-dynamic"
 	}`, map[string]string{
-		"DETECTOR": detector,
-		"APP_DIR":  f.AppDir,
+		"DETECTOR":    detector,
+		"APP_DIR":     f.AppDir,
+		"SOCKET_PATH": socketPath,
 	})
 	defer dispose()
 
