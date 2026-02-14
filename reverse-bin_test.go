@@ -105,6 +105,19 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "with readiness_check null",
+			input: `reverse-bin {
+  exec ./main.py
+  reverse_proxy_to unix//tmp/app.sock
+  readiness_check null
+}`,
+			expected: ReverseBin{
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: "unix//tmp/app.sock",
+			},
+			wantErr: false,
+		},
+		{
 			name: "with dynamic_proxy_detector",
 			input: `reverse-bin {
   dynamic_proxy_detector ./discover.py {path}
@@ -125,6 +138,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   reverse_proxy_to 127.0.0.1:3000
   readiness_check GET /healthz
   dynamic_proxy_detector /bin/detect {host} {path}
+  idle_timeout_ms 100
 }`,
 			expected: ReverseBin{
 				Executable:           []string{"./main.py", "arg1", "arg2"},
@@ -136,6 +150,7 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 				ReadinessMethod:      "GET",
 				ReadinessPath:        "/healthz",
 				DynamicProxyDetector: []string{"/bin/detect", "{host}", "{path}"},
+				IdleTimeoutMS:        100,
 			},
 			wantErr: false,
 		},
@@ -321,10 +336,28 @@ func TestReverseBin_ProvisionValidation(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "valid static config",
+			name: "invalid static non-unix without readiness_check",
 			cfg: ReverseBin{
 				Executable:     []string{"./main.py"},
 				ReverseProxyTo: "127.0.0.1:8080",
+			},
+			wantErr: true,
+		},
+		{
+			name: "valid static non-unix with readiness_check",
+			cfg: ReverseBin{
+				Executable:      []string{"./main.py"},
+				ReverseProxyTo:  "127.0.0.1:8080",
+				ReadinessMethod: "GET",
+				ReadinessPath:   "/health",
+			},
+			wantErr: false,
+		},
+		{
+			name: "valid static unix without readiness_check",
+			cfg: ReverseBin{
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: "unix//tmp/app.sock",
 			},
 			wantErr: false,
 		},
@@ -358,12 +391,14 @@ func TestReverseBin_ProvisionValidation(t *testing.T) {
 			hasDetector := len(tt.cfg.DynamicProxyDetector) > 0
 			hasExecutable := len(tt.cfg.Executable) > 0
 			hasProxyTo := tt.cfg.ReverseProxyTo != ""
+			hasReadiness := tt.cfg.ReadinessMethod != "" && tt.cfg.ReadinessPath != ""
+			nonUnix := hasProxyTo && !isUnixUpstream(tt.cfg.ReverseProxyTo)
 
-			shouldFail := (!hasDetector && !hasExecutable) || (!hasDetector && !hasProxyTo)
+			shouldFail := (!hasDetector && !hasExecutable) || (!hasDetector && !hasProxyTo) || (nonUnix && !hasReadiness)
 
 			if shouldFail != tt.wantErr {
-				t.Errorf("expected error=%v, got error=%v (hasDetector=%v, hasExecutable=%v, hasProxyTo=%v)",
-					tt.wantErr, shouldFail, hasDetector, hasExecutable, hasProxyTo)
+				t.Errorf("expected error=%v, got error=%v (hasDetector=%v, hasExecutable=%v, hasProxyTo=%v, nonUnix=%v, hasReadiness=%v)",
+					tt.wantErr, shouldFail, hasDetector, hasExecutable, hasProxyTo, nonUnix, hasReadiness)
 			}
 		})
 	}

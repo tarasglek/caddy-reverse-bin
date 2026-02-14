@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +67,8 @@ type ReverseBin struct {
 	ReadinessPath string `json:"readinessPath,omitempty"`
 	// Binary and arguments to run to determine proxy parameters dynamically
 	DynamicProxyDetector []string `json:"dynamic_proxy_detector,omitempty"`
+	// Idle timeout in milliseconds before stopping backend process after last request
+	IdleTimeoutMS int `json:"idleTimeoutMs,omitempty"`
 
 	// Internal state for proxy mode
 	processes map[string]*processState
@@ -85,6 +88,14 @@ type processState struct {
 	terminationMsg string
 	overrides      *proxyOverrides
 	mu             sync.Mutex
+}
+
+func isUnixUpstream(addr string) bool {
+	return strings.HasPrefix(addr, "unix/")
+}
+
+func readinessConfigured(method, path string) bool {
+	return strings.TrimSpace(method) != "" && strings.TrimSpace(path) != ""
 }
 
 // Interface guards
@@ -137,15 +148,31 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 			case "readiness_check":
-				if !d.Args(&c.ReadinessMethod, &c.ReadinessPath) {
+				args := d.RemainingArgs()
+				if len(args) == 1 && strings.EqualFold(args[0], "null") {
+					c.ReadinessMethod = ""
+					c.ReadinessPath = ""
+					continue
+				}
+				if len(args) != 2 {
 					return d.ArgErr()
 				}
-				c.ReadinessMethod = strings.ToUpper(c.ReadinessMethod)
+				c.ReadinessMethod = strings.ToUpper(args[0])
+				c.ReadinessPath = args[1]
 			case "dynamic_proxy_detector":
 				c.DynamicProxyDetector = d.RemainingArgs()
 				if len(c.DynamicProxyDetector) == 0 {
 					return d.ArgErr()
 				}
+			case "idle_timeout_ms":
+				if !d.NextArg() {
+					return d.ArgErr()
+				}
+				v, err := strconv.Atoi(d.Val())
+				if err != nil || v <= 0 {
+					return d.Err("idle_timeout_ms must be a positive integer")
+				}
+				c.IdleTimeoutMS = v
 			default:
 				return d.Errf("unknown subdirective: %q", d.Val())
 			}
@@ -171,8 +198,15 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 		}
 	}
 
-	if c.ReadinessMethod == "" {
-		c.ReadinessMethod = "GET"
+	if c.ReadinessMethod != "" {
+		c.ReadinessMethod = strings.ToUpper(c.ReadinessMethod)
+	}
+	if c.IdleTimeoutMS <= 0 {
+		c.IdleTimeoutMS = 5000
+	}
+
+	if !isUnixUpstream(c.ReverseProxyTo) && c.ReverseProxyTo != "" && !readinessConfigured(c.ReadinessMethod, c.ReadinessPath) {
+		return fmt.Errorf("readiness_check is required for non-unix reverse_proxy_to targets")
 	}
 
 	rp := &reverseproxy.Handler{
@@ -214,15 +248,15 @@ func (ps *processState) incrementRequests(logger *zap.Logger, key string) {
 	}
 }
 
-func (ps *processState) decrementRequests(logger *zap.Logger, key string) {
+func (ps *processState) decrementRequests(logger *zap.Logger, key string, idleTimeout time.Duration) {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 	ps.activeRequests--
 	logger.Debug("decremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
 
 	if ps.activeRequests == 0 {
-		logger.Debug("starting idle timer", zap.String("key", key), zap.Duration("duration", 5*time.Second))
-		ps.idleTimer = time.AfterFunc(5*time.Second, func() {
+		logger.Debug("starting idle timer", zap.String("key", key), zap.Duration("duration", idleTimeout))
+		ps.idleTimer = time.AfterFunc(idleTimeout, func() {
 			ps.mu.Lock()
 			defer ps.mu.Unlock()
 			if ps.activeRequests == 0 && ps.process != nil {
