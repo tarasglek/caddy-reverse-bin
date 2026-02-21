@@ -65,7 +65,7 @@ def wrap_landrun(
 def detect_entrypoint(working_dir: Path, reverse_proxy_to: str) -> list[str]:
     if (working_dir / "main.ts").exists():
         port = reverse_proxy_to.rsplit(":", 1)[-1]
-        return ["deno", "serve", "--allow-all", "--host", "127.0.0.1", "--port", port, "main.ts"]
+        return ["deno", "serve", "--watch", "--allow-all", "--host", "127.0.0.1", "--port", port, "main.ts"]
 
     for script in ("main.py", "main.sh"):
         path = working_dir / script
