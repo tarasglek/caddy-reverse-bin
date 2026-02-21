@@ -97,12 +97,6 @@ cd /home/YOUR_USER/reverse-bin
 ./.bin/setup-systemd.py YOUR_USER
 ```
 
-Optional: choose a custom unit file name.
-
-```bash
-./.bin/setup-systemd.py YOUR_USER --service-name reverse-bin-prod.service
-```
-
 Important: ensure non-root bind capability on `:80/:443` is set:
 
 ```bash
