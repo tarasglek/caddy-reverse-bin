@@ -89,40 +89,21 @@ If startup fails, check capability and environment variable errors first.
 
 ## 7) Running via systemd (current-use example)
 
-A minimal system unit matching the current layout (`$HOME/reverse-bin`):
-
-`/etc/systemd/system/reverse-bin.service`
-
-```ini
-[Unit]
-Description=reverse-bin Caddy proxy
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=YOUR_USER
-Group=YOUR_USER
-WorkingDirectory=/home/YOUR_USER/reverse-bin
-Environment=OPS_EMAIL=ops@example.com
-Environment=DOMAIN_SUFFIX=example.com
-ExecStart=/home/YOUR_USER/reverse-bin/.bin/run.sh
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Then enable and start:
+Use the bundled installer script to install/update `/etc/systemd/system/reverse-bin.service`.
+It writes the unit with `sudo tee`, then reloads + enables/starts the service.
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now reverse-bin.service
-sudo systemctl status reverse-bin.service
+cd /home/YOUR_USER/reverse-bin
+./.bin/setup-systemd.py YOUR_USER
 ```
 
-Important: run once before first start to allow non-root bind on `:80/:443`:
+Optional: choose a custom unit file name.
+
+```bash
+./.bin/setup-systemd.py YOUR_USER --service-name reverse-bin-prod.service
+```
+
+Important: ensure non-root bind capability on `:80/:443` is set:
 
 ```bash
 sudo setcap 'cap_net_bind_service=+ep' /home/YOUR_USER/reverse-bin/.bin/caddy

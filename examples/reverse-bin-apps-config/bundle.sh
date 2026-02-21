@@ -38,10 +38,11 @@ mkdir -p "$STAGE_ROOT/.config" "$STAGE_ROOT/.bin" "$STAGE_ROOT/.run"
 cp "$ROOT_DIR/Caddyfile" "$STAGE_ROOT/.config/Caddyfile"
 cp "$ROOT_DIR/allow-domain.py" "$STAGE_ROOT/.bin/allow-domain.py"
 cp "$ROOT_DIR/run.sh" "$STAGE_ROOT/.bin/run.sh"
+cp "$ROOT_DIR/setup-systemd.py" "$STAGE_ROOT/.bin/setup-systemd.py"
 cp "$CADDY_PATH" "$STAGE_ROOT/.bin/caddy"
 cp "$UV_PATH" "$STAGE_ROOT/.bin/uv"
 cp "$LANDRUN_PATH" "$STAGE_ROOT/.bin/landrun"
-chmod +x "$STAGE_ROOT/.bin/caddy" "$STAGE_ROOT/.bin/run.sh" "$STAGE_ROOT/.bin/allow-domain.py" "$STAGE_ROOT/.bin/uv" "$STAGE_ROOT/.bin/landrun"
+chmod +x "$STAGE_ROOT/.bin/caddy" "$STAGE_ROOT/.bin/run.sh" "$STAGE_ROOT/.bin/setup-systemd.py" "$STAGE_ROOT/.bin/allow-domain.py" "$STAGE_ROOT/.bin/uv" "$STAGE_ROOT/.bin/landrun"
 
 if [[ ! -d "$SAMPLE_APP_SOURCE" ]]; then
   echo "error: sample app not found at $SAMPLE_APP_SOURCE" >&2
