@@ -1,5 +1,5 @@
 {
-	# debug
+	debug
 	email {$OPS_EMAIL}
 
 	# Allow non-root Caddy to bind :80/:443 once:
@@ -12,6 +12,8 @@
 }
 
 http://127.0.0.1:9080 {
+	log
+
 	handle /allow-domain* {
 		reverse-bin * {
 			exec {$HOME}/reverse-bin/.bin/landrun --rox / --rw {$HOME}/reverse-bin/.run/allow-domain --env HOME --env DOMAIN_SUFFIX -- {$HOME}/reverse-bin/.bin/allow-domain.py {$HOME}/reverse-bin/.run/allow-domain/unix.sock {$HOME}/reverse-bin --allowed-suffix .{$DOMAIN_SUFFIX}
@@ -26,6 +28,8 @@ http://127.0.0.1:9080 {
 }
 
 https:// {
+	log
+
 	tls {
 		on_demand
 	}
