@@ -34,12 +34,12 @@ doc.go : doc/document.md doc/go.awk
 	pandoc --read=markdown --write=plain $< | awk --assign=package_name=reversebin --file=doc/go.awk > $@
 	gofmt -s -w $@
 
+CADDY_BIN ?= ./caddy
+
 build :
-	cd ../caddy-custom
-	go build -v
-	sudo setcap cap_net_bind_service=+ep ./caddy
-	./caddy -plugins | grep reverse-bin
-	./caddy -version
+	go run github.com/caddyserver/xcaddy/cmd/xcaddy@latest build --output $(CADDY_BIN) --with github.com/tarasglek/reverse-bin=.
+	$(CADDY_BIN) list-modules | grep http.handlers.reverse-bin
+	$(CADDY_BIN) version
 
 release-dry-run :
 	$$(go env GOPATH)/bin/goreleaser release --snapshot --clean --skip=publish

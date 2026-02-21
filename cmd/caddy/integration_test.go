@@ -78,6 +78,7 @@ func createExecutableScript(t *testing.T, dir, name, content string) string {
 	return path
 }
 
+
 type pathCheck struct {
 	Label         string
 	Path          string
@@ -648,6 +649,68 @@ func TestMultipleApps(t *testing.T) {
 
 	if pid1 == pid2 {
 		t.Fatalf("expected distinct backend processes for app1/app2, got same pid=%d (app1=%s app2=%s)", pid1, body1, body2)
+	}
+}
+
+// TestAllowDomainViaPathWildcard validates /allow/{app} path wildcard mapping to allow-domain checker decisions.
+func TestAllowDomainViaPathWildcard(t *testing.T) {
+	requireIntegration(t)
+
+	appRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(appRoot, "existingapp"), 0o755); err != nil {
+		t.Fatalf("failed to create existing app directory: %v", err)
+	}
+
+	allowSocket := createSocketPath(t)
+	matches, err := filepath.Glob(filepath.Join(getRepoRoot(), "examples", "*", "allow-domain.py"))
+	if err != nil || len(matches) == 0 {
+		t.Fatalf("failed to locate allow-domain script: %v", err)
+	}
+	allowScript := matches[0]
+
+	setup, dispose := createReverseProxySetup(t, `@allow path_regexp allow ^/allow/([a-z0-9-]+)$
+	handle @allow {
+		rewrite * /allow-domain?domain={re.allow.1}.localhost
+		reverse-bin {
+			exec python3 {{ALLOW_SCRIPT}} {{ALLOW_SOCKET}} {{APP_ROOT}} --allowed-suffix .localhost
+			reverse_proxy_to unix/{{ALLOW_SOCKET}}
+		}
+	}`, map[string]string{
+		"ALLOW_SOCKET": allowSocket,
+		"ALLOW_SCRIPT": allowScript,
+		"APP_ROOT":     appRoot,
+	})
+	defer dispose()
+
+	client := newTestHTTPClient()
+	tests := []struct {
+		name           string
+		requestPath    string
+		expectedStatus int
+		expectedBody   string
+		invariant      string
+	}{
+		{
+			name:           "existing directory is allowed",
+			requestPath:    "/allow/existingapp",
+			expectedStatus: 200,
+			expectedBody:   "ok",
+			invariant:      "request for existing app path must return allowed from checker",
+		},
+		{
+			name:           "missing directory is denied",
+			requestPath:    "/allow/missingapp",
+			expectedStatus: 403,
+			expectedBody:   "forbidden",
+			invariant:      "request for missing app path must return forbidden from checker",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// HTTP request exercises wildcard extraction from /allow/{app} and forwards app as checker domain query.
+			_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d%s", setup.Port, tc.requestPath), tc.expectedStatus, tc.expectedBody, tc.invariant)
+		})
 	}
 }
 
