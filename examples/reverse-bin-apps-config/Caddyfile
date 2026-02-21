@@ -33,7 +33,7 @@ https:// {
 	@overthinker host *.{$DOMAIN_SUFFIX}
 	handle @overthinker {
 		reverse-bin * {
-			dynamic_proxy_detector "{$HOME}/reverse-bin/.bin/landrun" --unrestricted-filesystem --env HOME --env PATH -- "{$HOME}/reverse-bin/.bin/discover-app.py" "{$HOME}/reverse-bin/{http.request.host.labels.2}"
+			dynamic_proxy_detector "{$HOME}/reverse-bin/.bin/discover-app.py" --no-sandbox "{$HOME}/reverse-bin/{http.request.host.labels.2}"
 			readiness_check HEAD /
 		}
 	}
