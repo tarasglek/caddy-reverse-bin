@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -78,7 +79,6 @@ func createExecutableScript(t *testing.T, dir, name, content string) string {
 	return path
 }
 
-
 type pathCheck struct {
 	Label         string
 	Path          string
@@ -102,21 +102,46 @@ func requirePaths(t *testing.T, checks ...pathCheck) {
 	}
 }
 
+func requireCommand(t *testing.T, name string) {
+	t.Helper()
+	if _, err := exec.LookPath(name); err != nil {
+		t.Skipf("skipping integration test: required command %q not found in PATH", name)
+	}
+}
+
+func requireLandrunSandbox(t *testing.T) {
+	t.Helper()
+	requireCommand(t, "landrun")
+	cmd := exec.Command("landrun", "--rox", "/", "--", "/bin/true")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("skipping integration test: landrun sandbox unsupported: %v (%s)", err, strings.TrimSpace(string(out)))
+	}
+}
+
 type fixtures struct {
-	PythonApp string
-	AppDir    string
+	PythonApp       string
+	AppDir          string
+	PythonTCPAppDir string
+	DenoAppDir      string
+	DiscoverApp     string
 }
 
 func mustFixtures(t *testing.T) fixtures {
 	t.Helper()
 	repoRoot := getRepoRoot()
 	f := fixtures{
-		PythonApp: filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py"),
-		AppDir:    filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo"),
+		PythonApp:       filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py"),
+		AppDir:          filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo"),
+		PythonTCPAppDir: filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-echo"),
+		DenoAppDir:      filepath.Join(repoRoot, "examples/reverse-proxy/apps/deno-echo"),
+		DiscoverApp:     filepath.Join(repoRoot, "utils/discover-app/discover-app.py"),
 	}
 	requirePaths(t,
 		pathCheck{Label: "python test app", Path: f.PythonApp, MustBeRegular: true},
 		pathCheck{Label: "dynamic app dir", Path: f.AppDir, MustBeDir: true},
+		pathCheck{Label: "python tcp app dir", Path: f.PythonTCPAppDir, MustBeDir: true},
+		pathCheck{Label: "deno app dir", Path: f.DenoAppDir, MustBeDir: true},
+		pathCheck{Label: "discover app script", Path: f.DiscoverApp, MustBeRegular: true},
 	)
 	return f
 }
@@ -397,6 +422,59 @@ print(json.dumps(result))
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "non-dynamic", "non-dynamic route must match static handler")
 }
 
+// TestDynamicDiscovery_WithDiscoverAppPython verifies discover-app detects
+// executable main.py apps and routes requests through the discovered backend.
+func TestDynamicDiscovery_WithDiscoverAppPython(t *testing.T) {
+	requireIntegration(t)
+	f := mustFixtures(t)
+	requireCommand(t, "uv")
+	requireLandrunSandbox(t)
+
+	setup, dispose := createReverseProxySetup(t, `handle /dynamic/* {
+		reverse-bin {
+			dynamic_proxy_detector {{DETECTOR}} {{APP_DIR}}
+			readiness_check HEAD /
+		}
+	}`, map[string]string{
+		"DETECTOR": f.DiscoverApp,
+		"APP_DIR":  f.PythonTCPAppDir,
+	})
+	defer dispose()
+
+	// HTTP request exercises python entrypoint detection in discover-app and verifies dynamic proxying end-to-end.
+	_, body := assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/dynamic/python", setup.Port), 200, "Location: /dynamic/python", "python app should be detected by discover-app and serve dynamic request")
+	if strings.Contains(body, "Environment Variables:") {
+		t.Fatalf("python app response unexpectedly matched deno format: %q", body)
+	}
+}
+
+// TestDynamicDiscovery_WithDiscoverAppDeno verifies discover-app detects
+// main.ts apps and routes requests through the deno backend.
+func TestDynamicDiscovery_WithDiscoverAppDeno(t *testing.T) {
+	requireIntegration(t)
+	f := mustFixtures(t)
+	requireCommand(t, "uv")
+	requireLandrunSandbox(t)
+	requireCommand(t, "deno")
+
+	setup, dispose := createReverseProxySetup(t, `handle /dynamic/* {
+		reverse-bin {
+			dynamic_proxy_detector {{DETECTOR}} {{APP_DIR}}
+			readiness_check HEAD /
+		}
+	}`, map[string]string{
+		"DETECTOR": f.DiscoverApp,
+		"APP_DIR":  f.DenoAppDir,
+	})
+	defer dispose()
+
+	// HTTP request exercises deno entrypoint detection in discover-app and verifies dynamic proxying end-to-end.
+	_, body := assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/dynamic/deno", setup.Port), 200, "Location: /dynamic/deno", "deno app should be detected by discover-app and serve dynamic request")
+	if !strings.Contains(body, "Environment Variables:") {
+		t.Fatalf("deno app response missing deno marker section: %q", body)
+	}
+}
+
 // TestDynamicDiscovery_DetectorFailure validates failure handling when the
 // dynamic detector exits non-zero for a dynamic route.
 func TestDynamicDiscovery_DetectorFailure(t *testing.T) {
@@ -433,9 +511,9 @@ func TestReadinessCheck(t *testing.T) {
 	f := mustFixtures(t)
 
 	testCases := []struct {
-		name              string
+		name               string
 		readinessDirective string
-		expectedMethod    *string
+		expectedMethod     *string
 	}{
 		{name: "GET", readinessDirective: "readiness_check GET /health", expectedMethod: ptr("GET")},
 		{name: "HEAD", readinessDirective: "readiness_check HEAD /health", expectedMethod: ptr("HEAD")},
@@ -456,8 +534,8 @@ func TestReadinessCheck(t *testing.T) {
 				{{READINESS_DIRECTIVE}}
 			}
 		}`, map[string]string{
-				"PYTHON_APP":           f.PythonApp,
-				"APP_SOCKET":           socketPath,
+				"PYTHON_APP":          f.PythonApp,
+				"APP_SOCKET":          socketPath,
 				"READINESS_DIRECTIVE": tc.readinessDirective,
 			})
 			defer dispose()
@@ -713,4 +791,3 @@ func TestAllowDomainViaPathWildcard(t *testing.T) {
 		})
 	}
 }
-
