@@ -90,7 +90,7 @@ If startup fails, check capability and environment variable errors first.
 ## 7) Running via systemd (current-use example)
 
 Use the bundled installer script to install/update `/etc/systemd/system/reverse-bin.service`.
-It writes the unit with `sudo tee`, then reloads + enables/starts the service.
+It derives the reverse-bin root from the script location (`.bin/setup-systemd.py`), writes the unit with `sudo tee`, then reloads + enables/starts the service.
 
 ```bash
 cd /home/YOUR_USER/reverse-bin

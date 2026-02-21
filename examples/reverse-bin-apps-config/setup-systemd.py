@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import pwd
+from pathlib import Path
 import subprocess
 import sys
 
@@ -10,13 +10,7 @@ if len(sys.argv) != 2:
 
 username = sys.argv[1]
 
-try:
-    home = pwd.getpwnam(username).pw_dir
-except KeyError:
-    print(f"error: user not found: {username}", file=sys.stderr)
-    raise SystemExit(1)
-
-root = f"{home}/reverse-bin"
+root = str(Path(__file__).resolve().parent.parent)
 service_name = "reverse-bin.service"
 service_path = f"/etc/systemd/system/{service_name}"
 
