@@ -1,0 +1,44 @@
+{
+	debug
+	email {$OPS_EMAIL}
+
+	# Allow non-root Caddy to bind :80/:443 once:
+	#   sudo setcap 'cap_net_bind_service=+ep' /path/to/caddy
+	# Run this Caddyfile from the bundled directory with:
+	#   ./.bin/run.sh
+	on_demand_tls {
+		ask http://127.0.0.1:9080/allow-domain
+	}
+}
+
+http://127.0.0.1:9080 {
+	handle /allow-domain* {
+		reverse-bin * {
+			exec {$HOME}/reverse-bin/.bin/landrun --rox / --rw {$HOME}/reverse-bin/.run/allow-domain --env HOME --env DOMAIN_SUFFIX -- {$HOME}/reverse-bin/.bin/allow-domain.py {$HOME}/reverse-bin/.run/allow-domain/unix.sock {$HOME}/reverse-bin --allowed-suffix .{$DOMAIN_SUFFIX}
+			reverse_proxy_to unix//{$HOME}/reverse-bin/.run/allow-domain/unix.sock
+			readiness_check GET /health
+		}
+	}
+
+	handle {
+		abort
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+
+	@overthinker host *.{$DOMAIN_SUFFIX}
+	handle @overthinker {
+		reverse-bin * {
+			dynamic_proxy_detector "{$HOME}/reverse-bin/.config/discover-app.py" "{$HOME}/reverse-bin/{http.request.host.labels.2}"
+			readiness_check HEAD /
+		}
+	}
+
+	handle {
+		abort
+	}
+}

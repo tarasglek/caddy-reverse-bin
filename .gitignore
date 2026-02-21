@@ -46,3 +46,8 @@ tmp/
 
 # App data directories (caches, etc.)
 examples/reverse-proxy/apps/*/data/
+
+# Local build artifacts
+/caddy
+examples/reverse-bin-apps-config/__pycache__/
+examples/reverse-bin-apps-config/reverse-bin.tar.gz
