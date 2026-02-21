@@ -1,5 +1,5 @@
 {
-	debug
+	# debug
 	email {$OPS_EMAIL}
 
 	# Allow non-root Caddy to bind :80/:443 once:
