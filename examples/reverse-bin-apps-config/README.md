@@ -25,7 +25,7 @@ Why: this keeps the main proxy process unprivileged while still allowing TLS on 
 The deployment root is expected at `$HOME/reverse-bin` with this shape:
 
 - `.bin/` runtime binaries and helpers
-- `.config/` Caddy config (+ discovery script)
+- `.config/` Caddy config
 - `.run/` runtime sockets/state
 - `<app-name>/` one directory per app
 
