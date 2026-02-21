@@ -30,4 +30,7 @@ fi
 
 mkdir -p "$BIN_DIR/../.run/allow-domain"
 
+# Prime discover-app (uv/python deps) during startup for predictable first request behavior.
+"$BIN_DIR/discover-app.py" --help >/dev/null
+
 exec "$BIN_DIR/caddy" run --config "$CONFIG_PATH" --adapter caddyfile "$@"

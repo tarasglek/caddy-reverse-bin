@@ -78,9 +78,11 @@ def detect_entrypoint(working_dir: Path, reverse_proxy_to: str) -> list[str]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("working_dir", nargs="?", default=".")
-    parser.add_argument("--no-sandbox", action="store_true")
+    parser = argparse.ArgumentParser(
+        description="Detect app entrypoint and emit reverse-bin dynamic detector JSON."
+    )
+    parser.add_argument("working_dir", nargs="?", default=".", help="App directory to inspect (default: current directory)")
+    parser.add_argument("--no-sandbox", action="store_true", help="Return raw executable command without landrun wrapping")
     args = parser.parse_args()
 
     working_dir = Path(args.working_dir)
