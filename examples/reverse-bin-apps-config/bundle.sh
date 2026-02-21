@@ -4,8 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$ROOT_DIR/../.." && pwd)"
 OUTPUT_TAR="${1:-$ROOT_DIR/reverse-bin.tar.gz}"
-SAMPLE_APP="python3-unix-echo"
-SAMPLE_APP_SOURCE="$REPO_ROOT/examples/reverse-proxy/apps/$SAMPLE_APP"
+SAMPLE_APPS=("python3-unix-echo" "deno-echo")
 
 find_from_path() {
   local bin_name="$1"
@@ -44,12 +43,14 @@ cp "$UV_PATH" "$STAGE_ROOT/.bin/uv"
 cp "$LANDRUN_PATH" "$STAGE_ROOT/.bin/landrun"
 chmod +x "$STAGE_ROOT/.bin/caddy" "$STAGE_ROOT/.bin/run.sh" "$STAGE_ROOT/.bin/setup-systemd.py" "$STAGE_ROOT/.bin/allow-domain.py" "$STAGE_ROOT/.bin/uv" "$STAGE_ROOT/.bin/landrun"
 
-if [[ ! -d "$SAMPLE_APP_SOURCE" ]]; then
-  echo "error: sample app not found at $SAMPLE_APP_SOURCE" >&2
-  exit 1
-fi
-
-cp -R "$SAMPLE_APP_SOURCE" "$STAGE_ROOT/$SAMPLE_APP"
+for sample_app in "${SAMPLE_APPS[@]}"; do
+  sample_app_source="$REPO_ROOT/examples/reverse-proxy/apps/$sample_app"
+  if [[ ! -d "$sample_app_source" ]]; then
+    echo "error: sample app not found at $sample_app_source" >&2
+    exit 1
+  fi
+  cp -R "$sample_app_source" "$STAGE_ROOT/$sample_app"
+done
 
 rm -f "$OUTPUT_TAR"
 (
