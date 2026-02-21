@@ -109,15 +109,6 @@ func requireCommand(t *testing.T, name string) {
 	}
 }
 
-func requireLandrunSandbox(t *testing.T) {
-	t.Helper()
-	requireCommand(t, "landrun")
-	cmd := exec.Command("landrun", "--rox", "/", "--", "/bin/true")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Skipf("skipping integration test: landrun sandbox unsupported: %v (%s)", err, strings.TrimSpace(string(out)))
-	}
-}
-
 type fixtures struct {
 	PythonApp       string
 	AppDir          string
@@ -428,11 +419,10 @@ func TestDynamicDiscovery_WithDiscoverAppPython(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 	requireCommand(t, "uv")
-	requireLandrunSandbox(t)
 
 	setup, dispose := createReverseProxySetup(t, `handle /dynamic/* {
 		reverse-bin {
-			dynamic_proxy_detector {{DETECTOR}} {{APP_DIR}}
+			dynamic_proxy_detector {{DETECTOR}} --no-sandbox {{APP_DIR}}
 			readiness_check HEAD /
 		}
 	}`, map[string]string{
@@ -454,12 +444,11 @@ func TestDynamicDiscovery_WithDiscoverAppDeno(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 	requireCommand(t, "uv")
-	requireLandrunSandbox(t)
 	requireCommand(t, "deno")
 
 	setup, dispose := createReverseProxySetup(t, `handle /dynamic/* {
 		reverse-bin {
-			dynamic_proxy_detector {{DETECTOR}} {{APP_DIR}}
+			dynamic_proxy_detector {{DETECTOR}} --no-sandbox {{APP_DIR}}
 			readiness_check HEAD /
 		}
 	}`, map[string]string{
