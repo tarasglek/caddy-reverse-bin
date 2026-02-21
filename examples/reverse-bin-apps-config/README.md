@@ -96,6 +96,6 @@ Run it as root:
 
 ```bash
 cd /home/YOUR_USER/reverse-bin
-sudo ./.bin/setup-systemd.py YOUR_USER
+sudo ./.bin/setup-systemd.py YOUR_USER ops@example.com overthinker.dev
 ```
 

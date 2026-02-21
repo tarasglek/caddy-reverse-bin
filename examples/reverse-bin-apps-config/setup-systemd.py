@@ -12,11 +12,13 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-if len(sys.argv) != 2:
-    print("usage: setup-systemd.py <username>", file=sys.stderr)
+if len(sys.argv) != 4:
+    print("usage: setup-systemd.py <username> <ops_email> <domain_suffix>", file=sys.stderr)
     raise SystemExit(1)
 
 username = sys.argv[1]
+ops_email = sys.argv[2]
+domain_suffix = sys.argv[3]
 
 try:
     pwd.getpwnam(username)
@@ -27,6 +29,7 @@ except KeyError:
 if os.geteuid() != 0:
     print("error: run as root", file=sys.stderr)
     raise SystemExit(1)
+
 root = Path(__file__).resolve().parent.parent
 service_name = "reverse-bin.service"
 service_path = Path("/etc/systemd/system") / service_name
@@ -46,8 +49,8 @@ Type=simple
 User={username}
 Group={username}
 WorkingDirectory={root}
-Environment=OPS_EMAIL=ops@example.com
-Environment=DOMAIN_SUFFIX=example.com
+Environment=OPS_EMAIL={ops_email}
+Environment=DOMAIN_SUFFIX={domain_suffix}
 ExecStart={root}/.bin/run.sh
 Restart=on-failure
 RestartSec=2
