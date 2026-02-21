@@ -34,9 +34,13 @@ root = Path(__file__).resolve().parent.parent
 service_name = "reverse-bin.service"
 service_path = Path("/etc/systemd/system") / service_name
 caddy_path = root / ".bin" / "caddy"
+discover_path = root / ".bin" / "discover-app.py"
 
 if not caddy_path.exists():
     print(f"error: caddy binary not found: {caddy_path}", file=sys.stderr)
+    raise SystemExit(1)
+if not discover_path.exists():
+    print(f"error: discover-app not found: {discover_path}", file=sys.stderr)
     raise SystemExit(1)
 
 unit = f"""[Unit]
@@ -64,6 +68,8 @@ service_path.write_text(unit)
 
 run(["setcap", "cap_net_bind_service=+ep", str(caddy_path)])
 run(["getcap", str(caddy_path)])
+# Prime uv cache as target user so first detector execution is fast.
+run(["sudo", "-H", "-u", username, str(discover_path), "--help"])
 run(["systemctl", "daemon-reload"])
 run(["systemctl", "enable", "--now", service_name])
 run(["systemctl", "restart", service_name])
