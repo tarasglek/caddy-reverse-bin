@@ -213,6 +213,7 @@ def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
     if config["socket_path"] is not None and detection is not None and not detection.supports_unix_socket:
         raise ValueError(f"{detection.kind} does not support SOCKET_PATH")
 
+    # i feel like we just added a throw this to exact code elsewhere...MOAR DRY! AI!
     if config["listen"] is not None:
         listen_value = config["listen"] or str(find_free_port())
         reverse_proxy_to = normalize_listen_value(listen_value)
