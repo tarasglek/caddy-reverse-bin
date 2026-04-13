@@ -6,6 +6,12 @@
 # ]
 # ///
 
+"""
+- reads app config from .env vars
+- if any envs are missing, infers them
+- returns caddy dynamic proxy config
+"""
+
 import argparse
 import json
 import os
