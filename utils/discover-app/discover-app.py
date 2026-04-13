@@ -26,27 +26,15 @@ from dotenv import dotenv_values
 
 
 class EnvAppConfig(TypedDict):
-    # Example: command=["python3", "server.py"]
     command: list[str] | None
-
-    # Example: listen="8080" or listen="127.0.0.1:8080"
     listen: str | None
-
-    # Example: socket_path="data/app.sock"
     socket_path: str | None
 
 
 class DiscoverAppResult(TypedDict):
-    # Example: executable=["./main.py"]
     executable: list[str]
-
-    # Example: reverse_proxy_to="127.0.0.1:8080" or reverse_proxy_to="unix//abs/path/data/app.sock"
     reverse_proxy_to: str
-
-    # Example: working_directory="/abs/path/to/app"
     working_directory: str
-
-    # Example: envs=["LISTEN=127.0.0.1:8080", "PATH=/usr/bin:/bin"]
     envs: list[str]
 
 
@@ -61,21 +49,6 @@ class ResolvedApp:
     executable: list[str]
     reverse_proxy_to: str
     env_overrides: dict[str, str]
-
-
-def build_discovery_result(
-    *,
-    executable: list[str],
-    reverse_proxy_to: str,
-    working_directory: str,
-    envs: list[str],
-) -> DiscoverAppResult:
-    return {
-        "executable": executable,
-        "reverse_proxy_to": reverse_proxy_to,
-        "working_directory": working_directory,
-        "envs": envs,
-    }
 
 
 def resolve_unix_socket_path(working_dir: Path, socket_path: str) -> str:
@@ -95,19 +68,7 @@ def normalize_listen_value(listen_value: str) -> str:
     return normalized
 
 
-def empty_env_app_config() -> EnvAppConfig:
-    return {
-        "command": None,
-        "listen": None,
-        "socket_path": None,
-    }
-
-
-def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig | None:
-    relevant_keys = {"REVERSE_BIN_COMMAND", "LISTEN", "SOCKET_PATH"}
-    if not any(key in dot_env for key in relevant_keys):
-        return None
-
+def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig:
     listen = dot_env.get("LISTEN")
     socket_path = dot_env.get("SOCKET_PATH")
     if listen is not None and socket_path is not None:
@@ -162,15 +123,6 @@ def detect_app(working_dir: Path) -> DetectedApp | None:
     return None
 
 
-def require_detected_app(working_dir: Path) -> DetectedApp:
-    detection = detect_app(working_dir)
-    if detection is None:
-        raise FileNotFoundError(
-            f"No supported entry point (main.ts or executable main.py) found in {working_dir}"
-        )
-    return detection
-
-
 def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> list[str]:
     if detection.kind == "main.ts":
         port = reverse_proxy_to.rsplit(":", 1)[-1]
@@ -182,50 +134,28 @@ def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> lis
     raise ValueError(f"Unsupported detected app kind: {detection.kind}")
 
 
-def validate_transport_choice(*, config: EnvAppConfig, detection: DetectedApp | None) -> None:
-    socket_path = config["socket_path"]
-    if socket_path is None:
-        return
+def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
+    config = load_env_app_config(dot_env)
+    
+    needs_detection = config["command"] is None or (config["listen"] is None and config["socket_path"] is None)
+    detection = detect_app(working_dir) if needs_detection else None
+    
+    if needs_detection and detection is None:
+        raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
 
-    if Path(socket_path).is_absolute():
-        raise ValueError(f"Unix socket path must be relative: {socket_path}")
-
-    if detection is not None and not detection.supports_unix_socket:
+    if config["socket_path"] is not None and detection is not None and not detection.supports_unix_socket:
         raise ValueError(f"{detection.kind} does not support SOCKET_PATH")
 
-
-def resolve_upstream(
-    working_dir: Path,
-    *,
-    config: EnvAppConfig,
-    detection: DetectedApp | None,
-) -> tuple[str, dict[str, str]]:
-    listen = config["listen"]
-    if listen is not None:
-        listen_value = listen or str(find_free_port())
+    if config["listen"] is not None:
+        listen_value = config["listen"] or str(find_free_port())
         reverse_proxy_to = normalize_listen_value(listen_value)
-        if listen == "":
-            return reverse_proxy_to, {"LISTEN": reverse_proxy_to}
-        return reverse_proxy_to, {}
-
-    socket_path = config["socket_path"]
-    if socket_path is not None:
-        return resolve_unix_socket_path(working_dir, socket_path), {}
-
-    if detection is None:
-        raise ValueError("Cannot infer LISTEN or SOCKET_PATH without a supported entry point")
-
-    reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
-    return reverse_proxy_to, {"LISTEN": reverse_proxy_to}
-
-
-def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
-    config = load_env_app_config(dot_env) or empty_env_app_config()
-    needs_detection = config["command"] is None or (config["listen"] is None and config["socket_path"] is None)
-    detection = require_detected_app(working_dir) if needs_detection else None
-
-    validate_transport_choice(config=config, detection=detection if config["command"] is None else detection)
-    reverse_proxy_to, env_overrides = resolve_upstream(working_dir, config=config, detection=detection)
+        env_overrides = {"LISTEN": reverse_proxy_to} if config["listen"] == "" else {}
+    elif config["socket_path"] is not None:
+        reverse_proxy_to = resolve_unix_socket_path(working_dir, config["socket_path"])
+        env_overrides = {}
+    else:
+        reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
+        env_overrides = {"LISTEN": reverse_proxy_to}
 
     if config["command"] is not None:
         executable = config["command"]
@@ -238,20 +168,6 @@ def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
         reverse_proxy_to=reverse_proxy_to,
         env_overrides=env_overrides,
     )
-
-
-def build_explicit_app(
-    working_dir: Path,
-    *,
-    dot_env: dict[str, str],
-    config: EnvAppConfig,
-) -> tuple[list[str], str, list[str]]:
-    if config["command"] is None:
-        raise ValueError("Explicit app build requires REVERSE_BIN_COMMAND")
-
-    validate_transport_choice(config=config, detection=None)
-    reverse_proxy_to, env_overrides = resolve_upstream(working_dir, config=config, detection=None)
-    return config["command"], reverse_proxy_to, build_app_envs(working_dir, dot_env, env_overrides)
 
 
 def wrap_landrun(
@@ -292,41 +208,6 @@ def wrap_landrun(
         wrapper += ["--bind-tcp", ",".join(map(str, bind_tcp))]
 
     return wrapper + cmd
-
-
-def detect_entrypoint(working_dir: Path, reverse_proxy_to: str) -> list[str]:
-    return build_detected_command(require_detected_app(working_dir), reverse_proxy_to)
-
-
-def discover_app_command(
-    working_dir: Path,
-    *,
-    dot_env: dict[str, str],
-    fallback_reverse_proxy_to: str,
-) -> tuple[list[str], str]:
-    config = load_env_app_config(dot_env) or empty_env_app_config()
-    if config["command"] is not None:
-        return config["command"], fallback_reverse_proxy_to
-
-    return detect_entrypoint(working_dir, fallback_reverse_proxy_to), fallback_reverse_proxy_to
-
-
-def build_fallback_app(
-    working_dir: Path,
-    *,
-    dot_env: dict[str, str],
-    reverse_proxy_to: str,
-) -> tuple[list[str], str, list[str]]:
-    executable = detect_entrypoint(working_dir, reverse_proxy_to)
-
-    overrides: dict[str, str] | None = None
-    if executable == ["./main.py"]:
-        if reverse_proxy_to.startswith("unix/"):
-            overrides = {"SOCKET_PATH": reverse_proxy_to.removeprefix("unix/")}
-        else:
-            overrides = {"LISTEN": reverse_proxy_to}
-
-    return executable, reverse_proxy_to, build_app_envs(working_dir, dot_env, overrides)
 
 
 def main() -> None:
@@ -371,12 +252,12 @@ def main() -> None:
             envs=envs,
         )
 
-    result = build_discovery_result(
-        executable=executable,
-        reverse_proxy_to=reverse_proxy_to,
-        working_directory=str(working_dir.resolve()),
-        envs=envs,
-    )
+    result: DiscoverAppResult = {
+        "executable": executable,
+        "reverse_proxy_to": reverse_proxy_to,
+        "working_directory": str(working_dir.resolve()),
+        "envs": envs,
+    }
     print(json.dumps(result))
 
 
