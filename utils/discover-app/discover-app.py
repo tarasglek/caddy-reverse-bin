@@ -207,6 +207,7 @@ def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
     config = load_env_app_config(dot_env)
     
     needs_detection = config["command"] is None or (config["listen"] is None and config["socket_path"] is None)
+    # just simplify this shit by making detect_app and etc a noop if nothing to do, less state for system engineering AI!
     detection = detect_app(working_dir) if needs_detection else None
     
     if needs_detection and detection is None:
