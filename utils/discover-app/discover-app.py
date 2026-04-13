@@ -56,11 +56,20 @@ def resolve_unix_socket_path(working_dir: Path, socket_path: str) -> str:
     return f"unix/{(working_dir / socket_path).resolve()}"
 
 
+def extract_port(address: str) -> str:
+    port_str = address.rsplit(":", 1)[-1]
+    try:
+        int(port_str)
+    except ValueError as error:
+        raise ValueError(f"Invalid port in address: {address}") from error
+    return port_str
+
+
 def normalize_listen_value(listen_value: str) -> str:
     normalized = f"127.0.0.1:{listen_value}" if listen_value.isdigit() else listen_value
 
     try:
-        int(normalized.rsplit(":", 1)[-1])
+        extract_port(normalized)
     except ValueError as error:
         raise ValueError(f"Invalid LISTEN port: {listen_value}") from error
 
@@ -185,7 +194,7 @@ def detect_app(working_dir: Path) -> DetectedApp | None:
 
 def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> list[str]:
     if detection.kind == "main.ts":
-        port = reverse_proxy_to.rsplit(":", 1)[-1] # we should generalize every one of these split(:)[-1] patterns into a utility func with an error if the result fails to be an int AI!
+        port = extract_port(reverse_proxy_to)
         return ["deno", "serve", "--watch", "--allow-all", "--host", "127.0.0.1", "--port", port, "main.ts"]
 
     if detection.kind == "main.py":
@@ -301,7 +310,7 @@ def main() -> None:
 
     bind_tcp: list[int] = []
     if not reverse_proxy_to.startswith("unix/"):
-        bind_tcp.append(int(reverse_proxy_to.rsplit(":", 1)[-1]))
+        bind_tcp.append(int(extract_port(reverse_proxy_to)))
 
     if not args.no_sandbox:
         executable = wrap_landrun(
