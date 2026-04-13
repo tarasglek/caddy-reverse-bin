@@ -18,25 +18,28 @@ from typing import TypedDict
 from dotenv import dotenv_values
 
 
+class EnvAppConfig(TypedDict):
+    # argv-style command parsed from REVERSE_BIN_COMMAND.
+    command: list[str]
+
+    # Raw LISTEN value from .env. An empty string means allocate a port.
+    listen: str | None
+
+    # Raw SOCKET_PATH value from .env.
+    socket_path: str | None
+
+
 class DiscoverAppResult(TypedDict):
     # argv-style command used to launch the app.
-    # Potential values include a config-defined command like ["python3", "server.py"],
-    # an auto-detected entrypoint like ["./main.py"], or a sandboxed landrun-wrapped
-    # command like ["landrun", "--env", "REVERSE_PROXY_TO=127.0.0.1:8080", ..., "./main.py"].
     executable: list[str]
 
     # Upstream address that Caddy should proxy to after the app starts.
-    # Potential values include a TCP address like "127.0.0.1:8080" or a unix socket
-    # address like "unix//abs/path/to/app.sock".
     reverse_proxy_to: str
 
     # Absolute path to the app directory that was inspected.
-    # Sample value: "/home/taras/Documents/caddy-reverse-bin/examples/reverse-proxy/apps/python3-unix-echo".
     working_directory: str
 
-    # Environment variables passed through to the launched process, encoded as KEY=value strings.
-    # Potential values include ["REVERSE_PROXY_TO=127.0.0.1:8080", "PATH=/usr/bin:/bin"]
-    # and may also include app-provided values from .env plus "HOME=/abs/path/to/data".
+    # Environment variables passed to the launched process, encoded as KEY=value strings.
     envs: list[str]
 
 
@@ -72,7 +75,7 @@ def normalize_listen_value(listen_value: str) -> str:
     return normalized
 
 
-def load_explicit_app_config(working_dir: Path, dot_env: dict[str, str]) -> tuple[list[str], str] | None:
+def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig | None:
     command = dot_env.get("REVERSE_BIN_COMMAND")
     if command is None:
         return None
@@ -86,17 +89,53 @@ def load_explicit_app_config(working_dir: Path, dot_env: dict[str, str]) -> tupl
     if not argv:
         raise ValueError("REVERSE_BIN_COMMAND must not be empty")
 
-    if listen is not None:
-        return argv, normalize_listen_value(listen)
-
-    assert socket_path is not None
-    return argv, resolve_unix_socket_path(working_dir, socket_path)
+    return {
+        "command": argv,
+        "listen": listen,
+        "socket_path": socket_path,
+    }
 
 
 def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def build_app_envs(
+    working_dir: Path,
+    dot_env: dict[str, str],
+    overrides: dict[str, str] | None = None,
+) -> list[str]:
+    env_map = dict(dot_env)
+    if overrides:
+        env_map.update(overrides)
+
+    if "PATH" not in env_map and (path := os.environ.get("PATH")):
+        env_map["PATH"] = path
+
+    if (data_dir := working_dir / "data").is_dir():
+        env_map["HOME"] = str(data_dir.resolve())
+
+    return [f"{key}={value}" for key, value in env_map.items()]
+
+
+def build_explicit_app(
+    working_dir: Path,
+    *,
+    dot_env: dict[str, str],
+    config: EnvAppConfig,
+) -> tuple[list[str], str, list[str]]:
+    if config["listen"] is not None:
+        listen_value = config["listen"] or str(find_free_port())
+        reverse_proxy_to = normalize_listen_value(listen_value)
+        overrides = {"LISTEN": reverse_proxy_to} if config["listen"] == "" else None
+        return config["command"], reverse_proxy_to, build_app_envs(working_dir, dot_env, overrides)
+
+    socket_path = config["socket_path"]
+    assert socket_path is not None
+    reverse_proxy_to = resolve_unix_socket_path(working_dir, socket_path)
+    return config["command"], reverse_proxy_to, build_app_envs(working_dir, dot_env)
 
 
 def wrap_landrun(
@@ -110,10 +149,10 @@ def wrap_landrun(
     include_std: bool = True,
     include_path: bool = True,
 ) -> list[str]:
-    rox = rox or []
-    rw = rw or []
-    bind_tcp = bind_tcp or []
-    envs = envs or []
+    rox = list(rox or [])
+    rw = list(rw or [])
+    bind_tcp = list(bind_tcp or [])
+    envs = list(envs or [])
 
     wrapper = ["landrun"]
 
@@ -151,7 +190,6 @@ def detect_entrypoint(working_dir: Path, reverse_proxy_to: str) -> list[str]:
     raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
 
 
-
 def resolve_fallback_reverse_proxy_to(working_dir: Path, dot_env: dict[str, str]) -> str:
     reverse_proxy_to = dot_env.get("REVERSE_PROXY_TO") or os.environ.get("REVERSE_PROXY_TO")
     if not reverse_proxy_to:
@@ -161,40 +199,36 @@ def resolve_fallback_reverse_proxy_to(working_dir: Path, dot_env: dict[str, str]
     return reverse_proxy_to
 
 
-
-def build_child_envs(dot_env: dict[str, str], reverse_proxy_to: str, working_dir: Path) -> list[str]:
-    envs = [
-        f"{k}={v}"
-        for k, v in dot_env.items()
-        if k not in {"REVERSE_BIN_COMMAND", "REVERSE_PROXY_TO", "PORT", "LISTEN", "SOCKET_PATH"}
-    ]
-
-    if reverse_proxy_to.startswith("unix/"):
-        envs.insert(0, f"SOCKET_PATH={reverse_proxy_to.removeprefix('unix/')}")
-    else:
-        envs.insert(0, f"LISTEN={reverse_proxy_to}")
-
-    if path := os.environ.get("PATH"):
-        envs.append(f"PATH={path}")
-
-    if (data_dir := working_dir / "data").is_dir():
-        envs.append(f"HOME={data_dir.resolve()}")
-
-    return envs
-
-
-
 def discover_app_command(
     working_dir: Path,
     *,
     dot_env: dict[str, str],
     fallback_reverse_proxy_to: str,
 ) -> tuple[list[str], str]:
-    explicit_config = load_explicit_app_config(working_dir, dot_env)
-    if explicit_config is not None:
-        return explicit_config
+    config = load_env_app_config(dot_env)
+    if config is not None:
+        executable, reverse_proxy_to, _ = build_explicit_app(working_dir, dot_env=dot_env, config=config)
+        return executable, reverse_proxy_to
 
     return detect_entrypoint(working_dir, fallback_reverse_proxy_to), fallback_reverse_proxy_to
+
+
+def build_fallback_app(
+    working_dir: Path,
+    *,
+    dot_env: dict[str, str],
+    reverse_proxy_to: str,
+) -> tuple[list[str], str, list[str]]:
+    executable = detect_entrypoint(working_dir, reverse_proxy_to)
+
+    overrides: dict[str, str] | None = None
+    if executable == ["./main.py"]:
+        if reverse_proxy_to.startswith("unix/"):
+            overrides = {"SOCKET_PATH": reverse_proxy_to.removeprefix("unix/")}
+        else:
+            overrides = {"LISTEN": reverse_proxy_to}
+
+    return executable, reverse_proxy_to, build_app_envs(working_dir, dot_env, overrides)
 
 
 def main() -> None:
@@ -214,17 +248,19 @@ def main() -> None:
     dot_env = {k: v for k, v in dotenv_values(env_file).items() if v is not None}
 
     try:
-        fallback_reverse_proxy_to = resolve_fallback_reverse_proxy_to(working_dir, dot_env)
-        executable, reverse_proxy_to = discover_app_command(
-            working_dir,
-            dot_env=dot_env,
-            fallback_reverse_proxy_to=fallback_reverse_proxy_to,
-        )
+        config = load_env_app_config(dot_env)
+        if config is not None:
+            executable, reverse_proxy_to, envs = build_explicit_app(working_dir, dot_env=dot_env, config=config)
+        else:
+            reverse_proxy_to = resolve_fallback_reverse_proxy_to(working_dir, dot_env)
+            executable, reverse_proxy_to, envs = build_fallback_app(
+                working_dir,
+                dot_env=dot_env,
+                reverse_proxy_to=reverse_proxy_to,
+            )
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         raise SystemExit(1) from error
-
-    envs = build_child_envs(dot_env, reverse_proxy_to, working_dir)
 
     rw_paths: list[str] = []
     if (data_dir := working_dir / "data").is_dir():
@@ -232,10 +268,7 @@ def main() -> None:
 
     bind_tcp: list[int] = []
     if not reverse_proxy_to.startswith("unix/"):
-        try:
-            bind_tcp.append(int(reverse_proxy_to.rsplit(":", 1)[-1]))
-        except ValueError:
-            pass
+        bind_tcp.append(int(reverse_proxy_to.rsplit(":", 1)[-1]))
 
     if not args.no_sandbox:
         executable = wrap_landrun(
