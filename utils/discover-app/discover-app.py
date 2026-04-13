@@ -129,10 +129,7 @@ def build_explicit_app(
         reverse_proxy_to = resolve_unix_socket_path(working_dir, config["socket_path"])
         env_overrides = {}
     else:
-        # this should just throw AI!
-        # This branch is not used by load_env_app_config today, but kept for completeness
-        reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
-        env_overrides = {"LISTEN": reverse_proxy_to}
+        raise ValueError("Explicit app configuration requires either LISTEN or SOCKET_PATH")
 
     envs = build_app_envs(working_dir, dot_env, env_overrides)
     return config["command"], reverse_proxy_to, envs
