@@ -12,8 +12,45 @@ import os
 import socket
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 from dotenv import dotenv_values
+
+
+class DiscoverAppResult(TypedDict):
+    # argv-style command used to launch the app.
+    # Potential values include a raw entrypoint like ["./main.py"] or a sandboxed
+    # landrun-wrapped command like ["landrun", "--env", "REVERSE_PROXY_TO=127.0.0.1:8080", ..., "./main.py"].
+    executable: list[str]
+
+    # Upstream address that Caddy should proxy to after the app starts.
+    # Potential values include a TCP address like "127.0.0.1:8080" or a unix socket
+    # address like "unix//abs/path/to/app.sock".
+    reverse_proxy_to: str
+
+    # Absolute path to the app directory that was inspected.
+    # Sample value: "/home/taras/Documents/caddy-reverse-bin/examples/reverse-proxy/apps/python3-unix-echo".
+    working_directory: str
+
+    # Environment variables passed through to the launched process, encoded as KEY=value strings.
+    # Potential values include ["REVERSE_PROXY_TO=127.0.0.1:8080", "PATH=/usr/bin:/bin"]
+    # and may also include app-provided values from .env plus "HOME=/abs/path/to/data".
+    envs: list[str]
+
+
+def build_discovery_result(
+    *,
+    executable: list[str],
+    reverse_proxy_to: str,
+    working_directory: str,
+    envs: list[str],
+) -> DiscoverAppResult:
+    return {
+        "executable": executable,
+        "reverse_proxy_to": reverse_proxy_to,
+        "working_directory": working_directory,
+        "envs": envs,
+    }
 
 
 def find_free_port() -> int:
@@ -136,16 +173,13 @@ def main() -> None:
         socket_rel = reverse_proxy_to.removeprefix("unix/")
         final_reverse_proxy_to = f"unix/{(working_dir / socket_rel).resolve()}"
 
-    print(
-        json.dumps(
-            {
-                "executable": executable,
-                "reverse_proxy_to": final_reverse_proxy_to,
-                "working_directory": str(working_dir.resolve()),
-                "envs": envs,
-            }
-        )
+    result = build_discovery_result(
+        executable=executable,
+        reverse_proxy_to=final_reverse_proxy_to,
+        working_directory=str(working_dir.resolve()),
+        envs=envs,
     )
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":
