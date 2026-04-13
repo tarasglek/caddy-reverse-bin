@@ -40,7 +40,7 @@ The requested behavior is different:
 
 ### TypedDict Expectations
 
-Both typed dicts should include comments with concrete example values so the expected shape is obvious at the call sites.
+Both typed dicts in `utils/discover-app/discover-app.py` should include comments with concrete example values directly above each field so the expected shape is obvious at the call sites. This is a required code change, not just a documentation preference.
 
 #### `EnvAppConfig`
 
@@ -173,7 +173,8 @@ Review and update any example README text that still describes legacy app-facing
 - Test: `utils/discover-app/test_discover_app.py`
 
 - [ ] Change `EnvAppConfig` to represent partial config with optional command and upstream fields
-- [ ] Add example values in comments for both `EnvAppConfig` and `DiscoverAppResult`
+- [ ] Add field-level example comments in `discover-app.py` for every key in `EnvAppConfig`
+- [ ] Add field-level example comments in `discover-app.py` for every key in `DiscoverAppResult`
 - [ ] Introduce or refactor helpers so `.env` is loaded once and passed through the resolution flow
 - [ ] Add a helper that detects app kind and transport capability separately from final command construction
 - [ ] Add a helper that merges explicit config with detected defaults into one resolved config
@@ -232,5 +233,5 @@ Review and update any example README text that still describes legacy app-facing
 - [ ] Run `uv run --with python-dotenv python -m unittest utils/discover-app/test_discover_app.py`
 - [ ] Run `uv run --with python-dotenv python utils/discover-app/discover-app.py --help`
 - [ ] Run `rg -n "REVERSE_PROXY_TO" examples/reverse-proxy/apps -S`
-- [ ] Review the diff for `discover-app.py`, tests, and migrated examples
+- [ ] Review the diff for `discover-app.py`, tests, and migrated examples, confirming the TypedDict field comments include concrete examples
 - [ ] Commit with a concise conventional commit message
