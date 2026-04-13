@@ -26,29 +26,29 @@ from dotenv import dotenv_values
 
 
 class EnvAppConfig(TypedDict):
-    command: list[str] | None
-    listen: str | None
-    socket_path: str | None
+    command: list[str] | None  # e.g. ["uv", "run", "main.py"]
+    listen: str | None         # e.g. "8080" or "127.0.0.1:8080"
+    socket_path: str | None    # e.g. "app.sock"
 
 
 class DiscoverAppResult(TypedDict):
-    executable: list[str]
-    reverse_proxy_to: str
-    working_directory: str
-    envs: list[str]
+    executable: list[str]      # e.g. ["landrun", "--env", "LISTEN=127.0.0.1:8080", "./main.py"]
+    reverse_proxy_to: str      # e.g. "127.0.0.1:8080" or "unix/app.sock"
+    working_directory: str     # e.g. "/var/www/app"
+    envs: list[str]            # e.g. ["LISTEN=127.0.0.1:8080", "PATH=/usr/bin"]
 
 
 @dataclass(frozen=True)
 class DetectedApp:
-    kind: str
+    kind: str                  # e.g. "main.ts" or "main.py"
     supports_unix_socket: bool
 
 
 @dataclass(frozen=True)
 class ResolvedApp:
-    executable: list[str]
-    reverse_proxy_to: str
-    env_overrides: dict[str, str]
+    executable: list[str]          # e.g. ["deno", "serve", "main.ts"]
+    reverse_proxy_to: str          # e.g. "127.0.0.1:8080" or "unix/app.sock"
+    env_overrides: dict[str, str]  # e.g. {"LISTEN": "127.0.0.1:8080"}
 
 
 def resolve_unix_socket_path(working_dir: Path, socket_path: str) -> str:
@@ -69,11 +69,16 @@ def normalize_listen_value(listen_value: str) -> str:
 
 
 def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig:
+    # e.g. LISTEN="8080" or LISTEN="127.0.0.1:8080"
     listen = dot_env.get("LISTEN")
+    
+    # e.g. SOCKET_PATH="app.sock"
     socket_path = dot_env.get("SOCKET_PATH")
+    
     if listen is not None and socket_path is not None:
         raise ValueError("Cannot set both LISTEN and SOCKET_PATH")
 
+    # e.g. REVERSE_BIN_COMMAND="uv run main.py"
     command_value = dot_env.get("REVERSE_BIN_COMMAND")
     command: list[str] | None = None
     if command_value is not None:
@@ -113,9 +118,11 @@ def build_app_envs(
 
 
 def detect_app(working_dir: Path) -> DetectedApp | None:
+    # e.g. Deno app
     if (working_dir / "main.ts").exists():
         return DetectedApp(kind="main.ts", supports_unix_socket=False)
 
+    # e.g. Python app
     path = working_dir / "main.py"
     if path.exists() and os.access(path, os.X_OK):
         return DetectedApp(kind="main.py", supports_unix_socket=True)
