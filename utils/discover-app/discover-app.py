@@ -99,6 +99,58 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
+def build_discovery_result(
+    executable: list[str],
+    reverse_proxy_to: str,
+    working_directory: str,
+    envs: list[str],
+) -> DiscoverAppResult:
+    return {
+        "executable": executable,
+        "reverse_proxy_to": reverse_proxy_to,
+        "working_directory": working_directory,
+        "envs": envs,
+    }
+
+
+def build_explicit_app(
+    working_dir: Path,
+    dot_env: dict[str, str],
+    config: EnvAppConfig,
+) -> tuple[list[str], str, list[str]]:
+    if config["listen"] is not None:
+        listen_value = config["listen"] or str(find_free_port())
+        reverse_proxy_to = normalize_listen_value(listen_value)
+        env_overrides = {"LISTEN": reverse_proxy_to} if config["listen"] == "" else {}
+    elif config["socket_path"] is not None:
+        reverse_proxy_to = resolve_unix_socket_path(working_dir, config["socket_path"])
+        env_overrides = {}
+    else:
+        # This branch is not used by load_env_app_config today, but kept for completeness
+        reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
+        env_overrides = {"LISTEN": reverse_proxy_to}
+
+    envs = build_app_envs(working_dir, dot_env, env_overrides)
+    return config["command"], reverse_proxy_to, envs
+
+
+def discover_app_command(
+    working_dir: Path,
+    dot_env: dict[str, str],
+    fallback_reverse_proxy_to: str,
+) -> tuple[list[str], str]:
+    detection = detect_app(working_dir)
+    if detection is None:
+        raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
+
+    return build_detected_command(detection, fallback_reverse_proxy_to), fallback_reverse_proxy_to
+
+
+def detect_entrypoint(working_dir: Path, fallback_reverse_proxy_to: str) -> list[str]:
+    command, _ = discover_app_command(working_dir, {}, fallback_reverse_proxy_to)
+    return command
+
+
 def build_app_envs(
     working_dir: Path,
     dot_env: dict[str, str],
