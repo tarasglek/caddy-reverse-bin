@@ -9,6 +9,7 @@
 import argparse
 import json
 import os
+import shlex
 import socket
 import sys
 from pathlib import Path
@@ -72,6 +73,17 @@ def resolve_unix_socket_path(working_dir: Path, socket_path: str) -> str:
     return f"unix/{(working_dir / socket_path).resolve()}"
 
 
+def normalize_listen_value(listen_value: str) -> str:
+    normalized = f"127.0.0.1:{listen_value}" if listen_value.isdigit() else listen_value
+
+    try:
+        int(normalized.rsplit(":", 1)[-1])
+    except ValueError as error:
+        raise ValueError(f"Invalid LISTEN port: {listen_value}") from error
+
+    return normalized
+
+
 def normalize_reverse_proxy_target(working_dir: Path, socket_value: int | str) -> str:
     if isinstance(socket_value, int):
         return f"127.0.0.1:{socket_value}"
@@ -105,6 +117,27 @@ def load_app_definition(working_dir: Path) -> ReverseBinAppDefinition | None:
         raise ValueError(f"App definition in {app_definition_file} must contain an integer or string 'socket'")
 
     return {"command": command, "socket": socket_value}
+
+
+def load_explicit_app_config(working_dir: Path, dot_env: dict[str, str]) -> tuple[list[str], str] | None:
+    command = dot_env.get("REVERSE_BIN_COMMAND")
+    if command is None:
+        return None
+
+    listen = dot_env.get("LISTEN")
+    socket_path = dot_env.get("SOCKET_PATH")
+    if (listen is None) == (socket_path is None):
+        raise ValueError("Explicit config requires exactly one of LISTEN or SOCKET_PATH")
+
+    argv = shlex.split(command)
+    if not argv:
+        raise ValueError("REVERSE_BIN_COMMAND must not be empty")
+
+    if listen is not None:
+        return argv, normalize_listen_value(listen)
+
+    assert socket_path is not None
+    return argv, resolve_unix_socket_path(working_dir, socket_path)
 
 
 def find_free_port() -> int:
@@ -178,7 +211,16 @@ def resolve_fallback_reverse_proxy_to(working_dir: Path, dot_env: dict[str, str]
 
 
 
-def discover_app_command(working_dir: Path, fallback_reverse_proxy_to: str) -> tuple[list[str], str]:
+def discover_app_command(
+    working_dir: Path,
+    *,
+    dot_env: dict[str, str],
+    fallback_reverse_proxy_to: str,
+) -> tuple[list[str], str]:
+    explicit_config = load_explicit_app_config(working_dir, dot_env)
+    if explicit_config is not None:
+        return explicit_config
+
     app_definition = load_app_definition(working_dir)
     if app_definition is not None:
         return app_definition["command"], normalize_reverse_proxy_target(working_dir, app_definition["socket"])
@@ -204,7 +246,11 @@ def main() -> None:
 
     try:
         fallback_reverse_proxy_to = resolve_fallback_reverse_proxy_to(working_dir, dot_env)
-        executable, reverse_proxy_to = discover_app_command(working_dir, fallback_reverse_proxy_to)
+        executable, reverse_proxy_to = discover_app_command(
+            working_dir,
+            dot_env=dot_env,
+            fallback_reverse_proxy_to=fallback_reverse_proxy_to,
+        )
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         raise SystemExit(1) from error

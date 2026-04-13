@@ -41,34 +41,83 @@ class DiscoverAppResultTests(unittest.TestCase):
             },
         )
 
-    def test_load_app_definition_reads_command_and_port_socket(self) -> None:
-        # Intent: verify reverse-bin-app.json is parsed into the configured command and socket fields.
-        (self.app_dir / "reverse-bin-app.json").write_text(
-            json.dumps({"command": ["python3", "server.py"], "socket": 8080})
+    def test_discover_app_command_uses_explicit_listen_config(self) -> None:
+        # Intent: verify explicit .env LISTEN config takes precedence and normalizes bare ports to localhost.
+        (self.app_dir / ".env").write_text(
+            'REVERSE_BIN_COMMAND="python3 server.py"\nLISTEN=8080\n'
         )
 
-        definition = discover_app.load_app_definition(self.app_dir)
-
-        self.assertEqual(definition["command"], ["python3", "server.py"])
-        self.assertEqual(definition["socket"], 8080)
-
-    def test_normalize_reverse_proxy_target_resolves_relative_unix_socket(self) -> None:
-        # Intent: verify relative socket paths in config resolve to absolute unix proxy targets under the app dir.
-        result = discover_app.normalize_reverse_proxy_target(self.app_dir, "run/app.sock")
-
-        self.assertEqual(result, f"unix/{(self.app_dir / 'run/app.sock').resolve()}")
-
-    def test_discover_app_command_prefers_reverse_bin_app_json_when_present(self) -> None:
-        # Intent: verify config-driven app definitions override automatic main.ts detection when both are present.
-        (self.app_dir / "reverse-bin-app.json").write_text(
-            json.dumps({"command": ["./custom-server"], "socket": 9000})
+        command, reverse_proxy_to = discover_app.discover_app_command(
+            self.app_dir,
+            dot_env={
+                "REVERSE_BIN_COMMAND": "python3 server.py",
+                "LISTEN": "8080",
+            },
+            fallback_reverse_proxy_to="127.0.0.1:9999",
         )
-        (self.app_dir / "main.ts").write_text("console.log('ignored');\n")
 
-        command, reverse_proxy_to = discover_app.discover_app_command(self.app_dir, "127.0.0.1:1111")
+        self.assertEqual(command, ["python3", "server.py"])
+        self.assertEqual(reverse_proxy_to, "127.0.0.1:8080")
 
-        self.assertEqual(command, ["./custom-server"])
-        self.assertEqual(reverse_proxy_to, "127.0.0.1:9000")
+    def test_discover_app_command_uses_explicit_socket_path_config(self) -> None:
+        # Intent: verify explicit .env SOCKET_PATH config resolves to an absolute unix upstream target.
+        command, reverse_proxy_to = discover_app.discover_app_command(
+            self.app_dir,
+            dot_env={
+                "REVERSE_BIN_COMMAND": "python3 server.py",
+                "SOCKET_PATH": "run/app.sock",
+            },
+            fallback_reverse_proxy_to="127.0.0.1:9999",
+        )
+
+        self.assertEqual(command, ["python3", "server.py"])
+        self.assertEqual(reverse_proxy_to, f"unix/{(self.app_dir / 'run/app.sock').resolve()}")
+
+    def test_discover_app_command_rejects_listen_and_socket_path_together(self) -> None:
+        # Intent: verify explicit config rejects ambiguous upstream declarations when both LISTEN and SOCKET_PATH are set.
+        with self.assertRaisesRegex(ValueError, "exactly one of LISTEN or SOCKET_PATH"):
+            discover_app.discover_app_command(
+                self.app_dir,
+                dot_env={
+                    "REVERSE_BIN_COMMAND": "python3 server.py",
+                    "LISTEN": "127.0.0.1:8080",
+                    "SOCKET_PATH": "run/app.sock",
+                },
+                fallback_reverse_proxy_to="127.0.0.1:9999",
+            )
+
+    def test_discover_app_command_rejects_missing_listen_and_socket_path(self) -> None:
+        # Intent: verify explicit config rejects incomplete settings when command is present but no upstream is configured.
+        with self.assertRaisesRegex(ValueError, "exactly one of LISTEN or SOCKET_PATH"):
+            discover_app.discover_app_command(
+                self.app_dir,
+                dot_env={"REVERSE_BIN_COMMAND": "python3 server.py"},
+                fallback_reverse_proxy_to="127.0.0.1:9999",
+            )
+
+    def test_discover_app_command_rejects_absolute_socket_path(self) -> None:
+        # Intent: verify explicit config keeps SOCKET_PATH relative to the app directory.
+        with self.assertRaisesRegex(ValueError, "Unix socket path must be relative"):
+            discover_app.discover_app_command(
+                self.app_dir,
+                dot_env={
+                    "REVERSE_BIN_COMMAND": "python3 server.py",
+                    "SOCKET_PATH": "/tmp/app.sock",
+                },
+                fallback_reverse_proxy_to="127.0.0.1:9999",
+            )
+
+    def test_discover_app_command_rejects_listen_without_parseable_port_suffix(self) -> None:
+        # Intent: verify explicit config fails hard when LISTEN does not end in an integer port.
+        with self.assertRaisesRegex(ValueError, "Invalid LISTEN port"):
+            discover_app.discover_app_command(
+                self.app_dir,
+                dot_env={
+                    "REVERSE_BIN_COMMAND": "python3 server.py",
+                    "LISTEN": "foo",
+                },
+                fallback_reverse_proxy_to="127.0.0.1:9999",
+            )
 
     def test_detect_entrypoint_rejects_main_sh_autodetection(self) -> None:
         # Intent: verify shell scripts are no longer auto-detected as supported app entrypoints.
