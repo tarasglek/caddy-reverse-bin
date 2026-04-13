@@ -17,10 +17,23 @@ from typing import TypedDict
 from dotenv import dotenv_values
 
 
+class ReverseBinAppDefinition(TypedDict):
+    # argv-style command from reverse-bin-app.json.
+    # Sample values include ["python3", "server.py"], ["./server"], or
+    # ["deno", "serve", "--port", "9000", "main.ts"].
+    command: list[str]
+
+    # Listener location declared by the app definition.
+    # Potential values include an integer TCP port like 8080, a host:port string
+    # like "127.0.0.1:9000", or a relative unix socket path like "run/app.sock".
+    socket: int | str
+
+
 class DiscoverAppResult(TypedDict):
     # argv-style command used to launch the app.
-    # Potential values include a raw entrypoint like ["./main.py"] or a sandboxed
-    # landrun-wrapped command like ["landrun", "--env", "REVERSE_PROXY_TO=127.0.0.1:8080", ..., "./main.py"].
+    # Potential values include a config-defined command like ["python3", "server.py"],
+    # an auto-detected entrypoint like ["./main.py"], or a sandboxed landrun-wrapped
+    # command like ["landrun", "--env", "REVERSE_PROXY_TO=127.0.0.1:8080", ..., "./main.py"].
     executable: list[str]
 
     # Upstream address that Caddy should proxy to after the app starts.
@@ -51,6 +64,47 @@ def build_discovery_result(
         "working_directory": working_directory,
         "envs": envs,
     }
+
+
+def resolve_unix_socket_path(working_dir: Path, socket_path: str) -> str:
+    if Path(socket_path).is_absolute():
+        raise ValueError(f"Unix socket path must be relative: {socket_path}")
+    return f"unix/{(working_dir / socket_path).resolve()}"
+
+
+def normalize_reverse_proxy_target(working_dir: Path, socket_value: int | str) -> str:
+    if isinstance(socket_value, int):
+        return f"127.0.0.1:{socket_value}"
+
+    if socket_value.startswith("unix/"):
+        return resolve_unix_socket_path(working_dir, socket_value.removeprefix("unix/"))
+
+    if ":" in socket_value:
+        return socket_value
+
+    return resolve_unix_socket_path(working_dir, socket_value)
+
+
+def load_app_definition(working_dir: Path) -> ReverseBinAppDefinition | None:
+    app_definition_file = working_dir / "reverse-bin-app.json"
+    if not app_definition_file.exists():
+        return None
+
+    with app_definition_file.open() as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError(f"App definition in {app_definition_file} must be a JSON object")
+
+    command = data.get("command")
+    if not isinstance(command, list) or not command or not all(isinstance(arg, str) for arg in command):
+        raise ValueError(f"App definition in {app_definition_file} must contain a non-empty string array 'command'")
+
+    socket_value = data.get("socket")
+    if not isinstance(socket_value, int | str):
+        raise ValueError(f"App definition in {app_definition_file} must contain an integer or string 'socket'")
+
+    return {"command": command, "socket": socket_value}
 
 
 def find_free_port() -> int:
@@ -104,14 +158,32 @@ def detect_entrypoint(working_dir: Path, reverse_proxy_to: str) -> list[str]:
         port = reverse_proxy_to.rsplit(":", 1)[-1]
         return ["deno", "serve", "--watch", "--allow-all", "--host", "127.0.0.1", "--port", port, "main.ts"]
 
-    for script in ("main.py", "main.sh"):
-        path = working_dir / script
-        if path.exists() and os.access(path, os.X_OK):
-            return [f"./{script}"]
+    path = working_dir / "main.py"
+    if path.exists() and os.access(path, os.X_OK):
+        return ["./main.py"]
 
     raise FileNotFoundError(
-        f"No supported entry point (main.ts, executable main.py, or executable main.sh) found in {working_dir}"
+        f"No supported entry point (reverse-bin-app.json, main.ts, or executable main.py) found in {working_dir}"
     )
+
+
+
+def resolve_fallback_reverse_proxy_to(working_dir: Path, dot_env: dict[str, str]) -> str:
+    reverse_proxy_to = dot_env.get("REVERSE_PROXY_TO") or os.environ.get("REVERSE_PROXY_TO")
+    if not reverse_proxy_to:
+        return f"127.0.0.1:{find_free_port()}"
+    if reverse_proxy_to.startswith("unix/"):
+        return resolve_unix_socket_path(working_dir, reverse_proxy_to.removeprefix("unix/"))
+    return reverse_proxy_to
+
+
+
+def discover_app_command(working_dir: Path, fallback_reverse_proxy_to: str) -> tuple[list[str], str]:
+    app_definition = load_app_definition(working_dir)
+    if app_definition is not None:
+        return app_definition["command"], normalize_reverse_proxy_target(working_dir, app_definition["socket"])
+
+    return detect_entrypoint(working_dir, fallback_reverse_proxy_to), fallback_reverse_proxy_to
 
 
 def main() -> None:
@@ -130,15 +202,12 @@ def main() -> None:
     env_file = working_dir / ".env"
     dot_env = {k: v for k, v in dotenv_values(env_file).items() if v is not None}
 
-    reverse_proxy_to = dot_env.get("REVERSE_PROXY_TO") or os.environ.get("REVERSE_PROXY_TO")
-    if not reverse_proxy_to:
-        reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
-
-    if reverse_proxy_to.startswith("unix/"):
-        socket_rel = reverse_proxy_to.removeprefix("unix/")
-        if Path(socket_rel).is_absolute():
-            print(f"Error: Unix socket path in REVERSE_PROXY_TO must be relative: {socket_rel}", file=sys.stderr)
-            raise SystemExit(1)
+    try:
+        fallback_reverse_proxy_to = resolve_fallback_reverse_proxy_to(working_dir, dot_env)
+        executable, reverse_proxy_to = discover_app_command(working_dir, fallback_reverse_proxy_to)
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
 
     envs = [f"REVERSE_PROXY_TO={reverse_proxy_to}"]
     envs += [f"{k}={v}" for k, v in dot_env.items() if k != "REVERSE_PROXY_TO"]
@@ -158,7 +227,6 @@ def main() -> None:
         except ValueError:
             pass
 
-    executable = detect_entrypoint(working_dir, reverse_proxy_to)
     if not args.no_sandbox:
         executable = wrap_landrun(
             executable,
@@ -168,14 +236,9 @@ def main() -> None:
             envs=envs,
         )
 
-    final_reverse_proxy_to = reverse_proxy_to
-    if reverse_proxy_to.startswith("unix/"):
-        socket_rel = reverse_proxy_to.removeprefix("unix/")
-        final_reverse_proxy_to = f"unix/{(working_dir / socket_rel).resolve()}"
-
     result = build_discovery_result(
         executable=executable,
-        reverse_proxy_to=final_reverse_proxy_to,
+        reverse_proxy_to=reverse_proxy_to,
         working_directory=str(working_dir.resolve()),
         envs=envs,
     )
