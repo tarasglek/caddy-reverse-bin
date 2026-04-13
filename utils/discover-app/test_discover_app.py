@@ -102,7 +102,7 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(
             config,
             {
-                "command": ["python3", "server.py"],
+                "command": ["sh", "-c", "python3 server.py"],
                 "listen": "8080",
                 "socket_path": None,
             },
@@ -125,7 +125,7 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(
             config,
             {
-                "command": ["python3", "server.py"],
+                "command": ["sh", "-c", "python3 server.py"],
                 "listen": None,
                 "socket_path": None,
             },
@@ -141,13 +141,13 @@ class DiscoverAppResultTests(unittest.TestCase):
                 "CUSTOM": "1",
             },
             config={
-                "command": ["python3", "server.py"],
+                "command": ["sh", "-c", "python3 server.py"],
                 "listen": "8080",
                 "socket_path": None,
             },
         )
 
-        self.assertEqual(executable, ["python3", "server.py"])
+        self.assertEqual(executable, ["sh", "-c", "python3 server.py"])
         self.assertEqual(reverse_proxy_to, "127.0.0.1:8080")
         self.assertIn("LISTEN=8080", envs)
         self.assertIn("CUSTOM=1", envs)
@@ -161,13 +161,13 @@ class DiscoverAppResultTests(unittest.TestCase):
                 "LISTEN": "",
             },
             config={
-                "command": ["python3", "server.py"],
+                "command": ["sh", "-c", "python3 server.py"],
                 "listen": "",
                 "socket_path": None,
             },
         )
 
-        self.assertEqual(executable, ["python3", "server.py"])
+        self.assertEqual(executable, ["sh", "-c", "python3 server.py"])
         self.assertRegex(reverse_proxy_to, r"^127\.0\.0\.1:\d+$")
         self.assertIn(f"LISTEN={reverse_proxy_to}", envs)
 
@@ -181,13 +181,13 @@ class DiscoverAppResultTests(unittest.TestCase):
                 "CUSTOM": "1",
             },
             config={
-                "command": ["python3", "server.py"],
+                "command": ["sh", "-c", "python3 server.py"],
                 "listen": None,
                 "socket_path": "run/app.sock",
             },
         )
 
-        self.assertEqual(executable, ["python3", "server.py"])
+        self.assertEqual(executable, ["sh", "-c", "python3 server.py"])
         self.assertEqual(reverse_proxy_to, f"unix/{(self.app_dir / 'run/app.sock').resolve()}")
         self.assertIn("SOCKET_PATH=run/app.sock", envs)
         self.assertIn("CUSTOM=1", envs)
@@ -202,7 +202,7 @@ class DiscoverAppResultTests(unittest.TestCase):
                     "SOCKET_PATH": "/tmp/app.sock",
                 },
                 config={
-                    "command": ["python3", "server.py"],
+                    "command": ["sh", "-c", "python3 server.py"],
                     "listen": None,
                     "socket_path": "/tmp/app.sock",
                 },
@@ -218,7 +218,7 @@ class DiscoverAppResultTests(unittest.TestCase):
                     "LISTEN": "foo",
                 },
                 config={
-                    "command": ["python3", "server.py"],
+                    "command": ["sh", "-c", "python3 server.py"],
                     "listen": "foo",
                     "socket_path": None,
                 },
@@ -314,7 +314,7 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
         payload = json.loads(completed.stdout)
-        self.assertEqual(payload["executable"], ["python3", "server.py"])
+        self.assertEqual(payload["executable"], ["sh", "-c", "python3 server.py"])
         self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:8080")
         self.assertIn("LISTEN=8080", payload["envs"])
         self.assertIn("CUSTOM=1", payload["envs"])
@@ -430,7 +430,7 @@ class DiscoverAppResultTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         payload = json.loads(completed.stdout)
-        self.assertEqual(payload["executable"], ["python3", "server.py"])
+        self.assertEqual(payload["executable"], ["sh", "-c", "python3 server.py"])
         self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
         self.assertIn(f"LISTEN={payload['reverse_proxy_to']}", payload["envs"])
         self.assertIn("CUSTOM=1", payload["envs"])
