@@ -125,11 +125,9 @@ def build_discovery_result(
     }
 
 
-def build_explicit_app(
-    working_dir: Path,
-    dot_env: dict[str, str],
-    config: EnvAppConfig,
-) -> tuple[list[str], str, list[str]]:
+def resolve_proxy_target(
+    working_dir: Path, config: EnvAppConfig, allow_fallback: bool
+) -> tuple[str, dict[str, str]]:
     if config["listen"] is not None:
         listen_value = config["listen"] or str(find_free_port())
         reverse_proxy_to = normalize_listen_value(listen_value)
@@ -137,9 +135,21 @@ def build_explicit_app(
     elif config["socket_path"] is not None:
         reverse_proxy_to = resolve_unix_socket_path(working_dir, config["socket_path"])
         env_overrides = {}
+    elif allow_fallback:
+        reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
+        env_overrides = {"LISTEN": reverse_proxy_to}
     else:
         raise ValueError("Explicit app configuration requires either LISTEN or SOCKET_PATH")
+    
+    return reverse_proxy_to, env_overrides
 
+
+def build_explicit_app(
+    working_dir: Path,
+    dot_env: dict[str, str],
+    config: EnvAppConfig,
+) -> tuple[list[str], str, list[str]]:
+    reverse_proxy_to, env_overrides = resolve_proxy_target(working_dir, config, allow_fallback=False)
     envs = build_app_envs(working_dir, dot_env, env_overrides)
     return config["command"], reverse_proxy_to, envs
 
@@ -213,17 +223,7 @@ def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
     if config["socket_path"] is not None and detection is not None and not detection.supports_unix_socket:
         raise ValueError(f"{detection.kind} does not support SOCKET_PATH")
 
-    # i feel like we just added a throw this to exact code elsewhere...MOAR DRY! AI!
-    if config["listen"] is not None:
-        listen_value = config["listen"] or str(find_free_port())
-        reverse_proxy_to = normalize_listen_value(listen_value)
-        env_overrides = {"LISTEN": reverse_proxy_to} if config["listen"] == "" else {}
-    elif config["socket_path"] is not None:
-        reverse_proxy_to = resolve_unix_socket_path(working_dir, config["socket_path"])
-        env_overrides = {}
-    else:
-        reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
-        env_overrides = {"LISTEN": reverse_proxy_to}
+    reverse_proxy_to, env_overrides = resolve_proxy_target(working_dir, config, allow_fallback=True)
 
     if config["command"] is not None:
         executable = config["command"]
