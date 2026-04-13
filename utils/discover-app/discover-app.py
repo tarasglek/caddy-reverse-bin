@@ -150,9 +150,7 @@ def discover_app_command(
     fallback_reverse_proxy_to: str,
 ) -> tuple[list[str], str]:
     detection = detect_app(working_dir)
-    if detection is None:
-        raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
-
+    assert detection is not None
     return build_detected_command(detection, fallback_reverse_proxy_to), fallback_reverse_proxy_to
 
 
@@ -179,7 +177,12 @@ def build_app_envs(
     return [f"{key}={value}" for key, value in env_map.items()]
 
 
-def detect_app(working_dir: Path) -> DetectedApp | None:
+def detect_app(working_dir: Path, config: EnvAppConfig | None = None) -> DetectedApp | None:
+    if config is not None:
+        needs_detection = config["command"] is None or (config["listen"] is None and config["socket_path"] is None)
+        if not needs_detection:
+            return None
+
     # e.g. Deno app
     if (working_dir / "main.ts").exists():
         return DetectedApp(kind="main.ts", supports_unix_socket=False)
@@ -189,7 +192,7 @@ def detect_app(working_dir: Path) -> DetectedApp | None:
     if path.exists() and os.access(path, os.X_OK):
         return DetectedApp(kind="main.py", supports_unix_socket=True)
 
-    return None
+    raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
 
 
 def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> list[str]:
@@ -205,13 +208,7 @@ def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> lis
 
 def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
     config = load_env_app_config(dot_env)
-    
-    needs_detection = config["command"] is None or (config["listen"] is None and config["socket_path"] is None)
-    # just simplify this shit by making detect_app and etc a noop if nothing to do, less state for system engineering AI!
-    detection = detect_app(working_dir) if needs_detection else None
-    
-    if needs_detection and detection is None:
-        raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
+    detection = detect_app(working_dir, config)
 
     if config["socket_path"] is not None and detection is not None and not detection.supports_unix_socket:
         raise ValueError(f"{detection.kind} does not support SOCKET_PATH")
