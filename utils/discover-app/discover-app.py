@@ -211,6 +211,28 @@ def resolve_fallback_reverse_proxy_to(working_dir: Path, dot_env: dict[str, str]
 
 
 
+def build_child_envs(dot_env: dict[str, str], reverse_proxy_to: str, working_dir: Path) -> list[str]:
+    envs = [
+        f"{k}={v}"
+        for k, v in dot_env.items()
+        if k not in {"REVERSE_BIN_COMMAND", "REVERSE_PROXY_TO", "PORT", "LISTEN", "SOCKET_PATH"}
+    ]
+
+    if reverse_proxy_to.startswith("unix/"):
+        envs.insert(0, f"SOCKET_PATH={reverse_proxy_to.removeprefix('unix/')}")
+    else:
+        envs.insert(0, f"LISTEN={reverse_proxy_to}")
+
+    if path := os.environ.get("PATH"):
+        envs.append(f"PATH={path}")
+
+    if (data_dir := working_dir / "data").is_dir():
+        envs.append(f"HOME={data_dir.resolve()}")
+
+    return envs
+
+
+
 def discover_app_command(
     working_dir: Path,
     *,
@@ -255,16 +277,11 @@ def main() -> None:
         print(f"Error: {error}", file=sys.stderr)
         raise SystemExit(1) from error
 
-    envs = [f"REVERSE_PROXY_TO={reverse_proxy_to}"]
-    envs += [f"{k}={v}" for k, v in dot_env.items() if k != "REVERSE_PROXY_TO"]
-    if path := os.environ.get("PATH"):
-        envs.append(f"PATH={path}")
+    envs = build_child_envs(dot_env, reverse_proxy_to, working_dir)
 
     rw_paths: list[str] = []
     if (data_dir := working_dir / "data").is_dir():
-        resolved = str(data_dir.resolve())
-        rw_paths.append(resolved)
-        envs.append(f"HOME={resolved}")
+        rw_paths.append(str(data_dir.resolve()))
 
     bind_tcp: list[int] = []
     if not reverse_proxy_to.startswith("unix/"):

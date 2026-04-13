@@ -119,6 +119,33 @@ class DiscoverAppResultTests(unittest.TestCase):
                 fallback_reverse_proxy_to="127.0.0.1:9999",
             )
 
+    def test_build_child_envs_for_listen_only_sets_listen(self) -> None:
+        # Intent: verify TCP child envs expose LISTEN only and do not leak legacy reverse-proxy variables.
+        envs = discover_app.build_child_envs(
+            dot_env={"CUSTOM": "1"},
+            reverse_proxy_to="127.0.0.1:8080",
+            working_dir=self.app_dir,
+        )
+
+        self.assertIn("LISTEN=127.0.0.1:8080", envs)
+        self.assertIn("CUSTOM=1", envs)
+        self.assertNotIn("REVERSE_PROXY_TO=127.0.0.1:8080", envs)
+        self.assertFalse(any(env.startswith("PORT=") for env in envs))
+
+    def test_build_child_envs_for_socket_only_sets_socket_path(self) -> None:
+        # Intent: verify unix-socket child envs expose an absolute SOCKET_PATH and omit legacy proxy variables.
+        reverse_proxy_to = f"unix/{(self.app_dir / 'run/app.sock').resolve()}"
+        envs = discover_app.build_child_envs(
+            dot_env={"CUSTOM": "1"},
+            reverse_proxy_to=reverse_proxy_to,
+            working_dir=self.app_dir,
+        )
+
+        self.assertIn(f"SOCKET_PATH={(self.app_dir / 'run/app.sock').resolve()}", envs)
+        self.assertIn("CUSTOM=1", envs)
+        self.assertNotIn(f"REVERSE_PROXY_TO={reverse_proxy_to}", envs)
+        self.assertFalse(any(env.startswith("PORT=") for env in envs))
+
     def test_detect_entrypoint_rejects_main_sh_autodetection(self) -> None:
         # Intent: verify shell scripts are no longer auto-detected as supported app entrypoints.
         script = self.app_dir / "main.sh"
