@@ -18,18 +18,6 @@ from typing import TypedDict
 from dotenv import dotenv_values
 
 
-class ReverseBinAppDefinition(TypedDict):
-    # argv-style command from reverse-bin-app.json.
-    # Sample values include ["python3", "server.py"], ["./server"], or
-    # ["deno", "serve", "--port", "9000", "main.ts"].
-    command: list[str]
-
-    # Listener location declared by the app definition.
-    # Potential values include an integer TCP port like 8080, a host:port string
-    # like "127.0.0.1:9000", or a relative unix socket path like "run/app.sock".
-    socket: int | str
-
-
 class DiscoverAppResult(TypedDict):
     # argv-style command used to launch the app.
     # Potential values include a config-defined command like ["python3", "server.py"],
@@ -82,41 +70,6 @@ def normalize_listen_value(listen_value: str) -> str:
         raise ValueError(f"Invalid LISTEN port: {listen_value}") from error
 
     return normalized
-
-
-def normalize_reverse_proxy_target(working_dir: Path, socket_value: int | str) -> str:
-    if isinstance(socket_value, int):
-        return f"127.0.0.1:{socket_value}"
-
-    if socket_value.startswith("unix/"):
-        return resolve_unix_socket_path(working_dir, socket_value.removeprefix("unix/"))
-
-    if ":" in socket_value:
-        return socket_value
-
-    return resolve_unix_socket_path(working_dir, socket_value)
-
-
-def load_app_definition(working_dir: Path) -> ReverseBinAppDefinition | None:
-    app_definition_file = working_dir / "reverse-bin-app.json"
-    if not app_definition_file.exists():
-        return None
-
-    with app_definition_file.open() as f:
-        data = json.load(f)
-
-    if not isinstance(data, dict):
-        raise ValueError(f"App definition in {app_definition_file} must be a JSON object")
-
-    command = data.get("command")
-    if not isinstance(command, list) or not command or not all(isinstance(arg, str) for arg in command):
-        raise ValueError(f"App definition in {app_definition_file} must contain a non-empty string array 'command'")
-
-    socket_value = data.get("socket")
-    if not isinstance(socket_value, int | str):
-        raise ValueError(f"App definition in {app_definition_file} must contain an integer or string 'socket'")
-
-    return {"command": command, "socket": socket_value}
 
 
 def load_explicit_app_config(working_dir: Path, dot_env: dict[str, str]) -> tuple[list[str], str] | None:
@@ -195,9 +148,7 @@ def detect_entrypoint(working_dir: Path, reverse_proxy_to: str) -> list[str]:
     if path.exists() and os.access(path, os.X_OK):
         return ["./main.py"]
 
-    raise FileNotFoundError(
-        f"No supported entry point (reverse-bin-app.json, main.ts, or executable main.py) found in {working_dir}"
-    )
+    raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
 
 
 
@@ -242,10 +193,6 @@ def discover_app_command(
     explicit_config = load_explicit_app_config(working_dir, dot_env)
     if explicit_config is not None:
         return explicit_config
-
-    app_definition = load_app_definition(working_dir)
-    if app_definition is not None:
-        return app_definition["command"], normalize_reverse_proxy_target(working_dir, app_definition["socket"])
 
     return detect_entrypoint(working_dir, fallback_reverse_proxy_to), fallback_reverse_proxy_to
 

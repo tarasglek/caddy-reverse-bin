@@ -146,6 +146,42 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertNotIn(f"REVERSE_PROXY_TO={reverse_proxy_to}", envs)
         self.assertFalse(any(env.startswith("PORT=") for env in envs))
 
+    def test_discover_app_command_ignores_reverse_bin_app_json_during_fallback(self) -> None:
+        # Intent: verify fallback autodetection ignores legacy JSON config files and selects supported entrypoints instead.
+        (self.app_dir / "reverse-bin-app.json").write_text(
+            json.dumps({"command": ["./custom-server"], "socket": 9000})
+        )
+        (self.app_dir / "main.ts").write_text("console.log('hello');\n")
+
+        command, reverse_proxy_to = discover_app.discover_app_command(
+            self.app_dir,
+            dot_env={},
+            fallback_reverse_proxy_to="127.0.0.1:8080",
+        )
+
+        self.assertEqual(
+            command,
+            ["deno", "serve", "--watch", "--allow-all", "--host", "127.0.0.1", "--port", "8080", "main.ts"],
+        )
+        self.assertEqual(reverse_proxy_to, "127.0.0.1:8080")
+
+    def test_detect_entrypoint_supports_main_ts_fallback(self) -> None:
+        # Intent: verify automatic fallback still starts main.ts apps with the derived TCP port.
+        (self.app_dir / "main.ts").write_text("console.log('hello');\n")
+
+        self.assertEqual(
+            discover_app.detect_entrypoint(self.app_dir, "127.0.0.1:8080"),
+            ["deno", "serve", "--watch", "--allow-all", "--host", "127.0.0.1", "--port", "8080", "main.ts"],
+        )
+
+    def test_detect_entrypoint_supports_main_py_fallback(self) -> None:
+        # Intent: verify automatic fallback still supports executable Python entrypoints.
+        script = self.app_dir / "main.py"
+        script.write_text("#!/usr/bin/env python3\n")
+        script.chmod(0o755)
+
+        self.assertEqual(discover_app.detect_entrypoint(self.app_dir, "127.0.0.1:8080"), ["./main.py"])
+
     def test_detect_entrypoint_rejects_main_sh_autodetection(self) -> None:
         # Intent: verify shell scripts are no longer auto-detected as supported app entrypoints.
         script = self.app_dir / "main.sh"
@@ -155,10 +191,10 @@ class DiscoverAppResultTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             discover_app.detect_entrypoint(self.app_dir, "127.0.0.1:8080")
 
-    def test_main_emits_configured_result_without_sandbox(self) -> None:
-        # Intent: verify CLI output uses reverse-bin-app.json command and normalized target when sandboxing is disabled.
-        (self.app_dir / "reverse-bin-app.json").write_text(
-            json.dumps({"command": ["python3", "server.py"], "socket": 8080})
+    def test_main_emits_explicit_listen_config_without_sandbox(self) -> None:
+        # Intent: verify the CLI emits explicit LISTEN-based config and app envs without sandbox wrapping.
+        (self.app_dir / ".env").write_text(
+            'REVERSE_BIN_COMMAND="python3 server.py"\nLISTEN=8080\nCUSTOM=1\n'
         )
 
         completed = subprocess.run(
@@ -171,6 +207,9 @@ class DiscoverAppResultTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["executable"], ["python3", "server.py"])
         self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:8080")
+        self.assertIn("LISTEN=127.0.0.1:8080", payload["envs"])
+        self.assertIn("CUSTOM=1", payload["envs"])
+        self.assertNotIn("REVERSE_PROXY_TO=127.0.0.1:8080", payload["envs"])
 
 
 if __name__ == "__main__":
