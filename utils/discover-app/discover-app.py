@@ -185,7 +185,7 @@ def detect_app(working_dir: Path) -> DetectedApp | None:
 
 def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> list[str]:
     if detection.kind == "main.ts":
-        port = reverse_proxy_to.rsplit(":", 1)[-1]
+        port = reverse_proxy_to.rsplit(":", 1)[-1] # we should generalize every one of these split(:)[-1] patterns into a utility func with an error if the result fails to be an int AI!
         return ["deno", "serve", "--watch", "--allow-all", "--host", "127.0.0.1", "--port", port, "main.ts"]
 
     if detection.kind == "main.py":
