@@ -258,7 +258,7 @@ func createBasicReverseProxySetup(t *testing.T, f fixtures) (*reverseProxySetup,
 		reverse-bin {
 			exec uv run --script {{PYTHON_APP}}
 			reverse_proxy_to unix/{{APP_SOCKET}}
-			env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
+			env SOCKET_PATH={{APP_SOCKET}}
 		}
 	}`
 
@@ -296,7 +296,7 @@ func TestProcessCrashAndRestart(t *testing.T) {
 		reverse-bin {
 			exec uv run --script {{PYTHON_APP}}
 			reverse_proxy_to unix/{{APP_SOCKET}}
-			env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
+			env SOCKET_PATH={{APP_SOCKET}}
 		}
 	}`, map[string]string{
 		"PYTHON_APP": f.PythonApp,
@@ -381,7 +381,7 @@ result = {
     "executable": ["python3", str(app_dir / "main.py")],
     "reverse_proxy_to": f"unix/{socket_path}",
     "working_directory": str(app_dir),
-    "envs": [f"REVERSE_PROXY_TO=unix/{socket_path}"],
+    "envs": [f"SOCKET_PATH={socket_path}"],
 }
 print(json.dumps(result))
 `)
@@ -517,7 +517,7 @@ func TestReadinessCheck(t *testing.T) {
 			reverse-bin {
 				exec uv run --script {{PYTHON_APP}}
 				reverse_proxy_to unix/{{APP_SOCKET}}
-				env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
+				env SOCKET_PATH={{APP_SOCKET}}
 				# pass_all_env keeps uv/python runtime env (PATH/HOME/etc.) available in tests.
 				pass_all_env
 				{{READINESS_DIRECTIVE}}
@@ -611,7 +611,7 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 		reverse-bin {
 			exec uv run --script {{PYTHON_APP}}
 			reverse_proxy_to unix/{{APP_SOCKET}}
-			env REVERSE_PROXY_TO=unix/{{APP_SOCKET}}
+			env SOCKET_PATH={{APP_SOCKET}}
 			# pass_all_env keeps uv/python runtime env (PATH/HOME/etc.) available in tests.
 			pass_all_env
 			idle_timeout_ms 100
@@ -666,7 +666,7 @@ func TestMultipleApps(t *testing.T) {
 		reverse-bin {
 			exec uv run --script {{PYTHON_APP}}
 			reverse_proxy_to unix/{{APP_SOCKET_1}}
-			env REVERSE_PROXY_TO=unix/{{APP_SOCKET_1}}
+			env SOCKET_PATH={{APP_SOCKET_1}}
 			pass_all_env
 		}
 	}
@@ -674,7 +674,7 @@ func TestMultipleApps(t *testing.T) {
 		reverse-bin {
 			exec uv run --script {{PYTHON_APP}}
 			reverse_proxy_to unix/{{APP_SOCKET_2}}
-			env REVERSE_PROXY_TO=unix/{{APP_SOCKET_2}}
+			env SOCKET_PATH={{APP_SOCKET_2}}
 			pass_all_env
 		}
 	}`, map[string]string{

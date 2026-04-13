@@ -74,19 +74,18 @@ class EchoHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
 if __name__ == "__main__":
-    # Use REVERSE_PROXY_TO environment variable
-    addr_str = os.environ.get("REVERSE_PROXY_TO")
-    if not addr_str or not addr_str.startswith("unix/"):
-        print("Error: REVERSE_PROXY_TO must be set to a unix/ path", file=sys.stderr)
+    # Use SOCKET_PATH environment variable
+    socket_path = os.environ.get("SOCKET_PATH")
+    if not socket_path:
+        print("Error: SOCKET_PATH must be set", file=sys.stderr)
         sys.exit(1)
 
-    socket_path = addr_str[5:]
     if os.path.exists(socket_path):
         os.remove(socket_path)
     
     server_address = socket_path
     httpd = UnixHTTPServer(server_address, EchoHandler)
-    print(addr_str)
+    print(socket_path)
 
     # Signal readiness to Caddy by printing the address to stdout
     sys.stdout.flush()

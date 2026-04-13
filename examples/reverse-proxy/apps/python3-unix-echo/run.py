@@ -10,7 +10,7 @@ print(
             "--rw",
             "/dev",
             "--env",
-            "REVERSE_PROXY_TO=unix/data/echo.sock",
+            "SOCKET_PATH=data/echo.sock",
             "--env",
             "HOME=/home/taras/Documents/caddy-reverse-bin/examples/reverse-proxy/apps/python3-unix-echo/data",
             "--env",

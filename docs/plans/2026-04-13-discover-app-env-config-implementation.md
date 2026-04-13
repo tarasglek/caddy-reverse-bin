@@ -4,9 +4,24 @@
 
 **Goal:** Replace JSON-based discover-app configuration with `.env`-based explicit config using `REVERSE_BIN_COMMAND`, `LISTEN`, and `SOCKET_PATH`, while updating existing tests/examples to the new env conventions.
 
-**Architecture:** Refactor `utils/discover-app/discover-app.py` so explicit config is loaded from `.env`, normalized into the existing `reverse_proxy_to` output field, and converted into child env vars using `LISTEN` or `SOCKET_PATH`. Keep autodetection as a fallback for `main.ts` and executable `main.py`, and remove `main.sh` support.
+**Architecture:** Refactor `utils/discover-app/discover-app.py` so explicit config is parsed into a small typed `EnvAppConfig`, then converted into the existing `DiscoverAppResult`. Keep child env handling minimal and passthrough-oriented: preserve `.env` values as written, except when `LISTEN` is blank and discover-app must allocate and inject a concrete listener. Keep autodetection as a fallback for `main.ts` and executable `main.py`, and remove `main.sh` support.
 
 **Tech Stack:** Python 3.13, stdlib `shlex/json/typing`, `python-dotenv`, `unittest`, Go integration tests
+
+## Current Status
+
+Completed on branch `taras/more`.
+
+- Tasks 1-3 were implemented, then simplified further after review to use a typed `EnvAppConfig` model and passthrough app env handling.
+- Explicit `.env` mode now uses `REVERSE_BIN_COMMAND` plus exactly one of `LISTEN` or `SOCKET_PATH`.
+- Blank `LISTEN=` now allocates a free port and passes the resolved `LISTEN=127.0.0.1:<port>` to the app.
+- Fallback autodetection remains for `main.ts` and executable `main.py`; `main.py` fallback receives a generated `LISTEN` env so it can bind.
+- Legacy JSON app config discovery has been removed from `discover-app.py`.
+- Example apps, docs, and integration tests have been updated to use `LISTEN` / `SOCKET_PATH` instead of `REVERSE_PROXY_TO` as the app-facing contract.
+- Verified with:
+  - `uv run --with python-dotenv python -m unittest utils/discover-app/test_discover_app.py`
+  - `uv run --with python-dotenv python utils/discover-app/discover-app.py --help`
+  - `go test ./cmd/caddy -run 'TestDynamicDiscovery|TestReverseProxy'`
 
 ---
 

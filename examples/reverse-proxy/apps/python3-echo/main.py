@@ -20,10 +20,10 @@ class EchoHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
 if __name__ == "__main__":
-    # Use REVERSE_PROXY_TO environment variable
-    addr_str = os.environ.get("REVERSE_PROXY_TO")
+    # Use LISTEN environment variable
+    addr_str = os.environ.get("LISTEN")
     if not addr_str:
-        print("Error: REVERSE_PROXY_TO environment variable is not set", file=sys.stderr)
+        print("Error: LISTEN environment variable is not set", file=sys.stderr)
         sys.exit(1)
 
     host, port_str = addr_str.split(':')

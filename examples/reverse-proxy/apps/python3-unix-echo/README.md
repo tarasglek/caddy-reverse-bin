@@ -4,22 +4,15 @@ A simple HTTP echo server that listens on a Unix domain socket.
 
 ## Configuration
 
-The server reads its socket path from the `REVERSE_PROXY_TO` environment variable.
+The server reads its socket path from the `SOCKET_PATH` environment variable.
 
-### Important: Socket Path Format
-
-For **apps**, the `REVERSE_PROXY_TO` must use a **relative path** with the `unix/` prefix:
+For apps launched by `discover-app.py`, use a relative `.env` value:
 
 ```bash
-# In .env file (relative path - socket created relative to app directory)
-REVERSE_PROXY_TO=unix/data/echo.sock
+SOCKET_PATH=data/echo.sock
 ```
 
-The app strips the `unix/` prefix and uses the remaining path (`data/echo.sock`) as the socket location.
-
-### For Discovery Scripts
-
-When using `dynamic_proxy_detector`, the discovery script must return an **absolute path**:
+`discover-app.py` resolves that relative app config into an absolute detector payload:
 
 ```json
 {
@@ -27,15 +20,10 @@ When using `dynamic_proxy_detector`, the discovery script must return an **absol
 }
 ```
 
-The `discover-app.py` utility handles this automatically - it resolves relative paths from `.env` to absolute paths.
-
 ## Running
 
 ```bash
-# Set the environment variable
-export REVERSE_PROXY_TO=unix/data/echo.sock
-
-# Run the server
+export SOCKET_PATH=data/echo.sock
 ./main.py
 ```
 
