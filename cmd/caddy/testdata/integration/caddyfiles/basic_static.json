@@ -29,7 +29,7 @@
                   ],
                   "reverse_proxy_to": "unix//{{APP_SOCKET}}",
                   "envs": [
-                    "REVERSE_PROXY_TO=unix//{{APP_SOCKET}}"
+                    "SOCKET_PATH={{APP_SOCKET}}"
                   ],
                   "passAllEnvs": true
                 }
