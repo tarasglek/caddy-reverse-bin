@@ -15,7 +15,6 @@
 import argparse
 import json
 import os
-import shlex
 import socket
 import sys
 from dataclasses import dataclass
@@ -82,9 +81,13 @@ def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig:
     command_value = dot_env.get("REVERSE_BIN_COMMAND")
     command: list[str] | None = None
     if command_value is not None:
-        command = shlex.split(command_value)
-        if not command:
+        command_value = command_value.strip()
+        if not command_value:
             raise ValueError("REVERSE_BIN_COMMAND must not be empty")
+        if " " in command_value:
+            command = ["sh", "-c", command_value]
+        else:
+            command = [command_value]
 
     return {
         "command": command,
