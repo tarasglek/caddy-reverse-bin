@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+	configure)
+		if ! getent group reverse-bin >/dev/null; then
+			addgroup --system reverse-bin
+		fi
+		if ! getent passwd reverse-bin >/dev/null; then
+			adduser --system --ingroup reverse-bin \
+				--home /var/lib/reverse-bin/home --no-create-home \
+				--shell /usr/sbin/nologin reverse-bin
+		fi
+
+		install -d -o reverse-bin -g reverse-bin /var/lib/reverse-bin
+		install -d -o reverse-bin -g reverse-bin /var/lib/reverse-bin/apps
+		install -d -o reverse-bin -g reverse-bin /var/lib/reverse-bin/home
+
+		setcap 'cap_net_bind_service=+ep' /usr/bin/reverse-bin-caddy
+		;;
+esac
+
+#DEBHELPER#

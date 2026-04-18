@@ -1,0 +1,15 @@
+Source: reverse-bin
+Section: web
+Priority: optional
+Maintainer: Taras Glek <taras@example.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.7.2
+Rules-Requires-Root: no
+Homepage: https://github.com/tarasglek/reverse-bin
+
+Package: reverse-bin
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}, python3, python3-dotenv, libcap2-bin
+Description: On-demand app launcher and reverse proxy for Caddy
+ reverse-bin is a Caddy HTTP handler that launches app processes on demand
+ and reverse proxies requests to them.

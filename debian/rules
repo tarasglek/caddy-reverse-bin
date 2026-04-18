@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+
+export DH_VERBOSE=1
+export PATH := /usr/local/go/bin:$(PATH)
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	mkdir -p build
+	go build -o build/reverse-bin-caddy ./cmd/caddy
+	install -m 0755 "$(shell command -v landrun)" build/landrun
+
+override_dh_auto_test:
+
+override_dh_dwz:
+
+override_dh_auto_install:
+	dh_auto_install
+
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start
