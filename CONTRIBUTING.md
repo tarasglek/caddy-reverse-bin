@@ -1,5 +1,13 @@
-cd cmd/caddy && go build
-ensure you have systemd-resolved, eg  apt install systemd-resolved -y
-./examples/reverse-proxy/run.sh
-curl -i python.localhost:9080
-  
+Build the Debian package locally with:
+
+```bash
+make deb
+```
+
+The package build expects a working Go toolchain in `PATH` and produces a `.deb` in the parent directory.
+
+For packaged runtime testing, inspect the built artifact with:
+
+```bash
+dpkg-deb -c ../reverse-bin_*_*.deb
+```

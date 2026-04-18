@@ -3,5 +3,4 @@ build/landrun usr/lib/reverse-bin/
 utils/discover-app/discover-app.py usr/lib/reverse-bin/
 examples/reverse-bin-apps-config/allow-domain.py usr/lib/reverse-bin/
 packaging/debian/Caddyfile etc/reverse-bin/
-examples/reverse-proxy/apps/python3-unix-echo usr/share/doc/reverse-bin/examples/
-examples/reverse-proxy/apps/deno-echo usr/share/doc/reverse-bin/examples/
+packaging/examples/python3-unix-echo usr/share/doc/reverse-bin/examples/
