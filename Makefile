@@ -41,8 +41,13 @@ build :
 	$(CADDY_BIN) list-modules | grep http.handlers.reverse-bin
 	$(CADDY_BIN) version
 
+.PHONY: deb
+
+deb:
+	dpkg-buildpackage -us -uc -b
+
 release-dry-run :
 	$$(go env GOPATH)/bin/goreleaser release --snapshot --clean --skip=publish
 
 clean :
-	rm -f coverage.html coverage ok/* doc/index.html doc.go README.md
+	rm -f coverage.html coverage ok/* doc/index.html

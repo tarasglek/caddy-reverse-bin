@@ -41,6 +41,7 @@ func TestDebBuildContainsExpectedPaths(t *testing.T) {
 		"./usr/lib/reverse-bin/allow-domain.py",
 		"./etc/reverse-bin/Caddyfile",
 		"./usr/share/doc/reverse-bin/examples/",
+		"./usr/share/doc/reverse-bin/examples/python3-unix-echo/main.py",
 	} {
 		if !strings.Contains(string(listing), want) {
 			t.Fatalf("package listing missing %q\n%s", want, listing)
