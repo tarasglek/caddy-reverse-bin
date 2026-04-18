@@ -2,24 +2,35 @@
 
 `reverse-bin` is a Caddy HTTP handler that launches an executable on demand and reverse proxies requests to it.
 
-## What it does
-- Starts a backend process when traffic arrives
-- Waits for backend readiness
-- Proxies matching requests
-- Stops the process after a configurable idle timeout
+## Debian deployment
 
-## Basic Caddyfile example
+The Debian package installs:
 
-```caddy
-reverse-bin /app* {
-    exec ./my-backend --port 8080
-    reverse_proxy_to 127.0.0.1:8080
-    readiness_check GET /health
-    idle_timeout_ms 30000
-}
+- `/usr/bin/reverse-bin-caddy`
+- `/etc/reverse-bin/Caddyfile`
+- `/usr/lib/reverse-bin/discover-app.py`
+- `/usr/lib/reverse-bin/allow-domain.py`
+- `/usr/lib/reverse-bin/landrun`
+- `/var/lib/reverse-bin/apps/`
+- `/usr/share/doc/reverse-bin/examples/`
+
+The systemd unit runs as the `reverse-bin` system user with working directory `/var/lib/reverse-bin/home`.
+
+## Building
+
+```bash
+make deb
 ```
 
-## Notes
-- `exec` is required
-- `reverse_proxy_to` can be static, or discovered dynamically when configured
-- Prefer readiness checks for robust startup behavior
+## Installing apps
+
+Copy an example app or your own app into `/var/lib/reverse-bin/apps/<app-name>/` and ensure the tree is owned by `reverse-bin:reverse-bin`.
+
+## Service management
+
+The package installs but does not auto-enable the service.
+
+```bash
+sudo systemctl enable reverse-bin.service
+sudo systemctl start reverse-bin.service
+```
