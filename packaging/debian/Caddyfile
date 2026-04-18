@@ -1,0 +1,40 @@
+{
+	email {$OPS_EMAIL}
+	on_demand_tls {
+		ask http://127.0.0.1:9080/allow-domain
+	}
+}
+
+http://127.0.0.1:9080 {
+	handle /allow-domain* {
+		reverse-bin * {
+			exec /usr/lib/reverse-bin/allow-domain.py /run/reverse-bin/allow-domain.sock /var/lib/reverse-bin/apps --allowed-suffix .{$DOMAIN_SUFFIX}
+			reverse_proxy_to unix//run/reverse-bin/allow-domain.sock
+			readiness_check GET /health
+		}
+	}
+
+	handle {
+		abort
+	}
+}
+
+https:// {
+	log
+
+	tls {
+		on_demand
+	}
+
+	@app host *.{$DOMAIN_SUFFIX}
+	handle @app {
+		reverse-bin * {
+			dynamic_proxy_detector "/usr/lib/reverse-bin/discover-app.py" --no-sandbox "/var/lib/reverse-bin/apps/{http.request.host.labels.2}"
+			readiness_check HEAD /
+		}
+	}
+
+	handle {
+		abort
+	}
+}

@@ -1,0 +1,17 @@
+[Unit]
+Description=reverse-bin Caddy proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=reverse-bin
+Group=reverse-bin
+WorkingDirectory=/var/lib/reverse-bin/home
+Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin
+ExecStart=/usr/bin/reverse-bin-caddy run --config /etc/reverse-bin/Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
