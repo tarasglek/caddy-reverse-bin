@@ -50,6 +50,7 @@ func TestPackagedServiceUsesDebianPaths(t *testing.T) {
 	for _, want := range []string{
 		"ExecStart=/usr/bin/reverse-bin-caddy run --config /etc/reverse-bin/Caddyfile --adapter caddyfile",
 		"WorkingDirectory=/var/lib/reverse-bin/home",
+		"RuntimeDirectory=reverse-bin",
 		"Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin",
 		"EnvironmentFile=-/etc/default/reverse-bin",
 		"User=reverse-bin",

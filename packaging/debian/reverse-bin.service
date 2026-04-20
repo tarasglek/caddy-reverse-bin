@@ -8,6 +8,7 @@ Type=simple
 User=reverse-bin
 Group=reverse-bin
 WorkingDirectory=/var/lib/reverse-bin/home
+RuntimeDirectory=reverse-bin
 Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin
 EnvironmentFile=-/etc/default/reverse-bin
 ExecStart=/usr/bin/reverse-bin-caddy run --config /etc/reverse-bin/Caddyfile --adapter caddyfile
