@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -25,7 +26,23 @@ func TestDebBuildContainsExpectedPaths(t *testing.T) {
 		t.Fatalf("expected built .deb, got err=%v matches=%v", err, matches)
 	}
 
-	debPath, err := filepath.Abs(matches[0])
+	newestMatch := matches[0]
+	newestInfo, err := os.Stat(newestMatch)
+	if err != nil {
+		t.Fatalf("stat built .deb %q: %v", newestMatch, err)
+	}
+	for _, match := range matches[1:] {
+		info, err := os.Stat(match)
+		if err != nil {
+			t.Fatalf("stat built .deb %q: %v", match, err)
+		}
+		if info.ModTime().After(newestInfo.ModTime()) {
+			newestMatch = match
+			newestInfo = info
+		}
+	}
+
+	debPath, err := filepath.Abs(newestMatch)
 	if err != nil {
 		t.Fatalf("resolve built .deb path: %v", err)
 	}
@@ -47,6 +64,12 @@ func TestDebBuildContainsExpectedPaths(t *testing.T) {
 		if !strings.Contains(string(listing), want) {
 			t.Fatalf("package listing missing %q\n%s", want, listing)
 		}
+	}
+	if strings.Contains(string(listing), "./etc/default/reverse-bin/") {
+		t.Fatalf("package listing installs /etc/default/reverse-bin as a directory\n%s", listing)
+	}
+	if !strings.Contains(string(listing), "./etc/default/reverse-bin\n") {
+		t.Fatalf("package listing missing regular file /etc/default/reverse-bin\n%s", listing)
 	}
 	if !strings.Contains(string(listing), "./lib/systemd/system/reverse-bin.service") && !strings.Contains(string(listing), "./usr/lib/systemd/system/reverse-bin.service") {
 		t.Fatalf("package listing missing systemd service path\n%s", listing)
