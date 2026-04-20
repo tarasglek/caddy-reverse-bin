@@ -54,6 +54,8 @@ func TestDebBuildContainsExpectedPaths(t *testing.T) {
 	}
 	for _, want := range []string{
 		"./usr/bin/reverse-bin-caddy",
+		"./usr/lib/reverse-bin/uv",
+		"./usr/lib/reverse-bin/landrun",
 		"./usr/lib/reverse-bin/discover-app.py",
 		"./usr/lib/reverse-bin/allow-domain.py",
 		"./etc/default/reverse-bin",

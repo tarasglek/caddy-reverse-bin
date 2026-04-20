@@ -1,4 +1,5 @@
 build/reverse-bin-caddy usr/bin/
+build/uv usr/lib/reverse-bin/
 build/landrun usr/lib/reverse-bin/
 utils/discover-app/discover-app.py usr/lib/reverse-bin/
 examples/reverse-bin-apps-config/allow-domain.py usr/lib/reverse-bin/
