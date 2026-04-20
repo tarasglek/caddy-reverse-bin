@@ -1,0 +1,8 @@
+# Default deployment-specific settings for reverse-bin.
+#
+# Update these values to match your public DNS and ACME contact address,
+# then restart the service:
+#   sudo systemctl restart reverse-bin.service
+
+OPS_EMAIL=admin@example.com
+DOMAIN_SUFFIX=example.com

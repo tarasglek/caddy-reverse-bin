@@ -51,6 +51,7 @@ func TestPackagedServiceUsesDebianPaths(t *testing.T) {
 		"ExecStart=/usr/bin/reverse-bin-caddy run --config /etc/reverse-bin/Caddyfile --adapter caddyfile",
 		"WorkingDirectory=/var/lib/reverse-bin/home",
 		"Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin",
+		"EnvironmentFile=-/etc/default/reverse-bin",
 		"User=reverse-bin",
 	} {
 		if !strings.Contains(text, want) {

@@ -39,6 +39,7 @@ func TestDebBuildContainsExpectedPaths(t *testing.T) {
 		"./usr/bin/reverse-bin-caddy",
 		"./usr/lib/reverse-bin/discover-app.py",
 		"./usr/lib/reverse-bin/allow-domain.py",
+		"./etc/default/reverse-bin",
 		"./etc/reverse-bin/Caddyfile",
 		"./usr/share/doc/reverse-bin/examples/",
 		"./usr/share/doc/reverse-bin/examples/python3-unix-echo/main.py",
