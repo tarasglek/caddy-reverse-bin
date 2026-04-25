@@ -35,16 +35,20 @@ from dotenv import dotenv_values
 
 
 class EnvAppConfig(TypedDict):
-    command: list[str] | None  # e.g. ["uv", "run", "main.py"]
-    listen: str | None         # e.g. "8080" or "127.0.0.1:8080"
-    socket_path: str | None    # e.g. "app.sock"
+    command: list[str] | None   # e.g. ["uv", "run", "main.py"]
+    listen: str | None          # e.g. "8080" or "127.0.0.1:8080"
+    socket_path: str | None     # e.g. "app.sock"
+    readiness_method: str | None
+    readiness_path: str | None
 
 
-class DiscoverAppResult(TypedDict):
+class DiscoverAppResult(TypedDict, total=False):
     executable: list[str]      # e.g. ["landrun", "--env", "LISTEN=127.0.0.1:8080", "./main.py"]
     reverse_proxy_to: str      # e.g. "127.0.0.1:8080" or "unix/app.sock"
     working_directory: str     # e.g. "/var/www/app"
     envs: list[str]            # e.g. ["LISTEN=127.0.0.1:8080", "PATH=/usr/bin"]
+    readiness_method: str
+    readiness_path: str
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,8 @@ class ResolvedApp:
     executable: list[str]          # e.g. ["deno", "serve", "main.ts"]
     reverse_proxy_to: str          # e.g. "127.0.0.1:8080" or "unix/app.sock"
     env_overrides: dict[str, str]  # e.g. {"LISTEN": "127.0.0.1:8080"}
+    readiness_method: str | None
+    readiness_path: str | None
 
 
 def resolve_unix_socket_path(working_dir: Path, socket_path: str) -> str:
@@ -89,12 +95,25 @@ def normalize_listen_value(listen_value: str) -> str:
 def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig:
     # e.g. LISTEN="8080" or LISTEN="127.0.0.1:8080"
     listen = dot_env.get("LISTEN")
-    
+
     # e.g. SOCKET_PATH="app.sock"
     socket_path = dot_env.get("SOCKET_PATH")
-    
+
     if listen is not None and socket_path is not None:
         raise ValueError("Cannot set both LISTEN and SOCKET_PATH")
+
+    readiness_method = dot_env.get("READINESS_METHOD")
+    readiness_path = dot_env.get("READINESS_PATH")
+    if (readiness_method is None) != (readiness_path is None):
+        raise ValueError("READINESS_METHOD and READINESS_PATH must be set together")
+    if readiness_method is not None:
+        readiness_method = readiness_method.strip().upper()
+        if not readiness_method:
+            raise ValueError("READINESS_METHOD must not be empty")
+    if readiness_path is not None:
+        readiness_path = readiness_path.strip()
+        if not readiness_path:
+            raise ValueError("READINESS_PATH must not be empty")
 
     # e.g. REVERSE_BIN_COMMAND="uv run main.py"
     command_value = dot_env.get("REVERSE_BIN_COMMAND")
@@ -112,6 +131,8 @@ def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig:
         "command": command,
         "listen": listen,
         "socket_path": socket_path,
+        "readiness_method": readiness_method,
+        "readiness_path": readiness_path,
     }
 
 
@@ -126,13 +147,20 @@ def build_discovery_result(
     reverse_proxy_to: str,
     working_directory: str,
     envs: list[str],
+    readiness_method: str | None = None,
+    readiness_path: str | None = None,
 ) -> DiscoverAppResult:
-    return {
+    result: DiscoverAppResult = {
         "executable": executable,
         "reverse_proxy_to": reverse_proxy_to,
         "working_directory": working_directory,
         "envs": envs,
     }
+    if readiness_method is not None:
+        result["readiness_method"] = readiness_method
+    if readiness_path is not None:
+        result["readiness_path"] = readiness_path
+    return result
 
 
 def resolve_proxy_target(
@@ -245,6 +273,8 @@ def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
         executable=executable,
         reverse_proxy_to=reverse_proxy_to,
         env_overrides=env_overrides,
+        readiness_method=config["readiness_method"],
+        readiness_path=config["readiness_path"],
     )
 
 
@@ -330,12 +360,14 @@ def main() -> None:
             envs=envs,
         )
 
-    result: DiscoverAppResult = {
-        "executable": executable,
-        "reverse_proxy_to": reverse_proxy_to,
-        "working_directory": str(working_dir.resolve()),
-        "envs": envs,
-    }
+    result = build_discovery_result(
+        executable=executable,
+        reverse_proxy_to=reverse_proxy_to,
+        working_directory=str(working_dir.resolve()),
+        envs=envs,
+        readiness_method=resolved.readiness_method,
+        readiness_path=resolved.readiness_path,
+    )
     print(json.dumps(result))
 
 

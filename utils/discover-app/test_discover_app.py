@@ -56,6 +56,20 @@ class DiscoverAppResultTests(unittest.TestCase):
             },
         )
 
+    def test_build_discovery_result_includes_readiness_overrides_when_present(self) -> None:
+        # Intent: verify the typed result helper can include readiness override fields for reverse-bin detector output.
+        result = discover_app.build_discovery_result(
+            executable=["./main.py"],
+            reverse_proxy_to="127.0.0.1:8080",
+            working_directory="/tmp/example-app",
+            envs=["LISTEN=127.0.0.1:8080", "PATH=/usr/bin:/bin"],
+            readiness_method="GET",
+            readiness_path="/health",
+        )
+
+        self.assertEqual(result["readiness_method"], "GET")
+        self.assertEqual(result["readiness_path"], "/health")
+
     def test_load_env_app_config_reads_partial_listen_values_without_command(self) -> None:
         # Intent: verify .env LISTEN values are treated as partial config even when command inference is still needed.
         config = discover_app.load_env_app_config(
@@ -70,6 +84,8 @@ class DiscoverAppResultTests(unittest.TestCase):
                 "command": None,
                 "listen": "8080",
                 "socket_path": None,
+                "readiness_method": None,
+                "readiness_path": None,
             },
         )
 
@@ -87,6 +103,8 @@ class DiscoverAppResultTests(unittest.TestCase):
                 "command": None,
                 "listen": None,
                 "socket_path": "run/app.sock",
+                "readiness_method": None,
+                "readiness_path": None,
             },
         )
 
@@ -105,6 +123,29 @@ class DiscoverAppResultTests(unittest.TestCase):
                 "command": ["sh", "-c", "python3 server.py"],
                 "listen": "8080",
                 "socket_path": None,
+                "readiness_method": None,
+                "readiness_path": None,
+            },
+        )
+
+    def test_load_env_app_config_reads_readiness_override_values(self) -> None:
+        # Intent: verify .env readiness keys are parsed into detector override config for any discovered app.
+        config = discover_app.load_env_app_config(
+            {
+                "LISTEN": "8080",
+                "READINESS_METHOD": "get",
+                "READINESS_PATH": "/health",
+            }
+        )
+
+        self.assertEqual(
+            config,
+            {
+                "command": None,
+                "listen": "8080",
+                "socket_path": None,
+                "readiness_method": "GET",
+                "readiness_path": "/health",
             },
         )
 
@@ -128,8 +169,20 @@ class DiscoverAppResultTests(unittest.TestCase):
                 "command": ["sh", "-c", "python3 server.py"],
                 "listen": None,
                 "socket_path": None,
+                "readiness_method": None,
+                "readiness_path": None,
             },
         )
+
+    def test_load_env_app_config_rejects_readiness_method_without_path(self) -> None:
+        # Intent: verify partial readiness config fails fast so reverse-bin never gets half-defined readiness overrides.
+        with self.assertRaisesRegex(ValueError, "READINESS_METHOD and READINESS_PATH"):
+            discover_app.load_env_app_config({"READINESS_METHOD": "GET"})
+
+    def test_load_env_app_config_rejects_readiness_path_without_method(self) -> None:
+        # Intent: verify partial readiness config fails fast so reverse-bin never gets half-defined readiness overrides.
+        with self.assertRaisesRegex(ValueError, "READINESS_METHOD and READINESS_PATH"):
+            discover_app.load_env_app_config({"READINESS_PATH": "/health"})
 
     def test_build_explicit_app_uses_explicit_listen_config(self) -> None:
         # Intent: verify explicit LISTEN config normalizes the proxy target while preserving the app env value.
@@ -316,6 +369,8 @@ class DiscoverAppResultTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["executable"], ["sh", "-c", "python3 server.py"])
         self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:8080")
+        self.assertNotIn("readiness_method", payload)
+        self.assertNotIn("readiness_path", payload)
         self.assertIn("LISTEN=8080", payload["envs"])
         self.assertIn("CUSTOM=1", payload["envs"])
 
@@ -330,8 +385,24 @@ class DiscoverAppResultTests(unittest.TestCase):
 
         self.assertEqual(resolved.executable, ["./main.py"])
         self.assertEqual(resolved.reverse_proxy_to, "127.0.0.1:8080")
+        self.assertEqual(resolved.readiness_method, None)
+        self.assertEqual(resolved.readiness_path, None)
         self.assertEqual(env_map["LISTEN"], "8080")
         self.assertEqual(env_map["CUSTOM"], "1")
+
+    def test_resolve_app_carries_readiness_override_for_autodetected_app(self) -> None:
+        # Intent: verify autodetected apps can override readiness without requiring REVERSE_BIN_COMMAND explicit mode.
+        self.make_main_py()
+
+        resolved = discover_app.resolve_app(
+            self.app_dir,
+            dot_env={"LISTEN": "8080", "READINESS_METHOD": "GET", "READINESS_PATH": "/health"},
+        )
+
+        self.assertEqual(resolved.executable, ["./main.py"])
+        self.assertEqual(resolved.reverse_proxy_to, "127.0.0.1:8080")
+        self.assertEqual(resolved.readiness_method, "GET")
+        self.assertEqual(resolved.readiness_path, "/health")
 
     def test_resolve_app_replaces_blank_listen_with_resolved_listener(self) -> None:
         # Intent: verify a blank LISTEN= entry is supplemented with the resolved listener address before launch.
@@ -434,6 +505,30 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
         self.assertIn(f"LISTEN={payload['reverse_proxy_to']}", payload["envs"])
         self.assertIn("CUSTOM=1", payload["envs"])
+
+    def test_main_emits_readiness_overrides_for_autodetected_app(self) -> None:
+        # Intent: verify CLI emits readiness override fields from .env for autodetected apps, not only explicit command mode.
+        self.make_main_py()
+        (self.app_dir / ".env").write_text("LISTEN=8080\nREADINESS_METHOD=GET\nREADINESS_PATH=/health\n")
+
+        completed = self.run_cli()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["executable"], ["./main.py"])
+        self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:8080")
+        self.assertEqual(payload["readiness_method"], "GET")
+        self.assertEqual(payload["readiness_path"], "/health")
+
+    def test_main_rejects_partial_readiness_override(self) -> None:
+        # Intent: verify CLI rejects half-defined readiness overrides before emitting detector JSON.
+        self.make_main_py()
+        (self.app_dir / ".env").write_text("LISTEN=8080\nREADINESS_METHOD=GET\n")
+
+        completed = self.run_cli()
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertRegex(completed.stderr, r"READINESS_METHOD and READINESS_PATH")
 
     def test_main_rejects_main_ts_with_explicit_socket_path(self) -> None:
         # Intent: verify an explicit unix socket choice fails fast when the inferred TypeScript runtime only supports TCP.
