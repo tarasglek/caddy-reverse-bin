@@ -13,11 +13,16 @@ Reads these special keys from `.env`:
 - `REVERSE_BIN_COMMAND`: explicit command to launch for the app
 - `LISTEN`: app-facing TCP listener, e.g. `8080` or `127.0.0.1:8080`
 - `SOCKET_PATH`: app-facing relative unix socket path, e.g. `data/app.sock`
+- `READINESS_METHOD`: optional reverse-bin readiness probe method override, e.g. `GET`
+- `READINESS_PATH`: optional reverse-bin readiness probe path override, e.g. `/health`
 
-Passes all `.env` keys through to the child process, and may also set:
-- `LISTEN`: when a blank or missing listener must be resolved automatically
-- `PATH`: copied from the parent process when not already set in `.env`
+Passes all `.env` keys through to child process, and may also set:
+- `LISTEN`: when blank or missing listener must be resolved automatically
+- `PATH`: copied from parent process when not already set in `.env`
 - `HOME`: set to `<working_dir>/data` when that directory exists
+
+`READINESS_METHOD` and `READINESS_PATH` affect detector JSON overrides for reverse-bin.
+They are not passed to child process unless already present in `.env`.
 
 Returns Caddy dynamic proxy config JSON.
 """
