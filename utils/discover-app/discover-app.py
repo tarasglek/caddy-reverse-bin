@@ -71,6 +71,12 @@ class ResolvedApp:
     readiness_path: str | None
 
 
+@dataclass(frozen=True)
+class CommandResolution:
+    explicit_command: list[str] | None
+    detection: DetectedApp | None
+
+
 def resolve_unix_socket_path(working_dir: Path, socket_path: str) -> str:
     if Path(socket_path).is_absolute():
         raise ValueError(f"Unix socket path must be relative: {socket_path}")
@@ -168,8 +174,8 @@ def build_discovery_result(
     return result
 
 
-def resolve_proxy_target(
-    working_dir: Path, config: EnvAppConfig, allow_fallback: bool
+def resolve_transport(
+    working_dir: Path, config: EnvAppConfig, allow_fallback: bool = True
 ) -> tuple[str, dict[str, str]]:
     if config["listen"] is not None:
         listen_value = config["listen"] or str(find_free_port())
@@ -192,7 +198,7 @@ def build_explicit_app(
     dot_env: dict[str, str],
     config: EnvAppConfig,
 ) -> tuple[list[str], str, list[str]]:
-    reverse_proxy_to, env_overrides = resolve_proxy_target(working_dir, config, allow_fallback=False)
+    reverse_proxy_to, env_overrides = resolve_transport(working_dir, config, allow_fallback=False)
     envs = build_app_envs(working_dir, dot_env, env_overrides)
     return config["command"], reverse_proxy_to, envs
 
@@ -230,12 +236,7 @@ def build_app_envs(
     return [f"{key}={value}" for key, value in env_map.items()]
 
 
-def detect_app(working_dir: Path, config: EnvAppConfig | None = None) -> DetectedApp | None:
-    if config is not None:
-        needs_detection = config["command"] is None or (config["listen"] is None and config["socket_path"] is None)
-        if not needs_detection:
-            return None
-
+def detect_app(working_dir: Path) -> DetectedApp:
     # e.g. Deno app
     if (working_dir / "main.ts").exists():
         return DetectedApp(kind="main.ts", supports_unix_socket=False)
@@ -246,6 +247,26 @@ def detect_app(working_dir: Path, config: EnvAppConfig | None = None) -> Detecte
         return DetectedApp(kind="main.py", supports_unix_socket=True)
 
     raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
+
+
+def resolve_command(working_dir: Path, config: EnvAppConfig) -> CommandResolution:
+    if config["command"] is not None:
+        return CommandResolution(explicit_command=config["command"], detection=None)
+
+    return CommandResolution(explicit_command=None, detection=detect_app(working_dir))
+
+
+def validate_transport_compatibility(working_dir: Path, config: EnvAppConfig) -> None:
+    if config["socket_path"] is None:
+        return
+
+    try:
+        detection = detect_app(working_dir)
+    except FileNotFoundError:
+        return
+
+    if not detection.supports_unix_socket:
+        raise ValueError(f"{detection.kind} does not support SOCKET_PATH")
 
 
 def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> list[str]:
@@ -261,18 +282,15 @@ def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> lis
 
 def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
     config = load_env_app_config(dot_env)
-    detection = detect_app(working_dir, config)
+    command = resolve_command(working_dir, config)
+    reverse_proxy_to, env_overrides = resolve_transport(working_dir, config)
+    validate_transport_compatibility(working_dir, config)
 
-    if config["socket_path"] is not None and detection is not None and not detection.supports_unix_socket:
-        raise ValueError(f"{detection.kind} does not support SOCKET_PATH")
-
-    reverse_proxy_to, env_overrides = resolve_proxy_target(working_dir, config, allow_fallback=True)
-
-    if config["command"] is not None:
-        executable = config["command"]
+    if command.explicit_command is not None:
+        executable = command.explicit_command
     else:
-        assert detection is not None
-        executable = build_detected_command(detection, reverse_proxy_to)
+        assert command.detection is not None
+        executable = build_detected_command(command.detection, reverse_proxy_to)
 
     return ResolvedApp(
         executable=executable,
