@@ -54,3 +54,12 @@ __pycache__/
 # Local build artifacts
 /caddy
 examples/reverse-bin-apps-config/reverse-bin.tar.gz
+
+# Debian packaging build artifacts
+/debian/.debhelper/
+/debian/reverse-bin/
+/debian/debhelper-build-stamp
+/debian/files
+/debian/*.debhelper
+/debian/*.debhelper.log
+/debian/*.substvars
