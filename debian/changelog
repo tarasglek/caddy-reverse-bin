@@ -1,3 +1,9 @@
+reverse-bin (0.0.0-5) unstable; urgency=medium
+
+  * fix(discover-app): allow TCP fallback for opaque explicit commands.
+
+ -- Taras Glek <taras@example.com>  Sat, 25 Apr 2026 00:00:00 +0000
+
 reverse-bin (0.0.0-4) unstable; urgency=medium
 
   * feat(discover-app): add readiness env overrides.
