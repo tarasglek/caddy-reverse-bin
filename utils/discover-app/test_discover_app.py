@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,7 +25,7 @@ class DiscoverAppResultTests(unittest.TestCase):
 
     def run_cli(self) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [os.environ.get("PYTHON", "python"), str(MODULE_PATH), "--no-sandbox", str(self.app_dir)],
+            [os.environ.get("PYTHON", sys.executable), str(MODULE_PATH), "--no-sandbox", str(self.app_dir)],
             capture_output=True,
             text=True,
         )
@@ -32,6 +33,11 @@ class DiscoverAppResultTests(unittest.TestCase):
     def make_main_py(self) -> None:
         script = self.app_dir / "main.py"
         script.write_text("#!/usr/bin/env python3\n")
+        script.chmod(0o755)
+
+    def make_cmd_sh(self) -> None:
+        script = self.app_dir / "cmd.sh"
+        script.write_text("#!/bin/sh\nexit 0\n")
         script.chmod(0o755)
 
     def envs_as_map(self, envs: list[str]) -> dict[str, str]:
@@ -505,6 +511,40 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
         self.assertIn(f"LISTEN={payload['reverse_proxy_to']}", payload["envs"])
         self.assertIn("CUSTOM=1", payload["envs"])
+
+    def test_main_allocates_fallback_for_opaque_explicit_command_without_entrypoint(self) -> None:
+        # Intent: verify an opaque explicit command with no detectable entrypoint still gets a TCP fallback listener.
+        self.make_cmd_sh()
+        (self.app_dir / ".env").write_text("REVERSE_BIN_COMMAND=./cmd.sh\n")
+
+        completed = self.run_cli()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        env_map = self.envs_as_map(payload["envs"])
+        self.assertEqual(payload["executable"], ["./cmd.sh"])
+        self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
+        self.assertEqual(env_map["LISTEN"], payload["reverse_proxy_to"])
+
+    def test_main_emits_readiness_overrides_for_opaque_explicit_command_without_entrypoint(self) -> None:
+        # Intent: verify opaque explicit commands still emit exact readiness override fields when fallback TCP is allocated.
+        self.make_cmd_sh()
+        (self.app_dir / ".env").write_text(
+            "REVERSE_BIN_COMMAND=./cmd.sh\n"
+            "READINESS_METHOD=GET\n"
+            "READINESS_PATH=/.well-known/openid-configuration\n"
+        )
+
+        completed = self.run_cli()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        env_map = self.envs_as_map(payload["envs"])
+        self.assertEqual(payload["executable"], ["./cmd.sh"])
+        self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
+        self.assertEqual(env_map["LISTEN"], payload["reverse_proxy_to"])
+        self.assertEqual(payload["readiness_method"], "GET")
+        self.assertEqual(payload["readiness_path"], "/.well-known/openid-configuration")
 
     def test_main_emits_readiness_overrides_for_autodetected_app(self) -> None:
         # Intent: verify CLI emits readiness override fields from .env for autodetected apps, not only explicit command mode.
