@@ -380,6 +380,16 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertIn("LISTEN=8080", payload["envs"])
         self.assertIn("CUSTOM=1", payload["envs"])
 
+    def test_main_rejects_missing_command_and_missing_detectable_entrypoint(self) -> None:
+        # Intent: verify the CLI still hard-fails when command inference is required but no supported entrypoint exists.
+        completed = self.run_cli()
+
+        self.assertEqual(completed.returncode, 1)
+        self.assertRegex(
+            completed.stderr,
+            r"^Error: No supported entry point \(main\.ts or executable main\.py\) found in .+\n$",
+        )
+
     def test_resolve_app_preserves_explicit_listen_in_child_envs(self) -> None:
         # Intent: verify a valid explicit LISTEN value remains app-facing while reverse-bin keeps the normalized proxy target.
         self.make_main_py()
