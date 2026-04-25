@@ -7,9 +7,19 @@
 # ///
 
 """
-- reads app config from .env vars
-- if any envs are missing, infers them
-- returns caddy dynamic proxy config
+Discover reverse-bin app launch config from an app directory.
+
+Reads these special keys from `.env`:
+- `REVERSE_BIN_COMMAND`: explicit command to launch for the app
+- `LISTEN`: app-facing TCP listener, e.g. `8080` or `127.0.0.1:8080`
+- `SOCKET_PATH`: app-facing relative unix socket path, e.g. `data/app.sock`
+
+Passes all `.env` keys through to the child process, and may also set:
+- `LISTEN`: when a blank or missing listener must be resolved automatically
+- `PATH`: copied from the parent process when not already set in `.env`
+- `HOME`: set to `<working_dir>/data` when that directory exists
+
+Returns Caddy dynamic proxy config JSON.
 """
 
 import argparse
