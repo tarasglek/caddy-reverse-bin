@@ -20,13 +20,15 @@ class EchoHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
 if __name__ == "__main__":
-    # Use LISTEN environment variable
-    addr_str = os.environ.get("LISTEN")
-    if not addr_str:
-        print("Error: LISTEN environment variable is not set", file=sys.stderr)
-        sys.exit(1)
-
-    host, port_str = addr_str.split(':')
+    # Use reverse-bin TCP envs, falling back to legacy LISTEN for older manual runs.
+    host = os.environ.get("REVERSE_BIN_HOST")
+    port_str = os.environ.get("REVERSE_BIN_PORT")
+    if not (host and port_str):
+        addr_str = os.environ.get("LISTEN")
+        if not addr_str:
+            print("Error: REVERSE_BIN_HOST and REVERSE_BIN_PORT are not set", file=sys.stderr)
+            sys.exit(1)
+        host, port_str = addr_str.split(':')
     port = int(port_str)
     server_address = (host, port)
     httpd = http.server.HTTPServer(server_address, EchoHandler)

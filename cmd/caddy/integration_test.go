@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -581,6 +582,52 @@ func TestHealthCheck(t *testing.T) {
 // TestHealthFailureTimeout validates that health polling timeout surfaces as 503.
 // Strategy: start a long-running process that never binds reverse_proxy_to, so health
 // cannot succeed and reverse-bin must fail request with service unavailable.
+func TestHealthCheckAcceptsExplicitUnauthorizedStatus(t *testing.T) {
+	requireIntegration(t)
+
+	port, err := GetFreePort()
+	if err != nil {
+		t.Fatalf("failed to allocate backend port: %v", err)
+	}
+
+	app := createExecutableScript(t, t.TempDir(), "auth-health.py", `#!/usr/bin/env python3
+import http.server
+import os
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/v2/":
+            self.send_response(401)
+            self.end_headers()
+            self.wfile.write(b"auth-required")
+            return
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"registry-backend")
+
+host = os.environ["REVERSE_BIN_HOST"]
+port = int(os.environ["REVERSE_BIN_PORT"])
+http.server.HTTPServer((host, port), Handler).serve_forever()
+`)
+
+	setup, dispose := createReverseProxySetup(t, `handle /registry/* {
+		reverse-bin {
+			exec {{APP}}
+			env REVERSE_BIN_HOST=127.0.0.1 REVERSE_BIN_PORT={{BACKEND_PORT}}
+			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
+			health_check GET /v2/ 401
+		}
+	}`, map[string]string{
+		"APP":          app,
+		"BACKEND_PORT": strconv.Itoa(port),
+	})
+	defer dispose()
+
+	client := newTestHTTPClient()
+	// HTTP request verifies reverse-bin accepts auth-protected /v2/ health status 401 before proxying normal traffic.
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/registry/ok", setup.Port), 200, "registry-backend", "explicit 401 health status must allow backend startup and proxying")
+}
+
 func TestHealthFailureTimeout(t *testing.T) {
 	requireIntegration(t)
 

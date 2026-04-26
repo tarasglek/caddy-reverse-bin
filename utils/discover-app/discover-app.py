@@ -11,17 +11,19 @@ Discover reverse-bin app launch config from an app directory.
 
 Reads these special keys from `.env`:
 - `REVERSE_BIN_COMMAND`: explicit command to launch for the app
-- `LISTEN`: app-facing TCP listener, e.g. `8080` or `127.0.0.1:8080`
+- `REVERSE_BIN_HOST`: app-facing TCP bind host, defaults to `127.0.0.1`
+- `REVERSE_BIN_PORT`: app-facing TCP bind port; blank allocates a free port
 - `SOCKET_PATH`: app-facing relative unix socket path, e.g. `data/app.sock`
-- `READINESS_METHOD`: optional reverse-bin readiness probe method override, e.g. `GET`
-- `READINESS_PATH`: optional reverse-bin readiness probe path override, e.g. `/health`
+- `REVERSE_BIN_HEALTH_METHOD`: optional reverse-bin health probe method override, e.g. `GET`
+- `REVERSE_BIN_HEALTH_PATH`: optional reverse-bin health probe path override, e.g. `/health`
+- `REVERSE_BIN_HEALTH_STATUS`: optional exact reverse-bin health probe status, e.g. `401`
 
 Passes all `.env` keys through to child process, and may also set:
-- `LISTEN`: when blank or missing listener must be resolved automatically
+- `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`: when TCP listener values must be resolved automatically
 - `PATH`: copied from parent process when not already set in `.env`
 - `HOME`: set to `<working_dir>/data` when that directory exists
 
-`READINESS_METHOD` and `READINESS_PATH` affect detector JSON overrides for reverse-bin.
+`REVERSE_BIN_HEALTH_METHOD` and `REVERSE_BIN_HEALTH_PATH` affect detector JSON overrides for reverse-bin.
 They are not passed to child process unless already present in `.env`.
 
 Returns Caddy dynamic proxy config JSON.
@@ -40,11 +42,14 @@ from dotenv import dotenv_values
 
 
 class EnvAppConfig(TypedDict):
-    command: list[str] | None   # e.g. ["uv", "run", "main.py"]
-    listen: str | None          # e.g. "8080" or "127.0.0.1:8080"
-    socket_path: str | None     # e.g. "app.sock"
-    readiness_method: str | None
-    readiness_path: str | None
+    command: list[str] | None       # e.g. ["uv", "run", "main.py"]
+    listen: str | None              # legacy, e.g. "8080" or "127.0.0.1:8080"
+    reverse_bin_host: str | None    # e.g. "127.0.0.1"
+    reverse_bin_port: str | None    # e.g. "8080" or "" for auto-allocation
+    socket_path: str | None         # e.g. "app.sock"
+    health_method: str | None
+    health_path: str | None
+    health_status: int | None
 
 
 class DiscoverAppResult(TypedDict, total=False):
@@ -52,8 +57,9 @@ class DiscoverAppResult(TypedDict, total=False):
     reverse_proxy_to: str      # e.g. "127.0.0.1:8080" or "unix/app.sock"
     working_directory: str     # e.g. "/var/www/app"
     envs: list[str]            # e.g. ["LISTEN=127.0.0.1:8080", "PATH=/usr/bin"]
-    readiness_method: str
-    readiness_path: str
+    health_method: str
+    health_path: str
+    health_status: int
 
 
 @dataclass(frozen=True)
@@ -66,9 +72,10 @@ class DetectedApp:
 class ResolvedApp:
     executable: list[str]          # e.g. ["deno", "serve", "main.ts"]
     reverse_proxy_to: str          # e.g. "127.0.0.1:8080" or "unix/app.sock"
-    env_overrides: dict[str, str]  # e.g. {"LISTEN": "127.0.0.1:8080"}
-    readiness_method: str | None
-    readiness_path: str | None
+    env_overrides: dict[str, str]  # e.g. {"REVERSE_BIN_HOST": "127.0.0.1", "REVERSE_BIN_PORT": "8080"}
+    health_method: str | None
+    health_path: str | None
+    health_status: int | None
 
 
 @dataclass(frozen=True)
@@ -104,27 +111,55 @@ def normalize_listen_value(listen_value: str) -> str:
 
 
 def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig:
-    # e.g. LISTEN="8080" or LISTEN="127.0.0.1:8080"
+    # Legacy support for existing examples; new explicit app configs should use REVERSE_BIN_HOST/PORT.
     listen = dot_env.get("LISTEN")
+    reverse_bin_host = dot_env.get("REVERSE_BIN_HOST")
+    reverse_bin_port = dot_env.get("REVERSE_BIN_PORT")
 
     # e.g. SOCKET_PATH="app.sock"
     socket_path = dot_env.get("SOCKET_PATH")
 
-    if listen is not None and socket_path is not None:
-        raise ValueError("Cannot set both LISTEN and SOCKET_PATH")
+    has_tcp_config = listen is not None or reverse_bin_host is not None or reverse_bin_port is not None
+    if has_tcp_config and socket_path is not None:
+        raise ValueError("Cannot set both TCP listener config and SOCKET_PATH")
+    if listen is not None and (reverse_bin_host is not None or reverse_bin_port is not None):
+        raise ValueError("Cannot mix LISTEN with REVERSE_BIN_HOST or REVERSE_BIN_PORT")
 
-    readiness_method = dot_env.get("READINESS_METHOD")
-    readiness_path = dot_env.get("READINESS_PATH")
-    if (readiness_method is None) != (readiness_path is None):
-        raise ValueError("READINESS_METHOD and READINESS_PATH must be set together")
-    if readiness_method is not None:
-        readiness_method = readiness_method.strip().upper()
-        if not readiness_method:
-            raise ValueError("READINESS_METHOD must not be empty")
-    if readiness_path is not None:
-        readiness_path = readiness_path.strip()
-        if not readiness_path:
-            raise ValueError("READINESS_PATH must not be empty")
+    if reverse_bin_host is not None:
+        reverse_bin_host = reverse_bin_host.strip()
+        if not reverse_bin_host:
+            raise ValueError("REVERSE_BIN_HOST must not be empty")
+    if reverse_bin_port is not None:
+        reverse_bin_port = reverse_bin_port.strip()
+        if reverse_bin_port:
+            try:
+                int(reverse_bin_port)
+            except ValueError as error:
+                raise ValueError(f"Invalid REVERSE_BIN_PORT: {reverse_bin_port}") from error
+
+    health_method = dot_env.get("REVERSE_BIN_HEALTH_METHOD")
+    health_path = dot_env.get("REVERSE_BIN_HEALTH_PATH")
+    health_status_value = dot_env.get("REVERSE_BIN_HEALTH_STATUS")
+    if (health_method is None) != (health_path is None):
+        raise ValueError("REVERSE_BIN_HEALTH_METHOD and REVERSE_BIN_HEALTH_PATH must be set together")
+    if health_status_value is not None and (health_method is None or health_path is None):
+        raise ValueError("REVERSE_BIN_HEALTH_STATUS requires REVERSE_BIN_HEALTH_METHOD and REVERSE_BIN_HEALTH_PATH")
+    if health_method is not None:
+        health_method = health_method.strip().upper()
+        if not health_method:
+            raise ValueError("REVERSE_BIN_HEALTH_METHOD must not be empty")
+    if health_path is not None:
+        health_path = health_path.strip()
+        if not health_path:
+            raise ValueError("REVERSE_BIN_HEALTH_PATH must not be empty")
+    health_status: int | None = None
+    if health_status_value is not None:
+        try:
+            health_status = int(health_status_value.strip())
+        except ValueError as error:
+            raise ValueError("REVERSE_BIN_HEALTH_STATUS must be an integer from 100 through 599") from error
+        if health_status < 100 or health_status > 599:
+            raise ValueError("REVERSE_BIN_HEALTH_STATUS must be an integer from 100 through 599")
 
     # e.g. REVERSE_BIN_COMMAND="uv run main.py"
     command_value = dot_env.get("REVERSE_BIN_COMMAND")
@@ -141,9 +176,12 @@ def load_env_app_config(dot_env: dict[str, str]) -> EnvAppConfig:
     return {
         "command": command,
         "listen": listen,
+        "reverse_bin_host": reverse_bin_host,
+        "reverse_bin_port": reverse_bin_port,
         "socket_path": socket_path,
-        "readiness_method": readiness_method,
-        "readiness_path": readiness_path,
+        "health_method": health_method,
+        "health_path": health_path,
+        "health_status": health_status,
     }
 
 
@@ -158,8 +196,9 @@ def build_discovery_result(
     reverse_proxy_to: str,
     working_directory: str,
     envs: list[str],
-    readiness_method: str | None = None,
-    readiness_path: str | None = None,
+    health_method: str | None = None,
+    health_path: str | None = None,
+    health_status: int | None = None,
 ) -> DiscoverAppResult:
     result: DiscoverAppResult = {
         "executable": executable,
@@ -167,17 +206,24 @@ def build_discovery_result(
         "working_directory": working_directory,
         "envs": envs,
     }
-    if readiness_method is not None:
-        result["readiness_method"] = readiness_method
-    if readiness_path is not None:
-        result["readiness_path"] = readiness_path
+    if health_method is not None:
+        result["health_method"] = health_method
+    if health_path is not None:
+        result["health_path"] = health_path
+    if health_status is not None:
+        result["health_status"] = health_status
     return result
 
 
 def resolve_transport(
     working_dir: Path, config: EnvAppConfig, allow_fallback: bool = True
 ) -> tuple[str, dict[str, str]]:
-    if config["listen"] is not None:
+    if config.get("reverse_bin_port") is not None or config.get("reverse_bin_host") is not None:
+        host = config.get("reverse_bin_host") or "127.0.0.1"
+        port = config.get("reverse_bin_port") or str(find_free_port())
+        reverse_proxy_to = f"{host}:{port}"
+        env_overrides = {"REVERSE_BIN_HOST": host, "REVERSE_BIN_PORT": port}
+    elif config["listen"] is not None:
         listen_value = config["listen"] or str(find_free_port())
         reverse_proxy_to = normalize_listen_value(listen_value)
         env_overrides = {"LISTEN": reverse_proxy_to} if config["listen"] == "" else {}
@@ -185,11 +231,13 @@ def resolve_transport(
         reverse_proxy_to = resolve_unix_socket_path(working_dir, config["socket_path"])
         env_overrides = {}
     elif allow_fallback:
-        reverse_proxy_to = f"127.0.0.1:{find_free_port()}"
-        env_overrides = {"LISTEN": reverse_proxy_to}
+        host = "127.0.0.1"
+        port = str(find_free_port())
+        reverse_proxy_to = f"{host}:{port}"
+        env_overrides = {"REVERSE_BIN_HOST": host, "REVERSE_BIN_PORT": port}
     else:
-        raise ValueError("Explicit app configuration requires either LISTEN or SOCKET_PATH")
-    
+        raise ValueError("Explicit app configuration requires either REVERSE_BIN_PORT, LISTEN, or SOCKET_PATH")
+
     return reverse_proxy_to, env_overrides
 
 
@@ -296,8 +344,9 @@ def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
         executable=executable,
         reverse_proxy_to=reverse_proxy_to,
         env_overrides=env_overrides,
-        readiness_method=config["readiness_method"],
-        readiness_path=config["readiness_path"],
+        health_method=config["health_method"],
+        health_path=config["health_path"],
+        health_status=config["health_status"],
     )
 
 
@@ -388,8 +437,9 @@ def main() -> None:
         reverse_proxy_to=reverse_proxy_to,
         working_directory=str(working_dir.resolve()),
         envs=envs,
-        readiness_method=resolved.readiness_method,
-        readiness_path=resolved.readiness_path,
+        health_method=resolved.health_method,
+        health_path=resolved.health_path,
+        health_status=resolved.health_status,
     )
     print(json.dumps(result))
 

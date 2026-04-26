@@ -62,19 +62,19 @@ class DiscoverAppResultTests(unittest.TestCase):
             },
         )
 
-    def test_build_discovery_result_includes_readiness_overrides_when_present(self) -> None:
-        # Intent: verify the typed result helper can include readiness override fields for reverse-bin detector output.
+    def test_build_discovery_result_includes_health_overrides_when_present(self) -> None:
+        # Intent: verify the typed result helper can include health override fields for reverse-bin detector output.
         result = discover_app.build_discovery_result(
             executable=["./main.py"],
             reverse_proxy_to="127.0.0.1:8080",
             working_directory="/tmp/example-app",
             envs=["LISTEN=127.0.0.1:8080", "PATH=/usr/bin:/bin"],
-            readiness_method="GET",
-            readiness_path="/health",
+            health_method="GET",
+            health_path="/health",
         )
 
-        self.assertEqual(result["readiness_method"], "GET")
-        self.assertEqual(result["readiness_path"], "/health")
+        self.assertEqual(result["health_method"], "GET")
+        self.assertEqual(result["health_path"], "/health")
 
     def test_load_env_app_config_reads_partial_listen_values_without_command(self) -> None:
         # Intent: verify .env LISTEN values are treated as partial config even when command inference is still needed.
@@ -89,9 +89,12 @@ class DiscoverAppResultTests(unittest.TestCase):
             {
                 "command": None,
                 "listen": "8080",
+                "reverse_bin_host": None,
+                "reverse_bin_port": None,
                 "socket_path": None,
-                "readiness_method": None,
-                "readiness_path": None,
+                "health_method": None,
+                "health_path": None,
+                "health_status": None,
             },
         )
 
@@ -108,9 +111,12 @@ class DiscoverAppResultTests(unittest.TestCase):
             {
                 "command": None,
                 "listen": None,
+                "reverse_bin_host": None,
+                "reverse_bin_port": None,
                 "socket_path": "run/app.sock",
-                "readiness_method": None,
-                "readiness_path": None,
+                "health_method": None,
+                "health_path": None,
+                "health_status": None,
             },
         )
 
@@ -128,19 +134,22 @@ class DiscoverAppResultTests(unittest.TestCase):
             {
                 "command": ["sh", "-c", "python3 server.py"],
                 "listen": "8080",
+                "reverse_bin_host": None,
+                "reverse_bin_port": None,
                 "socket_path": None,
-                "readiness_method": None,
-                "readiness_path": None,
+                "health_method": None,
+                "health_path": None,
+                "health_status": None,
             },
         )
 
-    def test_load_env_app_config_reads_readiness_override_values(self) -> None:
-        # Intent: verify .env readiness keys are parsed into detector override config for any discovered app.
+    def test_load_env_app_config_reads_health_override_values(self) -> None:
+        # Intent: verify .env health keys are parsed into detector override config for any discovered app.
         config = discover_app.load_env_app_config(
             {
                 "LISTEN": "8080",
-                "READINESS_METHOD": "get",
-                "READINESS_PATH": "/health",
+                "REVERSE_BIN_HEALTH_METHOD": "get",
+                "REVERSE_BIN_HEALTH_PATH": "/health",
             }
         )
 
@@ -149,15 +158,18 @@ class DiscoverAppResultTests(unittest.TestCase):
             {
                 "command": None,
                 "listen": "8080",
+                "reverse_bin_host": None,
+                "reverse_bin_port": None,
                 "socket_path": None,
-                "readiness_method": "GET",
-                "readiness_path": "/health",
+                "health_method": "GET",
+                "health_path": "/health",
+                "health_status": None,
             },
         )
 
     def test_load_env_app_config_rejects_listen_and_socket_path_together(self) -> None:
         # Intent: verify merged config still rejects ambiguous upstream declarations when both LISTEN and SOCKET_PATH are set.
-        with self.assertRaisesRegex(ValueError, "both LISTEN and SOCKET_PATH"):
+        with self.assertRaisesRegex(ValueError, "both TCP listener config and SOCKET_PATH"):
             discover_app.load_env_app_config(
                 {
                     "LISTEN": "127.0.0.1:8080",
@@ -174,21 +186,24 @@ class DiscoverAppResultTests(unittest.TestCase):
             {
                 "command": ["sh", "-c", "python3 server.py"],
                 "listen": None,
+                "reverse_bin_host": None,
+                "reverse_bin_port": None,
                 "socket_path": None,
-                "readiness_method": None,
-                "readiness_path": None,
+                "health_method": None,
+                "health_path": None,
+                "health_status": None,
             },
         )
 
-    def test_load_env_app_config_rejects_readiness_method_without_path(self) -> None:
-        # Intent: verify partial readiness config fails fast so reverse-bin never gets half-defined readiness overrides.
-        with self.assertRaisesRegex(ValueError, "READINESS_METHOD and READINESS_PATH"):
-            discover_app.load_env_app_config({"READINESS_METHOD": "GET"})
+    def test_load_env_app_config_rejects_health_method_without_path(self) -> None:
+        # Intent: verify partial health config fails fast so reverse-bin never gets half-defined health overrides.
+        with self.assertRaisesRegex(ValueError, "REVERSE_BIN_HEALTH_METHOD and REVERSE_BIN_HEALTH_PATH"):
+            discover_app.load_env_app_config({"REVERSE_BIN_HEALTH_METHOD": "GET"})
 
-    def test_load_env_app_config_rejects_readiness_path_without_method(self) -> None:
-        # Intent: verify partial readiness config fails fast so reverse-bin never gets half-defined readiness overrides.
-        with self.assertRaisesRegex(ValueError, "READINESS_METHOD and READINESS_PATH"):
-            discover_app.load_env_app_config({"READINESS_PATH": "/health"})
+    def test_load_env_app_config_rejects_health_path_without_method(self) -> None:
+        # Intent: verify partial health config fails fast so reverse-bin never gets half-defined health overrides.
+        with self.assertRaisesRegex(ValueError, "REVERSE_BIN_HEALTH_METHOD and REVERSE_BIN_HEALTH_PATH"):
+            discover_app.load_env_app_config({"REVERSE_BIN_HEALTH_PATH": "/health"})
 
     def test_build_explicit_app_uses_explicit_listen_config(self) -> None:
         # Intent: verify explicit LISTEN config normalizes the proxy target while preserving the app env value.
@@ -202,6 +217,8 @@ class DiscoverAppResultTests(unittest.TestCase):
             config={
                 "command": ["sh", "-c", "python3 server.py"],
                 "listen": "8080",
+                "reverse_bin_host": None,
+                "reverse_bin_port": None,
                 "socket_path": None,
             },
         )
@@ -242,6 +259,8 @@ class DiscoverAppResultTests(unittest.TestCase):
             config={
                 "command": ["sh", "-c", "python3 server.py"],
                 "listen": None,
+                "reverse_bin_host": None,
+                "reverse_bin_port": None,
                 "socket_path": "run/app.sock",
             },
         )
@@ -375,8 +394,8 @@ class DiscoverAppResultTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["executable"], ["sh", "-c", "python3 server.py"])
         self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:8080")
-        self.assertNotIn("readiness_method", payload)
-        self.assertNotIn("readiness_path", payload)
+        self.assertNotIn("health_method", payload)
+        self.assertNotIn("health_path", payload)
         self.assertIn("LISTEN=8080", payload["envs"])
         self.assertIn("CUSTOM=1", payload["envs"])
 
@@ -401,24 +420,24 @@ class DiscoverAppResultTests(unittest.TestCase):
 
         self.assertEqual(resolved.executable, ["./main.py"])
         self.assertEqual(resolved.reverse_proxy_to, "127.0.0.1:8080")
-        self.assertEqual(resolved.readiness_method, None)
-        self.assertEqual(resolved.readiness_path, None)
+        self.assertEqual(resolved.health_method, None)
+        self.assertEqual(resolved.health_path, None)
         self.assertEqual(env_map["LISTEN"], "8080")
         self.assertEqual(env_map["CUSTOM"], "1")
 
-    def test_resolve_app_carries_readiness_override_for_autodetected_app(self) -> None:
-        # Intent: verify autodetected apps can override readiness without requiring REVERSE_BIN_COMMAND explicit mode.
+    def test_resolve_app_carries_health_override_for_autodetected_app(self) -> None:
+        # Intent: verify autodetected apps can override health without requiring REVERSE_BIN_COMMAND explicit mode.
         self.make_main_py()
 
         resolved = discover_app.resolve_app(
             self.app_dir,
-            dot_env={"LISTEN": "8080", "READINESS_METHOD": "GET", "READINESS_PATH": "/health"},
+            dot_env={"LISTEN": "8080", "REVERSE_BIN_HEALTH_METHOD": "GET", "REVERSE_BIN_HEALTH_PATH": "/health"},
         )
 
         self.assertEqual(resolved.executable, ["./main.py"])
         self.assertEqual(resolved.reverse_proxy_to, "127.0.0.1:8080")
-        self.assertEqual(resolved.readiness_method, "GET")
-        self.assertEqual(resolved.readiness_path, "/health")
+        self.assertEqual(resolved.health_method, "GET")
+        self.assertEqual(resolved.health_path, "/health")
 
     def test_resolve_app_replaces_blank_listen_with_resolved_listener(self) -> None:
         # Intent: verify a blank LISTEN= entry is supplemented with the resolved listener address before launch.
@@ -441,7 +460,8 @@ class DiscoverAppResultTests(unittest.TestCase):
 
         self.assertEqual(resolved.executable, ["./main.py"])
         self.assertRegex(resolved.reverse_proxy_to, r"^127\.0\.0\.1:\d+$")
-        self.assertEqual(env_map["LISTEN"], resolved.reverse_proxy_to)
+        self.assertEqual(env_map["REVERSE_BIN_HOST"], "127.0.0.1")
+        self.assertEqual(env_map["REVERSE_BIN_PORT"], resolved.reverse_proxy_to.rsplit(":", 1)[1])
 
     def test_resolve_app_preserves_explicit_socket_path_for_python_unix_app(self) -> None:
         # Intent: verify explicit SOCKET_PATH values stay app-facing for supported Python unix-socket apps.
@@ -519,7 +539,7 @@ class DiscoverAppResultTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["executable"], ["sh", "-c", "python3 server.py"])
         self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
-        self.assertIn(f"LISTEN={payload['reverse_proxy_to']}", payload["envs"])
+        self.assertIn(f"REVERSE_BIN_PORT={payload['reverse_proxy_to'].rsplit(':', 1)[1]}", payload["envs"])
         self.assertIn("CUSTOM=1", payload["envs"])
 
     def test_main_allocates_fallback_for_opaque_explicit_command_without_entrypoint(self) -> None:
@@ -534,15 +554,16 @@ class DiscoverAppResultTests(unittest.TestCase):
         env_map = self.envs_as_map(payload["envs"])
         self.assertEqual(payload["executable"], ["./cmd.sh"])
         self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
-        self.assertEqual(env_map["LISTEN"], payload["reverse_proxy_to"])
+        self.assertEqual(env_map["REVERSE_BIN_HOST"], "127.0.0.1")
+        self.assertEqual(env_map["REVERSE_BIN_PORT"], payload["reverse_proxy_to"].rsplit(":", 1)[1])
 
-    def test_main_emits_readiness_overrides_for_opaque_explicit_command_without_entrypoint(self) -> None:
-        # Intent: verify opaque explicit commands still emit exact readiness override fields when fallback TCP is allocated.
+    def test_main_emits_health_overrides_for_opaque_explicit_command_without_entrypoint(self) -> None:
+        # Intent: verify opaque explicit commands still emit exact health override fields when fallback TCP is allocated.
         self.make_cmd_sh()
         (self.app_dir / ".env").write_text(
             "REVERSE_BIN_COMMAND=./cmd.sh\n"
-            "READINESS_METHOD=GET\n"
-            "READINESS_PATH=/.well-known/openid-configuration\n"
+            "REVERSE_BIN_HEALTH_METHOD=GET\n"
+            "REVERSE_BIN_HEALTH_PATH=/.well-known/openid-configuration\n"
         )
 
         completed = self.run_cli()
@@ -552,14 +573,15 @@ class DiscoverAppResultTests(unittest.TestCase):
         env_map = self.envs_as_map(payload["envs"])
         self.assertEqual(payload["executable"], ["./cmd.sh"])
         self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
-        self.assertEqual(env_map["LISTEN"], payload["reverse_proxy_to"])
-        self.assertEqual(payload["readiness_method"], "GET")
-        self.assertEqual(payload["readiness_path"], "/.well-known/openid-configuration")
+        self.assertEqual(env_map["REVERSE_BIN_HOST"], "127.0.0.1")
+        self.assertEqual(env_map["REVERSE_BIN_PORT"], payload["reverse_proxy_to"].rsplit(":", 1)[1])
+        self.assertEqual(payload["health_method"], "GET")
+        self.assertEqual(payload["health_path"], "/.well-known/openid-configuration")
 
-    def test_main_emits_readiness_overrides_for_autodetected_app(self) -> None:
-        # Intent: verify CLI emits readiness override fields from .env for autodetected apps, not only explicit command mode.
+    def test_main_emits_health_overrides_for_autodetected_app(self) -> None:
+        # Intent: verify CLI emits health override fields from .env for autodetected apps, not only explicit command mode.
         self.make_main_py()
-        (self.app_dir / ".env").write_text("LISTEN=8080\nREADINESS_METHOD=GET\nREADINESS_PATH=/health\n")
+        (self.app_dir / ".env").write_text("LISTEN=8080\nREVERSE_BIN_HEALTH_METHOD=GET\nREVERSE_BIN_HEALTH_PATH=/health\n")
 
         completed = self.run_cli()
 
@@ -567,18 +589,122 @@ class DiscoverAppResultTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["executable"], ["./main.py"])
         self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:8080")
-        self.assertEqual(payload["readiness_method"], "GET")
-        self.assertEqual(payload["readiness_path"], "/health")
+        self.assertEqual(payload["health_method"], "GET")
+        self.assertEqual(payload["health_path"], "/health")
 
-    def test_main_rejects_partial_readiness_override(self) -> None:
-        # Intent: verify CLI rejects half-defined readiness overrides before emitting detector JSON.
+    def test_main_rejects_partial_health_override(self) -> None:
+        # Intent: verify CLI rejects half-defined health overrides before emitting detector JSON.
         self.make_main_py()
-        (self.app_dir / ".env").write_text("LISTEN=8080\nREADINESS_METHOD=GET\n")
+        (self.app_dir / ".env").write_text("LISTEN=8080\nREVERSE_BIN_HEALTH_METHOD=GET\n")
 
         completed = self.run_cli()
 
         self.assertEqual(completed.returncode, 1)
-        self.assertRegex(completed.stderr, r"READINESS_METHOD and READINESS_PATH")
+        self.assertRegex(completed.stderr, r"REVERSE_BIN_HEALTH_METHOD and REVERSE_BIN_HEALTH_PATH")
+
+    def test_load_env_app_config_reads_health_status(self) -> None:
+        # Intent: verify REVERSE_BIN_HEALTH_STATUS is parsed as exact detector status override.
+        config = discover_app.load_env_app_config(
+            {
+                "REVERSE_BIN_PORT": "8080",
+                "REVERSE_BIN_HEALTH_METHOD": "get",
+                "REVERSE_BIN_HEALTH_PATH": "/v2/",
+                "REVERSE_BIN_HEALTH_STATUS": "401",
+            }
+        )
+
+        self.assertEqual(config["health_method"], "GET")
+        self.assertEqual(config["health_path"], "/v2/")
+        self.assertEqual(config["health_status"], 401)
+
+    def test_load_env_app_config_rejects_health_status_without_method_path(self) -> None:
+        # Intent: verify exact health status never emits without a complete health probe definition.
+        with self.assertRaisesRegex(ValueError, "REVERSE_BIN_HEALTH_STATUS requires"):
+            discover_app.load_env_app_config({"REVERSE_BIN_HEALTH_STATUS": "401"})
+
+    def test_load_env_app_config_rejects_health_status_outside_http_range(self) -> None:
+        # Intent: verify exact health status is constrained to real HTTP status codes.
+        with self.assertRaisesRegex(ValueError, "100 through 599"):
+            discover_app.load_env_app_config(
+                {
+                    "REVERSE_BIN_HEALTH_METHOD": "GET",
+                    "REVERSE_BIN_HEALTH_PATH": "/v2/",
+                    "REVERSE_BIN_HEALTH_STATUS": "600",
+                }
+            )
+
+    def test_resolve_app_allocates_reverse_bin_port_for_blank_port(self) -> None:
+        # Intent: verify blank REVERSE_BIN_PORT allocates a TCP target and injects the resolved port into child envs.
+        self.make_cmd_sh()
+
+        resolved = discover_app.resolve_app(
+            self.app_dir,
+            dot_env={"REVERSE_BIN_COMMAND": "./cmd.sh", "REVERSE_BIN_HOST": "127.0.0.1", "REVERSE_BIN_PORT": ""},
+        )
+        env_map = self.envs_as_map(discover_app.build_app_envs(self.app_dir, {}, resolved.env_overrides))
+
+        self.assertRegex(resolved.reverse_proxy_to, r"^127\.0\.0\.1:\d+$")
+        self.assertEqual(env_map["REVERSE_BIN_HOST"], "127.0.0.1")
+        self.assertEqual(env_map["REVERSE_BIN_PORT"], resolved.reverse_proxy_to.rsplit(":", 1)[1])
+
+    def test_resolve_app_uses_fixed_reverse_bin_port(self) -> None:
+        # Intent: verify fixed REVERSE_BIN_PORT forms reverse_proxy_to and is preserved in child envs.
+        self.make_cmd_sh()
+
+        resolved = discover_app.resolve_app(
+            self.app_dir,
+            dot_env={"REVERSE_BIN_COMMAND": "./cmd.sh", "REVERSE_BIN_PORT": "9999"},
+        )
+        env_map = self.envs_as_map(discover_app.build_app_envs(self.app_dir, {}, resolved.env_overrides))
+
+        self.assertEqual(resolved.reverse_proxy_to, "127.0.0.1:9999")
+        self.assertEqual(env_map["REVERSE_BIN_HOST"], "127.0.0.1")
+        self.assertEqual(env_map["REVERSE_BIN_PORT"], "9999")
+
+    def test_resolve_app_uses_reverse_bin_host(self) -> None:
+        # Intent: verify REVERSE_BIN_HOST participates in reverse_proxy_to and child envs for TCP apps.
+        self.make_cmd_sh()
+
+        resolved = discover_app.resolve_app(
+            self.app_dir,
+            dot_env={"REVERSE_BIN_COMMAND": "./cmd.sh", "REVERSE_BIN_HOST": "0.0.0.0", "REVERSE_BIN_PORT": "9999"},
+        )
+        env_map = self.envs_as_map(discover_app.build_app_envs(self.app_dir, {}, resolved.env_overrides))
+
+        self.assertEqual(resolved.reverse_proxy_to, "0.0.0.0:9999")
+        self.assertEqual(env_map["REVERSE_BIN_HOST"], "0.0.0.0")
+        self.assertEqual(env_map["REVERSE_BIN_PORT"], "9999")
+
+    def test_resolve_app_unix_socket_does_not_inject_reverse_bin_tcp_envs(self) -> None:
+        # Intent: verify Unix socket apps do not receive TCP bind envs.
+        self.make_main_py()
+
+        resolved = discover_app.resolve_app(self.app_dir, dot_env={"SOCKET_PATH": "data/app.sock"})
+        env_map = self.envs_as_map(discover_app.build_app_envs(self.app_dir, {}, resolved.env_overrides))
+
+        self.assertEqual(resolved.reverse_proxy_to, f"unix/{(self.app_dir / 'data/app.sock').resolve()}")
+        self.assertNotIn("REVERSE_BIN_HOST", env_map)
+        self.assertNotIn("REVERSE_BIN_PORT", env_map)
+
+    def test_main_emits_reverse_bin_health_status(self) -> None:
+        # Intent: verify CLI emits exact health status for auth-protected health endpoints.
+        self.make_cmd_sh()
+        (self.app_dir / ".env").write_text(
+            "REVERSE_BIN_COMMAND=./cmd.sh\n"
+            "REVERSE_BIN_PORT=9999\n"
+            "REVERSE_BIN_HEALTH_METHOD=GET\n"
+            "REVERSE_BIN_HEALTH_PATH=/v2/\n"
+            "REVERSE_BIN_HEALTH_STATUS=401\n"
+        )
+
+        completed = self.run_cli()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:9999")
+        self.assertEqual(payload["health_method"], "GET")
+        self.assertEqual(payload["health_path"], "/v2/")
+        self.assertEqual(payload["health_status"], 401)
 
     def test_main_rejects_main_ts_with_explicit_socket_path(self) -> None:
         # Intent: verify an explicit unix socket choice fails fast when the inferred TypeScript runtime only supports TCP.
@@ -600,7 +726,7 @@ class DiscoverAppResultTests(unittest.TestCase):
         payload = json.loads(completed.stdout)
         self.assertEqual(payload["executable"], ["./main.py"])
         self.assertRegex(payload["reverse_proxy_to"], r"^127\.0\.0\.1:\d+$")
-        self.assertIn(f"LISTEN={payload['reverse_proxy_to']}", payload["envs"])
+        self.assertIn(f"REVERSE_BIN_PORT={payload['reverse_proxy_to'].rsplit(':', 1)[1]}", payload["envs"])
 
 
 if __name__ == "__main__":
