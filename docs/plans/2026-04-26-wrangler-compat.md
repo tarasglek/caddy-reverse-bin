@@ -4,7 +4,7 @@
 
 **Goal:** Make reverse-bin compatible with Wrangler registry apps by supporting auth-protected health checks first, then wiring detector-friendly Wrangler launch configuration.
 
-**Architecture:** Start with the blocking runtime capability: a breaking rename from readiness names to health names plus one optional exact health status, so `/v2/` returning `401` can mark auth-protected Wrangler apps healthy. Then update discover-app health config and add Wrangler launch-script detection/config support around `launch.sh`, `launch-w-landrun.sh`, `wrangler.toml`, dynamic `PORT`, and writable Wrangler state.
+**Architecture:** Start with the blocking runtime capability: a breaking rename from readiness names to health names plus one optional exact health status, so `/v2/` returning `401` can mark auth-protected Wrangler apps healthy. Then update discover-app health config and generic TCP env config so app-owned launch scripts can receive dynamic `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT` without any Wrangler-specific detector logic.
 
 **Tech Stack:** Go Caddy module, Caddyfile parser, Python discover-app detector, Go integration tests, Python unittest, Wrangler/Miniflare launch scripts.
 
@@ -19,21 +19,22 @@ Target app shape from `~/Downloads/serverless-registry/`:
 - `wrangler.toml` describes Worker app.
 - `package.json` has local Wrangler dependency.
 - `launch.sh` prepares state dirs and runs `wrangler dev`.
-- `launch-w-landrun.sh` prepares outside sandbox, then runs `launch.sh` under landrun.
-- app listens on `PORT`, not `LISTEN`.
+- app launch script owns Wrangler prep/state behavior.
+- app launch script reads `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
 - registry `/v2/` can return `401` and still be alive.
 
 Desired detector `.env` shape after health support:
 
 ```sh
-REVERSE_BIN_COMMAND=./launch-w-landrun.sh
-LISTEN=
+REVERSE_BIN_COMMAND=./launch.sh
+REVERSE_BIN_HOST=127.0.0.1
+REVERSE_BIN_PORT=
 HEALTH_METHOD=GET
 HEALTH_PATH=/v2/
 HEALTH_STATUS=401
 ```
 
-Detector must inject both `LISTEN=127.0.0.1:<port>` and `PORT=<port>` for TCP apps. Wrangler-specific auto-detection should prefer app-owned launch scripts over duplicating Wrangler command construction.
+Detector must derive `reverse_proxy_to` from `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`. Blank `REVERSE_BIN_PORT` means allocate a free TCP port and inject the resolved value into the child env. Missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`. Do not add Wrangler-specific auto-detection; use explicit `.env` launch-script config.
 
 ### Config contract
 
@@ -249,7 +250,7 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Run: `uv run python utils/discover-app/test_discover_app.py -v`.
 - [ ] Commit: `docs(health): document health check config`
 
-### Task 7: Inject `PORT` for TCP detector apps
+### Task 7: Use `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT` for TCP detector apps
 
 **Files:**
 - Modify: `utils/discover-app/discover-app.py`
@@ -257,33 +258,17 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 
 **Checklist:**
 
-- [ ] Add failing test: blank `LISTEN=` allocates `reverse_proxy_to` and envs include exact `PORT=<allocated-port>`.
-- [ ] Add failing test: fixed `LISTEN=9999` emits `PORT=9999` while preserving `LISTEN=9999` if user set that value.
-- [ ] Add failing test: unix socket app does not get `PORT`.
-- [ ] Implement minimal TCP port injection by deriving port from normalized `reverse_proxy_to`.
-- [ ] Ensure explicit `.env PORT=...` wins only if it matches derived port, or choose error-on-conflict and document in test.
+- [ ] Add failing test: blank `REVERSE_BIN_PORT=` allocates `reverse_proxy_to` and envs include exact `REVERSE_BIN_PORT=<allocated-port>`.
+- [ ] Add failing test: fixed `REVERSE_BIN_PORT=9999` emits `reverse_proxy_to=127.0.0.1:9999` and preserves `REVERSE_BIN_PORT=9999`.
+- [ ] Add failing test: `REVERSE_BIN_HOST=0.0.0.0` with `REVERSE_BIN_PORT=9999` emits `reverse_proxy_to=0.0.0.0:9999` and preserves both envs.
+- [ ] Add failing test: missing `REVERSE_BIN_HOST` defaults to `127.0.0.1` and injects `REVERSE_BIN_HOST=127.0.0.1`.
+- [ ] Add failing test: unix socket app does not get `REVERSE_BIN_HOST` or `REVERSE_BIN_PORT`.
+- [ ] Remove legacy listener env as detector transport config and from child env injection.
+- [ ] Implement TCP config by deriving `reverse_proxy_to` from `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
 - [ ] Run: `uv run python utils/discover-app/test_discover_app.py -v`.
-- [ ] Commit: `feat(discover-app): set port for tcp apps`
+- [ ] Commit: `feat(discover-app): use reverse-bin tcp envs`
 
-### Task 8: Add Wrangler launch-script detector support
-
-**Files:**
-- Modify: `utils/discover-app/discover-app.py`
-- Modify: `utils/discover-app/test_discover_app.py`
-
-**Checklist:**
-
-- [ ] Add failing test: app with `wrangler.toml` and executable `launch-w-landrun.sh` detects command `./launch-w-landrun.sh`.
-- [ ] Add failing test: app with `wrangler.toml` and executable `launch.sh` detects command `./launch.sh` if landrun wrapper script is absent.
-- [ ] Add failing test: Wrangler detection emits TCP `reverse_proxy_to`, `LISTEN`, and `PORT`.
-- [ ] Add failing test: Wrangler detection emits health fields from `.env` when present.
-- [ ] Implement detector kind `wrangler` with `supports_unix_socket=false`.
-- [ ] Prefer `launch-w-landrun.sh` over `launch.sh` because app script owns writable state sandboxing.
-- [ ] Do not duplicate raw `wrangler dev` command in detector.
-- [ ] Run: `uv run python utils/discover-app/test_discover_app.py -v`.
-- [ ] Commit: `feat(discover-app): detect wrangler launch scripts`
-
-### Task 9: Document Wrangler compatibility
+### Task 8: Document explicit launch-script compatibility
 
 **Files:**
 - Modify: `README.md`
@@ -291,12 +276,13 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 
 **Checklist:**
 
-- [ ] Document minimal Wrangler `.env` using `REVERSE_BIN_COMMAND=./launch-w-landrun.sh`, blank `LISTEN`, and `HEALTH_STATUS=401`.
-- [ ] Document auto-detection prerequisites: `wrangler.toml` plus executable `launch-w-landrun.sh` or `launch.sh`.
-- [ ] Document that launch scripts own install/prepare/writable state; detector only launches them.
-- [ ] Document `--no-sandbox` recommendation if app-owned launch script already uses landrun.
-- [ ] Run: `rg -n "wrangler|health_check|HEALTH_STATUS" README.md docs utils`.
-- [ ] Commit: `docs(wrangler): document launch compatibility`
+- [ ] Document generic `.env` launch-script pattern with `REVERSE_BIN_COMMAND`, `REVERSE_BIN_HOST`, `REVERSE_BIN_PORT`, and health fields.
+- [ ] Document that blank `REVERSE_BIN_PORT=` asks detector to allocate a TCP port.
+- [ ] Document that missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`.
+- [ ] Document that app launch scripts should bind to `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
+- [ ] Document Wrangler as an example of explicit launch-script config, not auto-detection.
+- [ ] Run: `rg -n "wrangler|health_check|HEALTH_STATUS|REVERSE_BIN_PORT|REVERSE_BIN_HOST" README.md docs utils`.
+- [ ] Commit: `docs(discover-app): document tcp launch envs`
 
 ---
 
@@ -307,4 +293,4 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Run: `rg -n "readiness_check|readiness_timeout_ms|readiness_method|readiness_path|READINESS_METHOD|READINESS_PATH" --glob '!docs/plans/2026-04-26-wrangler-compat.md'`
 - [ ] Confirm only acceptable historical references remain, or none.
 - [ ] Review diff for naming consistency and no compatibility aliases.
-- [ ] Run detector against copied/sample Wrangler app and confirm JSON includes `./launch-w-landrun.sh`, TCP target, `PORT`, `HEALTH_*`-derived fields, and `health_status=401`.
+- [ ] Run detector against copied/sample Wrangler app with explicit `.env` and confirm JSON includes launch command, TCP target derived from `REVERSE_BIN_HOST`/`REVERSE_BIN_PORT`, health fields, and `health_status=401`.
