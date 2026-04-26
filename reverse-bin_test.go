@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"syscall"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
@@ -43,6 +44,28 @@ func asConfig(c *ReverseBin) reverseBinConfig {
 	}
 }
 
+// TestProcessKillPlanUnix verifies Unix process groups are targeted by negative PID.
+func TestProcessKillPlanUnix(t *testing.T) {
+	plan := processKillPlan("linux", 1234, syscall.SIGTERM)
+	if plan.pid != -1234 {
+		t.Fatalf("unix kill plan must target process group via negative pid: got %d", plan.pid)
+	}
+	if plan.signal != syscall.SIGTERM {
+		t.Fatalf("unix kill plan must preserve requested signal: got %v", plan.signal)
+	}
+}
+
+// TestProcessKillPlanWindows verifies Windows targets only direct process PID.
+func TestProcessKillPlanWindows(t *testing.T) {
+	plan := processKillPlan("windows", 1234, syscall.SIGKILL)
+	if plan.pid != 1234 {
+		t.Fatalf("windows kill plan must target process pid directly: got %d", plan.pid)
+	}
+	if plan.signal != syscall.SIGKILL {
+		t.Fatalf("windows kill plan must preserve requested signal: got %v", plan.signal)
+	}
+}
+
 func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -75,8 +98,8 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   reverse_proxy_to 127.0.0.1:8080
 }`,
 			expected: reverseBinConfig{
-				Executable:       []string{"./main.py"},
-				ReverseProxyTo:   "127.0.0.1:8080",
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: "127.0.0.1:8080",
 			},
 			wantErr: false,
 		},
@@ -87,8 +110,8 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   reverse_proxy_to :8080
 }`,
 			expected: reverseBinConfig{
-				Executable:       []string{"./main.py"},
-				ReverseProxyTo:   ":8080",
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: ":8080",
 			},
 			wantErr: false,
 		},
@@ -99,8 +122,8 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   reverse_proxy_to unix//tmp/app.sock
 }`,
 			expected: reverseBinConfig{
-				Executable:       []string{"./main.py"},
-				ReverseProxyTo:   "unix//tmp/app.sock",
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: "unix//tmp/app.sock",
 			},
 			wantErr: false,
 		},
@@ -112,10 +135,10 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   readiness_check GET /health
 }`,
 			expected: reverseBinConfig{
-				Executable:       []string{"./main.py"},
-				ReverseProxyTo:   "127.0.0.1:8080",
-				ReadinessMethod:  "GET",
-				ReadinessPath:    "/health",
+				Executable:      []string{"./main.py"},
+				ReverseProxyTo:  "127.0.0.1:8080",
+				ReadinessMethod: "GET",
+				ReadinessPath:   "/health",
 			},
 			wantErr: false,
 		},
@@ -127,10 +150,10 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   readiness_check head /ready
 }`,
 			expected: reverseBinConfig{
-				Executable:       []string{"./main.py"},
-				ReverseProxyTo:   "127.0.0.1:8080",
-				ReadinessMethod:  "HEAD",
-				ReadinessPath:    "/ready",
+				Executable:      []string{"./main.py"},
+				ReverseProxyTo:  "127.0.0.1:8080",
+				ReadinessMethod: "HEAD",
+				ReadinessPath:   "/ready",
 			},
 			wantErr: false,
 		},
@@ -279,10 +302,10 @@ func TestResolveDialAddress_UnixSocket(t *testing.T) {
 
 func TestReverseBin_GetProcessKey(t *testing.T) {
 	tests := []struct {
-		name          string
-		detector      []string
-		requestPath   string
-		wantKeyEmpty  bool
+		name         string
+		detector     []string
+		requestPath  string
+		wantKeyEmpty bool
 	}{
 		{
 			name:         "no detector returns empty key",

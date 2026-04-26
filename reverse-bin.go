@@ -42,7 +42,6 @@ import (
 	"go.uber.org/zap"
 )
 
-
 // ServeHTTP implements caddyhttp.MiddlewareHandler; it handles the HTTP request
 // manages idle process killing
 func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
@@ -190,16 +189,30 @@ func isUnixSocketReady(socketPath string) bool {
 	return info.Mode()&os.ModeSocket != 0
 }
 
-func (c *ReverseBin) killProcessGroup(proc *os.Process) {
+type killPlan struct {
+	pid    int
+	signal syscall.Signal
+}
+
+func processKillPlan(goos string, pid int, sig syscall.Signal) killPlan {
+	if goos == "windows" {
+		return killPlan{pid: pid, signal: sig}
+	}
+	return killPlan{pid: -pid, signal: sig}
+}
+
+func signalProcessGroup(proc *os.Process, sig syscall.Signal) error {
 	if proc == nil {
-		return
+		return nil
 	}
-	if runtime.GOOS != "windows" {
-		// Kill the process group
-		_ = syscall.Kill(-proc.Pid, syscall.SIGKILL)
-	} else {
-		_ = proc.Kill()
+	if runtime.GOOS == "windows" {
+		if sig == syscall.SIGKILL {
+			return proc.Kill()
+		}
+		return proc.Signal(sig)
 	}
+	plan := processKillPlan(runtime.GOOS, proc.Pid, sig)
+	return syscall.Kill(plan.pid, plan.signal)
 }
 
 func isProcessAlive(proc *os.Process) bool {
