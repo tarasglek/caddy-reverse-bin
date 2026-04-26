@@ -33,6 +33,10 @@ func TestPackagedCaddyfileUsesDebianPaths(t *testing.T) {
 		"/usr/lib/reverse-bin/discover-app.py",
 		"/var/lib/reverse-bin/apps",
 		"/run/reverse-bin",
+		"idle_timeout_ms {$REVERSE_BIN_IDLE_TIMEOUT_MS:300000}",
+		"readiness_timeout_ms {$REVERSE_BIN_READINESS_TIMEOUT_MS:15000}",
+		"termination_grace_ms {$REVERSE_BIN_TERMINATION_GRACE_MS:5000}",
+		"termination_kill_wait_ms {$REVERSE_BIN_TERMINATION_KILL_WAIT_MS:1000}",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("packaged Caddyfile missing %q", want)
@@ -53,10 +57,30 @@ func TestPackagedServiceUsesDebianPaths(t *testing.T) {
 		"RuntimeDirectory=reverse-bin",
 		"Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin",
 		"EnvironmentFile=-/etc/default/reverse-bin",
+		"TimeoutStopSec=45s",
 		"User=reverse-bin",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("service file missing %q", want)
+		}
+	}
+}
+
+// TestPackagedDefaultFileDefinesLifecycleDefaults verifies shared lifecycle defaults are configurable in one place.
+func TestPackagedDefaultFileDefinesLifecycleDefaults(t *testing.T) {
+	content, err := os.ReadFile("../../packaging/debian/reverse-bin")
+	if err != nil {
+		t.Fatalf("read defaults file: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"REVERSE_BIN_IDLE_TIMEOUT_MS=300000",
+		"REVERSE_BIN_READINESS_TIMEOUT_MS=15000",
+		"REVERSE_BIN_TERMINATION_GRACE_MS=5000",
+		"REVERSE_BIN_TERMINATION_KILL_WAIT_MS=1000",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("defaults file missing %q", want)
 		}
 	}
 }

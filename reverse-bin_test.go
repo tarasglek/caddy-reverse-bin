@@ -19,30 +19,36 @@ import (
 )
 
 type reverseBinConfig struct {
-	Executable           []string
-	WorkingDirectory     string
-	Envs                 []string
-	PassEnvs             []string
-	PassAll              bool
-	ReverseProxyTo       string
-	ReadinessMethod      string
-	ReadinessPath        string
-	DynamicProxyDetector []string
-	IdleTimeoutMS        int
+	Executable            []string
+	WorkingDirectory      string
+	Envs                  []string
+	PassEnvs              []string
+	PassAll               bool
+	ReverseProxyTo        string
+	ReadinessMethod       string
+	ReadinessPath         string
+	DynamicProxyDetector  []string
+	IdleTimeoutMS         int
+	ReadinessTimeoutMS    int
+	TerminationGraceMS    int
+	TerminationKillWaitMS int
 }
 
 func asConfig(c *ReverseBin) reverseBinConfig {
 	return reverseBinConfig{
-		Executable:           c.Executable,
-		WorkingDirectory:     c.WorkingDirectory,
-		Envs:                 c.Envs,
-		PassEnvs:             c.PassEnvs,
-		PassAll:              c.PassAll,
-		ReverseProxyTo:       c.ReverseProxyTo,
-		ReadinessMethod:      c.ReadinessMethod,
-		ReadinessPath:        c.ReadinessPath,
-		DynamicProxyDetector: c.DynamicProxyDetector,
-		IdleTimeoutMS:        c.IdleTimeoutMS,
+		Executable:            c.Executable,
+		WorkingDirectory:      c.WorkingDirectory,
+		Envs:                  c.Envs,
+		PassEnvs:              c.PassEnvs,
+		PassAll:               c.PassAll,
+		ReverseProxyTo:        c.ReverseProxyTo,
+		ReadinessMethod:       c.ReadinessMethod,
+		ReadinessPath:         c.ReadinessPath,
+		DynamicProxyDetector:  c.DynamicProxyDetector,
+		IdleTimeoutMS:         c.IdleTimeoutMS,
+		ReadinessTimeoutMS:    c.ReadinessTimeoutMS,
+		TerminationGraceMS:    c.TerminationGraceMS,
+		TerminationKillWaitMS: c.TerminationKillWaitMS,
 	}
 }
 
@@ -267,18 +273,24 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   readiness_check GET /healthz
   dynamic_proxy_detector /bin/detect {host} {path}
   idle_timeout_ms 100
+  readiness_timeout_ms 15000
+  termination_grace_ms 5000
+  termination_kill_wait_ms 1000
 }`,
 			expected: reverseBinConfig{
-				Executable:           []string{"./main.py", "arg1", "arg2"},
-				WorkingDirectory:     "/app",
-				Envs:                 []string{"FOO=bar", "BAZ=qux"},
-				PassEnvs:             []string{"HOME", "PATH"},
-				PassAll:              true,
-				ReverseProxyTo:       "127.0.0.1:3000",
-				ReadinessMethod:      "GET",
-				ReadinessPath:        "/healthz",
-				DynamicProxyDetector: []string{"/bin/detect", "{host}", "{path}"},
-				IdleTimeoutMS:        100,
+				Executable:            []string{"./main.py", "arg1", "arg2"},
+				WorkingDirectory:      "/app",
+				Envs:                  []string{"FOO=bar", "BAZ=qux"},
+				PassEnvs:              []string{"HOME", "PATH"},
+				PassAll:               true,
+				ReverseProxyTo:        "127.0.0.1:3000",
+				ReadinessMethod:       "GET",
+				ReadinessPath:         "/healthz",
+				DynamicProxyDetector:  []string{"/bin/detect", "{host}", "{path}"},
+				IdleTimeoutMS:         100,
+				ReadinessTimeoutMS:    15000,
+				TerminationGraceMS:    5000,
+				TerminationKillWaitMS: 1000,
 			},
 			wantErr: false,
 		},
