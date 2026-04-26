@@ -53,3 +53,57 @@ Set these values in `/etc/default/reverse-bin` before restarting:
 OPS_EMAIL=admin@overthinker.dev
 DOMAIN_SUFFIX=overthinker.dev
 ```
+
+## Health checks
+
+Use health names in Caddyfiles:
+
+```caddyfile
+health_check GET /health
+health_timeout_ms 15000
+```
+
+A plain `health_check METHOD PATH` accepts any `2xx` or `3xx` response. For auth-protected endpoints, add one exact expected status:
+
+```caddyfile
+health_check GET /v2/ 401
+```
+
+## Explicit launch-script apps
+
+Apps can opt into a generic launch-script contract through `.env` in the app directory:
+
+```sh
+REVERSE_BIN_COMMAND=./launch.sh
+REVERSE_BIN_HOST=127.0.0.1
+REVERSE_BIN_PORT=
+REVERSE_BIN_HEALTH_METHOD=GET
+REVERSE_BIN_HEALTH_PATH=/v2/
+REVERSE_BIN_HEALTH_STATUS=401
+```
+
+- `REVERSE_BIN_COMMAND` is the command `discover-app.py` runs.
+- Blank `REVERSE_BIN_PORT=` asks the detector to allocate a free TCP port and inject the resolved value into the child environment.
+- Missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`.
+- App launch scripts should bind to `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
+- `REVERSE_BIN_HEALTH_STATUS` is optional and enables exact-status health checks like registry `/v2/` returning `401`.
+
+Wrangler apps use this same explicit launch-script pattern; there is no Wrangler-specific detector or separate sandbox wrapper in the compatibility path.
+
+## Manual app smoke runner
+
+Run any app directory through local reverse-bin/Caddy without Debian packaging:
+
+```bash
+utils/run-reverse-bin-app.sh /path/to/app 9080
+curl -i http://127.0.0.1:9080/
+```
+
+Wrangler registry smoke example:
+
+```bash
+utils/run-reverse-bin-app.sh ~/Downloads/serverless-registry 9080
+curl -i http://127.0.0.1:9080/v2/
+```
+
+Expected registry smoke result: HTTP `401` from the app, proving reverse-bin launched and proxied it.

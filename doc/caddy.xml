@@ -10,9 +10,10 @@
       <item>pass_env</item>
       <item>pass_all_env</item>
       <item>reverse_proxy_to</item>
-      <item>readiness_check</item>
+      <item>health_check</item>
       <item>dynamic_proxy_detector</item>
       <item>idle_timeout_ms</item>
+      <item>health_timeout_ms</item>
     </list>
     <contexts>
       <context name="Normal" attribute="Normal Text" lineEndContext="#stay">
