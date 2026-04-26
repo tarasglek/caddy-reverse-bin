@@ -29,9 +29,9 @@ Desired detector `.env` shape after health support:
 REVERSE_BIN_COMMAND=./launch.sh
 REVERSE_BIN_HOST=127.0.0.1
 REVERSE_BIN_PORT=
-HEALTH_METHOD=GET
-HEALTH_PATH=/v2/
-HEALTH_STATUS=401
+REVERSE_BIN_HEALTH_METHOD=GET
+REVERSE_BIN_HEALTH_PATH=/v2/
+REVERSE_BIN_HEALTH_STATUS=401
 ```
 
 Detector must derive `reverse_proxy_to` from `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`. Blank `REVERSE_BIN_PORT` means allocate a free TCP port and inject the resolved value into the child env. Missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`. Do not add Wrangler-specific auto-detection; use explicit `.env` launch-script config.
@@ -84,21 +84,21 @@ readiness_path
 
 ### discover-app `.env` contract
 
-Use health variables only:
+Use `REVERSE_BIN_`-prefixed health variables only:
 
 ```sh
-HEALTH_METHOD=GET
-HEALTH_PATH=/v2/
-HEALTH_STATUS=401
+REVERSE_BIN_HEALTH_METHOD=GET
+REVERSE_BIN_HEALTH_PATH=/v2/
+REVERSE_BIN_HEALTH_STATUS=401
 ```
 
 Rules:
 
-- `HEALTH_METHOD` and `HEALTH_PATH` must appear together.
-- `HEALTH_STATUS` requires `HEALTH_METHOD` and `HEALTH_PATH`.
-- `HEALTH_METHOD` is uppercased after trimming.
-- `HEALTH_PATH` must be non-empty after trimming.
-- `HEALTH_STATUS` must parse as integer `100..599`.
+- `REVERSE_BIN_HEALTH_METHOD` and `REVERSE_BIN_HEALTH_PATH` must appear together.
+- `REVERSE_BIN_HEALTH_STATUS` requires `REVERSE_BIN_HEALTH_METHOD` and `REVERSE_BIN_HEALTH_PATH`.
+- `REVERSE_BIN_HEALTH_METHOD` is uppercased after trimming.
+- `REVERSE_BIN_HEALTH_PATH` must be non-empty after trimming.
+- `REVERSE_BIN_HEALTH_STATUS` must parse as integer `100..599`.
 
 Remove old `.env` variables from code and tests:
 
@@ -200,7 +200,7 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 
 - [ ] Rename `readiness_method`/`readiness_path` typed fields to `health_method`/`health_path`.
 - [ ] Add `health_status: int | None` typed field.
-- [ ] Read `.env` keys `HEALTH_METHOD`, `HEALTH_PATH`, `HEALTH_STATUS`.
+- [ ] Read `.env` keys `REVERSE_BIN_HEALTH_METHOD`, `REVERSE_BIN_HEALTH_PATH`, `REVERSE_BIN_HEALTH_STATUS`.
 - [ ] Remove handling for `READINESS_METHOD`, `READINESS_PATH`.
 - [ ] Validate method/path pair.
 - [ ] Validate status requires method/path.
@@ -276,12 +276,12 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 
 **Checklist:**
 
-- [ ] Document generic `.env` launch-script pattern with `REVERSE_BIN_COMMAND`, `REVERSE_BIN_HOST`, `REVERSE_BIN_PORT`, and health fields.
+- [ ] Document generic `.env` launch-script pattern with `REVERSE_BIN_COMMAND`, `REVERSE_BIN_HOST`, `REVERSE_BIN_PORT`, and `REVERSE_BIN_HEALTH_*` fields.
 - [ ] Document that blank `REVERSE_BIN_PORT=` asks detector to allocate a TCP port.
 - [ ] Document that missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`.
 - [ ] Document that app launch scripts should bind to `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
 - [ ] Document Wrangler as an example of explicit launch-script config, not auto-detection.
-- [ ] Run: `rg -n "wrangler|health_check|HEALTH_STATUS|REVERSE_BIN_PORT|REVERSE_BIN_HOST" README.md docs utils`.
+- [ ] Run: `rg -n "wrangler|health_check|REVERSE_BIN_HEALTH|REVERSE_BIN_PORT|REVERSE_BIN_HOST" README.md docs utils`.
 - [ ] Commit: `docs(discover-app): document tcp launch envs`
 
 ---
@@ -293,4 +293,4 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Run: `rg -n "readiness_check|readiness_timeout_ms|readiness_method|readiness_path|READINESS_METHOD|READINESS_PATH" --glob '!docs/plans/2026-04-26-wrangler-compat.md'`
 - [ ] Confirm only acceptable historical references remain, or none.
 - [ ] Review diff for naming consistency and no compatibility aliases.
-- [ ] Run detector against copied/sample Wrangler app with explicit `.env` and confirm JSON includes launch command, TCP target derived from `REVERSE_BIN_HOST`/`REVERSE_BIN_PORT`, health fields, and `health_status=401`.
+- [ ] Run detector against copied/sample Wrangler app with explicit `.env` and confirm JSON includes launch command, TCP target derived from `REVERSE_BIN_HOST`/`REVERSE_BIN_PORT`, health fields derived from `REVERSE_BIN_HEALTH_*`, and `health_status=401`.
