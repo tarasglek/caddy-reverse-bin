@@ -78,8 +78,8 @@
   - `payload["reverse_proxy_to"]` matches `^127\.0\.0\.1:\d+$`
   - `payload["envs"]` contains `LISTEN=<same reverse_proxy_to>`
 - [ ] Step 3: Add second test proving readiness overrides still emit for same opaque explicit-command shape.
-  - `.env` includes `READINESS_METHOD=GET`
-  - `.env` includes `READINESS_PATH=/.well-known/openid-configuration`
+  - `.env` includes `REVERSE_BIN_HEALTH_METHOD=GET`
+  - `.env` includes `REVERSE_BIN_HEALTH_PATH=/.well-known/openid-configuration`
   - Assert both JSON fields present and exact
 - [ ] Step 4: Run targeted tests and confirm new test fails before code change.
   - Run: `python3 -m unittest utils.discover-app.test_discover_app -v`
