@@ -1,3 +1,11 @@
+reverse-bin (0.0.0-6) unstable; urgency=medium
+
+  * feat(health): support explicit health probe status codes.
+  * feat(discover-app): add REVERSE_BIN_HOST/PORT launch config.
+  * fix(discover-app): use landrun by default while keeping sandbox policy narrow.
+
+ -- Taras Glek <taras@example.com>  Sun, 26 Apr 2026 13:30:34 +0300
+
 reverse-bin (0.0.0-5) unstable; urgency=medium
 
   * fix(discover-app): allow TCP fallback for opaque explicit commands.
