@@ -43,9 +43,23 @@ import (
 )
 
 const (
-	defaultTerminationGrace = 2 * time.Second
-	defaultReadinessTimeout = 10 * time.Second
+	defaultIdleTimeoutMS         = 300000
+	defaultReadinessTimeoutMS    = 15000
+	defaultTerminationGraceMS    = 5000
+	defaultTerminationKillWaitMS = 1000
 )
+
+func (c *ReverseBin) readinessTimeout() time.Duration {
+	return time.Duration(c.ReadinessTimeoutMS) * time.Millisecond
+}
+
+func (c *ReverseBin) terminationGrace() time.Duration {
+	return time.Duration(c.TerminationGraceMS) * time.Millisecond
+}
+
+func (c *ReverseBin) terminationKillWait() time.Duration {
+	return time.Duration(c.TerminationKillWaitMS) * time.Millisecond
+}
 
 // ServeHTTP implements caddyhttp.MiddlewareHandler; it handles the HTTP request
 // manages idle process killing
@@ -293,7 +307,7 @@ func (c *ReverseBin) launchBackend(ctx context.Context, cfg resolvedConfig, reas
 	cmd.Cancel = func() error {
 		return signalProcessGroup(cmd.Process, syscall.SIGTERM)
 	}
-	cmd.WaitDelay = defaultTerminationGrace
+	cmd.WaitDelay = c.terminationGrace()
 	configureBackendProcAttrs(cmd)
 	cmd.Dir = cfg.WorkingDirectory
 	if cmd.Dir == "" {
@@ -387,7 +401,7 @@ func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolved
 			zap.String("command", args[0]),
 			zap.Strings("args", args[1:]))
 
-		detCtx, detCancel := context.WithTimeout(r.Context(), defaultReadinessTimeout)
+		detCtx, detCancel := context.WithTimeout(r.Context(), c.readinessTimeout())
 		defer detCancel()
 
 		detectorCmd := exec.CommandContext(detCtx, args[0], args[1:]...)
@@ -540,7 +554,7 @@ func (c *ReverseBin) stopBackend(rb *runningBackend, reason string, grace time.D
 		select {
 		case err := <-rb.done:
 			return err
-		case <-time.After(1 * time.Second):
+		case <-time.After(c.terminationKillWait()):
 			return fmt.Errorf("timeout waiting for process %d after SIGKILL", rb.process.Pid)
 		}
 	}
@@ -652,7 +666,7 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 
 	shutdown := func(reason string) error {
 		stopTimer(&idleTimer, &idleC)
-		err := c.stopBackend(backend, reason, defaultTerminationGrace)
+		err := c.stopBackend(backend, reason, c.terminationGrace())
 		backend = nil
 		return err
 	}
@@ -672,7 +686,7 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 						zap.String("key", ps.key),
 						zap.Int("pid", backend.process.Pid),
 						zap.String("socket", socketPath))
-					_ = c.stopBackend(backend, "unix socket unavailable", defaultTerminationGrace)
+					_ = c.stopBackend(backend, "unix socket unavailable", c.terminationGrace())
 					backend = nil
 					_ = os.Remove(socketPath)
 				}
@@ -684,14 +698,14 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 					req.reply <- supervisorResult{err: err}
 					continue
 				}
-				startCtx, cancel := context.WithTimeout(req.request.Context(), defaultReadinessTimeout)
+				startCtx, cancel := context.WithTimeout(req.request.Context(), c.readinessTimeout())
 				rb, err := c.launchBackend(c.moduleContext(), cfg, "request")
 				if err == nil {
 					err = c.waitReady(startCtx, rb, cfg)
 				}
 				cancel()
 				if err != nil {
-					_ = c.stopBackend(rb, "readiness failed", defaultTerminationGrace)
+					_ = c.stopBackend(rb, "readiness failed", c.terminationGrace())
 					req.reply <- supervisorResult{err: err}
 					continue
 				}
@@ -727,7 +741,7 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 
 		case <-idleC:
 			c.logger.Info("idle timer fired, terminating process", zap.String("key", ps.key))
-			_ = c.stopBackend(backend, "idle timeout", defaultTerminationGrace)
+			_ = c.stopBackend(backend, "idle timeout", c.terminationGrace())
 			backend = nil
 			idleTimer = nil
 			idleC = nil

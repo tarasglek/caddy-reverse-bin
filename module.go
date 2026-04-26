@@ -64,6 +64,12 @@ type ReverseBin struct {
 	DynamicProxyDetector []string `json:"dynamic_proxy_detector,omitempty"`
 	// Idle timeout in milliseconds before stopping backend process after last request
 	IdleTimeoutMS int `json:"idleTimeoutMs,omitempty"`
+	// Readiness timeout in milliseconds before startup fails
+	ReadinessTimeoutMS int `json:"readinessTimeoutMs,omitempty"`
+	// Termination grace in milliseconds before SIGKILL
+	TerminationGraceMS int `json:"terminationGraceMs,omitempty"`
+	// Kill wait in milliseconds after SIGKILL before reporting failure
+	TerminationKillWaitMS int `json:"terminationKillWaitMs,omitempty"`
 
 	// Internal state for proxy mode
 	processes map[string]*processState
@@ -87,6 +93,17 @@ func isUnixUpstream(addr string) bool {
 
 func readinessConfigured(method, path string) bool {
 	return strings.TrimSpace(method) != "" && strings.TrimSpace(path) != ""
+}
+
+func parsePositiveMilliseconds(d *caddyfile.Dispenser, name string) (int, error) {
+	if !d.NextArg() {
+		return 0, d.ArgErr()
+	}
+	v, err := strconv.Atoi(d.Val())
+	if err != nil || v <= 0 {
+		return 0, d.Errf("%s must be a positive integer", name)
+	}
+	return v, nil
 }
 
 // Interface guards
@@ -156,14 +173,29 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return d.ArgErr()
 				}
 			case "idle_timeout_ms":
-				if !d.NextArg() {
-					return d.ArgErr()
-				}
-				v, err := strconv.Atoi(d.Val())
-				if err != nil || v <= 0 {
-					return d.Err("idle_timeout_ms must be a positive integer")
+				v, err := parsePositiveMilliseconds(d, "idle_timeout_ms")
+				if err != nil {
+					return err
 				}
 				c.IdleTimeoutMS = v
+			case "readiness_timeout_ms":
+				v, err := parsePositiveMilliseconds(d, "readiness_timeout_ms")
+				if err != nil {
+					return err
+				}
+				c.ReadinessTimeoutMS = v
+			case "termination_grace_ms":
+				v, err := parsePositiveMilliseconds(d, "termination_grace_ms")
+				if err != nil {
+					return err
+				}
+				c.TerminationGraceMS = v
+			case "termination_kill_wait_ms":
+				v, err := parsePositiveMilliseconds(d, "termination_kill_wait_ms")
+				if err != nil {
+					return err
+				}
+				c.TerminationKillWaitMS = v
 			default:
 				return d.Errf("unknown subdirective: %q", d.Val())
 			}
@@ -198,7 +230,16 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 		c.ReadinessMethod = strings.ToUpper(c.ReadinessMethod)
 	}
 	if c.IdleTimeoutMS <= 0 {
-		c.IdleTimeoutMS = 5000
+		c.IdleTimeoutMS = defaultIdleTimeoutMS
+	}
+	if c.ReadinessTimeoutMS <= 0 {
+		c.ReadinessTimeoutMS = defaultReadinessTimeoutMS
+	}
+	if c.TerminationGraceMS <= 0 {
+		c.TerminationGraceMS = defaultTerminationGraceMS
+	}
+	if c.TerminationKillWaitMS <= 0 {
+		c.TerminationKillWaitMS = defaultTerminationKillWaitMS
 	}
 
 	if !isUnixUpstream(c.ReverseProxyTo) && c.ReverseProxyTo != "" && !readinessConfigured(c.ReadinessMethod, c.ReadinessPath) {
