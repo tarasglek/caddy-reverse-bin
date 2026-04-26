@@ -17,14 +17,10 @@
 package reversebin
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
-	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -80,13 +76,9 @@ type ReverseBin struct {
 }
 
 type processState struct {
-	process        *os.Process
-	cancel         context.CancelFunc
-	activeRequests int64
-	idleTimer      *time.Timer
-	terminationMsg string
-	overrides      *proxyOverrides
-	mu             sync.Mutex
+	key      string
+	requests chan supervisorRequest
+	commands chan supervisorCommand
 }
 
 func isUnixUpstream(addr string) bool {
@@ -232,73 +224,32 @@ func (c *ReverseBin) getOrCreateProcessState(key string) *processState {
 	ps, ok := c.processes[key]
 	if !ok {
 		c.logger.Debug("creating new process state", zap.String("key", key))
-		ps = &processState{}
+		ps = &processState{
+			key:      key,
+			requests: make(chan supervisorRequest),
+			commands: make(chan supervisorCommand),
+		}
 		c.processes[key] = ps
+		go c.runSupervisor(ps)
 	}
 	return ps
 }
 
-func (ps *processState) incrementRequests(logger *zap.Logger, key string) {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
-	ps.activeRequests++
-	logger.Debug("incremented active requests",
-		zap.String("key", key),
-		zap.Int64("count", ps.activeRequests),
-		zap.Bool("timer_stopped", ps.idleTimer != nil))
-	if ps.idleTimer != nil {
-		ps.idleTimer.Stop()
-		ps.idleTimer = nil
-	}
-}
-
-func (ps *processState) decrementRequests(logger *zap.Logger, key string, idleTimeout time.Duration) {
-	ps.mu.Lock()
-	defer ps.mu.Unlock()
-	ps.activeRequests--
-	logger.Debug("decremented active requests", zap.String("key", key), zap.Int64("count", ps.activeRequests))
-
-	if ps.activeRequests == 0 {
-		logger.Debug("starting idle timer", zap.String("key", key), zap.Duration("duration", idleTimeout))
-		ps.idleTimer = time.AfterFunc(idleTimeout, func() {
-			ps.mu.Lock()
-			defer ps.mu.Unlock()
-			if ps.activeRequests == 0 && ps.process != nil {
-				logger.Info("idle timer fired, terminating process", zap.String("key", key), zap.Int("pid", ps.process.Pid))
-				ps.terminationMsg = "idle timeout"
-				if ps.cancel != nil {
-					ps.cancel()
-				}
-				ps.process = nil
-			} else {
-				logger.Debug("idle timer fired but process active or already gone",
-					zap.String("key", key),
-					zap.Int64("active_requests", ps.activeRequests),
-					zap.Bool("process_nil", ps.process == nil))
-			}
-		})
-	}
-}
-
 func (c *ReverseBin) Cleanup() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
+	states := make([]*processState, 0, len(c.processes))
 	for _, ps := range c.processes {
-		ps.mu.Lock()
-		if ps.idleTimer != nil {
-			ps.idleTimer.Stop()
-			ps.idleTimer = nil
-		}
-		if ps.process != nil {
-			c.logger.Info("cleaning up proxy subprocess", zap.Int("pid", ps.process.Pid))
-			_ = signalProcessGroup(ps.process, syscall.SIGKILL)
-			ps.process = nil
-		}
-		ps.mu.Unlock()
+		states = append(states, ps)
 	}
+	c.mu.Unlock()
 
-	return nil
+	var firstErr error
+	for _, ps := range states {
+		if err := c.sendSupervisorCommand(ps, supervisorShutdown, "cleanup"); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // parseCaddyfile unmarshals tokens from h into a new Middleware.

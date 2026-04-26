@@ -2,6 +2,7 @@ package reversebin
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -106,6 +107,37 @@ func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
 	}
 	if cfg.ReadinessMethod != "HEAD" || cfg.ReadinessPath != "/dynamic-ready" {
 		t.Fatalf("expected readiness override HEAD /dynamic-ready, got %s %s", cfg.ReadinessMethod, cfg.ReadinessPath)
+	}
+}
+
+// TestWaitReadyStopsOnContextCancel verifies readiness polling exits when start context ends.
+func TestWaitReadyStopsOnContextCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	rb := &ReverseBin{logger: zaptest.NewLogger(t)}
+	err := rb.waitReady(ctx, nil, resolvedConfig{
+		ReverseProxyTo:  "unix//tmp/never-ready.sock",
+		ReadinessMethod: "",
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled from waitReady, got %v", err)
+	}
+}
+
+// TestGetOrCreateProcessStateReusesSupervisor verifies one lifecycle owner per process key.
+func TestGetOrCreateProcessStateReusesSupervisor(t *testing.T) {
+	rb := &ReverseBin{processes: map[string]*processState{}, logger: zaptest.NewLogger(t), ctx: caddy.Context{Context: context.Background()}}
+
+	first := rb.getOrCreateProcessState("app")
+	second := rb.getOrCreateProcessState("app")
+
+	if first != second {
+		t.Fatalf("expected same processState for same key")
+	}
+	if first.requests == nil || first.commands == nil {
+		t.Fatalf("expected supervisor channels to be initialized")
 	}
 }
 
