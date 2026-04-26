@@ -201,6 +201,16 @@ func ptr(s string) *string {
 	return &s
 }
 
+func processExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return syscall.Kill(pid, 0) == nil
+}
+
 type reverseProxySetup struct {
 	Port int
 }
@@ -655,6 +665,262 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 
 // TestMultipleApps verifies two independent reverse-bin handlers can run side-by-side
 // with separate Unix sockets and processes.
+// TestReadinessImmediateExitFailsFast verifies startup failure is reported from process exit instead of readiness timeout.
+func TestReadinessImmediateExitFailsFast(t *testing.T) {
+	requireIntegration(t)
+
+	exiter := createExecutableScript(t, t.TempDir(), "exit-42.sh", `#!/usr/bin/env sh
+exit 42
+`)
+	socketPath := createSocketPath(t)
+	setup, dispose := createReverseProxySetup(t, `handle /failfast/* {
+		reverse-bin {
+			exec {{EXITER}}
+			reverse_proxy_to unix/{{APP_SOCKET}}
+		}
+	}`, map[string]string{
+		"EXITER":     exiter,
+		"APP_SOCKET": socketPath,
+	})
+	defer dispose()
+
+	client := newTestHTTPClient()
+	started := time.Now()
+	// HTTP request exercises startup path where backend exits before readiness can pass.
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/failfast/test", setup.Port), 503, "", "immediate backend exit must return 503")
+	elapsed := time.Since(started)
+	if elapsed >= 2*time.Second {
+		t.Fatalf("expected immediate backend exit to fail fast under 2s, took %s", elapsed)
+	}
+}
+
+// TestLifecycleIdleTimeoutKillsChildProcessGroup verifies idle cleanup terminates child processes.
+func TestLifecycleIdleTimeoutKillsChildProcessGroup(t *testing.T) {
+	requireIntegration(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups differ on Windows")
+	}
+
+	socketPath := createSocketPath(t)
+	backend := createExecutableScript(t, t.TempDir(), "parent-child.py", `#!/usr/bin/env python3
+import http.server, json, os, signal, socket, subprocess, sys
+
+socket_path = os.environ["SOCKET_PATH"]
+if os.path.exists(socket_path):
+    os.remove(socket_path)
+child = subprocess.Popen(["sleep", "30"])
+
+class UnixHTTPServer(http.server.HTTPServer):
+    address_family = socket.AF_UNIX
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def address_string(self):
+        return "unix"
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"parent": os.getpid(), "child": child.pid}).encode())
+
+server = UnixHTTPServer(socket_path, Handler)
+def stop(signum, frame):
+    server.server_close()
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+server.serve_forever()
+`)
+	setup, dispose := createReverseProxySetup(t, `handle /child/* {
+		reverse-bin {
+			exec {{BACKEND}}
+			reverse_proxy_to unix/{{APP_SOCKET}}
+			env SOCKET_PATH={{APP_SOCKET}}
+			idle_timeout_ms 100
+		}
+	}`, map[string]string{
+		"BACKEND":    backend,
+		"APP_SOCKET": socketPath,
+	})
+	defer dispose()
+
+	// HTTP request exercises backend startup and returns parent/child PIDs for idle cleanup assertion.
+	_, body := assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/child/pids", setup.Port), 200, "child", "child cleanup request must return spawned child pid")
+	var payload struct {
+		Parent int `json:"parent"`
+		Child  int `json:"child"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("expected JSON parent/child pid payload, got %q: %v", body, err)
+	}
+	if payload.Parent <= 0 || payload.Child <= 0 || payload.Parent == payload.Child {
+		t.Fatalf("expected distinct positive parent/child pids, got parent=%d child=%d", payload.Parent, payload.Child)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+	if processExists(payload.Child) {
+		t.Fatalf("expected child pid %d to be gone after idle timeout process-group stop", payload.Child)
+	}
+}
+
+// TestCleanupStopsBackendProcessGroup verifies module cleanup terminates running backend descendants.
+func TestCleanupStopsBackendProcessGroup(t *testing.T) {
+	requireIntegration(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups differ on Windows")
+	}
+
+	socketPath := createSocketPath(t)
+	backend := createExecutableScript(t, t.TempDir(), "cleanup-parent-child.py", `#!/usr/bin/env python3
+import http.server, json, os, signal, socket, subprocess, sys
+
+socket_path = os.environ["SOCKET_PATH"]
+if os.path.exists(socket_path):
+    os.remove(socket_path)
+child = subprocess.Popen(["sleep", "30"])
+
+class UnixHTTPServer(http.server.HTTPServer):
+    address_family = socket.AF_UNIX
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def address_string(self):
+        return "unix"
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"parent": os.getpid(), "child": child.pid}).encode())
+
+server = UnixHTTPServer(socket_path, Handler)
+def stop(signum, frame):
+    server.server_close()
+    sys.exit(0)
+signal.signal(signal.SIGTERM, stop)
+server.serve_forever()
+`)
+	setup, dispose := createReverseProxySetup(t, `handle /cleanup/* {
+		reverse-bin {
+			exec {{BACKEND}}
+			reverse_proxy_to unix/{{APP_SOCKET}}
+			env SOCKET_PATH={{APP_SOCKET}}
+		}
+	}`, map[string]string{
+		"BACKEND":    backend,
+		"APP_SOCKET": socketPath,
+	})
+
+	// HTTP request exercises backend startup and returns child PID for cleanup assertion.
+	_, body := assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/cleanup/pids", setup.Port), 200, "child", "cleanup request must return spawned child pid")
+	var payload struct {
+		Child int `json:"child"`
+	}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		t.Fatalf("expected JSON child pid payload, got %q: %v", body, err)
+	}
+	if payload.Child <= 0 {
+		t.Fatalf("expected positive child pid, got %d", payload.Child)
+	}
+
+	dispose()
+	time.Sleep(500 * time.Millisecond)
+	if processExists(payload.Child) {
+		t.Fatalf("expected child pid %d to be gone after cleanup process-group stop", payload.Child)
+	}
+}
+
+// TestUnixSocketMissingRestartsWithoutLeakingOldProcess verifies unhealthy alive backend is stopped before replacement.
+func TestUnixSocketMissingRestartsWithoutLeakingOldProcess(t *testing.T) {
+	requireIntegration(t)
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not supported on Windows")
+	}
+
+	socketPath := createSocketPath(t)
+	backend := createExecutableScript(t, t.TempDir(), "removable-socket.py", `#!/usr/bin/env python3
+import http.server, json, os, socket
+
+socket_path = os.environ["SOCKET_PATH"]
+if os.path.exists(socket_path):
+    os.remove(socket_path)
+
+class UnixHTTPServer(http.server.HTTPServer):
+    address_family = socket.AF_UNIX
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def address_string(self):
+        return "unix"
+    def _send(self, payload):
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode())
+    def do_GET(self):
+        if self.path == "/remove-socket-and-stay-alive":
+            if os.path.exists(socket_path):
+                os.remove(socket_path)
+            self._send({"removed": True, "pid": os.getpid()})
+            return
+        self._send({"pid": os.getpid()})
+
+server = UnixHTTPServer(socket_path, Handler)
+server.serve_forever()
+`)
+	setup, dispose := createReverseProxySetup(t, `handle /missing-socket/* {
+		reverse-bin {
+			exec {{BACKEND}}
+			reverse_proxy_to unix/{{APP_SOCKET}}
+			env SOCKET_PATH={{APP_SOCKET}}
+		}
+	}`, map[string]string{
+		"BACKEND":    backend,
+		"APP_SOCKET": socketPath,
+	})
+	defer dispose()
+
+	parsePID := func(t *testing.T, body string) int {
+		t.Helper()
+		var payload struct {
+			PID int `json:"pid"`
+		}
+		if err := json.Unmarshal([]byte(body), &payload); err != nil {
+			t.Fatalf("expected JSON pid payload, got %q: %v", body, err)
+		}
+		if payload.PID <= 0 {
+			t.Fatalf("expected positive pid in payload, got %q", body)
+		}
+		return payload.PID
+	}
+
+	client := newTestHTTPClient()
+	// HTTP request exercises initial backend startup and returns original PID.
+	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/missing-socket/first", setup.Port), 200, "pid", "initial missing-socket request must return backend pid")
+	pid1 := parsePID(t, body1)
+
+	directTransport := &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", socketPath)
+		},
+	}
+	directClient := &http.Client{Transport: directTransport, Timeout: 5 * time.Second}
+	// Direct Unix-socket request simulates backend losing its listening socket while process remains alive.
+	resp, err := directClient.Get("http://unix/remove-socket-and-stay-alive")
+	if err != nil {
+		t.Fatalf("expected direct unix request to remove socket, got error: %v", err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	// HTTP request exercises supervisor restart after detecting missing Unix socket.
+	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/missing-socket/second", setup.Port), 200, "pid", "missing-socket request must restart backend")
+	pid2 := parsePID(t, body2)
+	if pid1 == pid2 {
+		t.Fatalf("expected restarted backend pid to differ after missing socket, got same pid=%d", pid1)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if processExists(pid1) {
+		t.Fatalf("expected old backend pid %d to be gone after missing socket restart", pid1)
+	}
+}
+
 func TestMultipleApps(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
