@@ -46,7 +46,7 @@ cat > "$TEMP_CADDYFILE" <<EOF
 
 http://127.0.0.1:$HTTP_PORT {
 	reverse-bin {
-		dynamic_proxy_detector $REPO_ROOT/utils/discover-app/discover-app.py --no-sandbox $APP_DIR
+		dynamic_proxy_detector $REPO_ROOT/utils/discover-app/discover-app.py $APP_DIR
 		health_check HEAD /
 		idle_timeout_ms 300000
 		health_timeout_ms 15000

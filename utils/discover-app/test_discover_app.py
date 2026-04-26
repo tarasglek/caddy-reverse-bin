@@ -382,6 +382,13 @@ class DiscoverAppResultTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             discover_app.detect_entrypoint(self.app_dir, "127.0.0.1:8080")
 
+    def test_wrap_landrun_includes_default_read_only_root(self) -> None:
+        # Intent: verify landrun permits read-only filesystem metadata for runtimes like workerd without app-controlled path grants.
+        command = discover_app.wrap_landrun(["./launch.sh"], include_path=False)
+
+        self.assertIn("/,/etc", command)
+        self.assertNotIn("--unrestricted-filesystem", command)
+
     def test_main_emits_explicit_listen_config_without_sandbox(self) -> None:
         # Intent: verify the CLI keeps explicit LISTEN env values while normalizing the internal proxy target.
         (self.app_dir / ".env").write_text(

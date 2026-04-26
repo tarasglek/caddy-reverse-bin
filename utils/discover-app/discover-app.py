@@ -17,7 +17,6 @@ Reads these special keys from `.env`:
 - `REVERSE_BIN_HEALTH_METHOD`: optional reverse-bin health probe method override, e.g. `GET`
 - `REVERSE_BIN_HEALTH_PATH`: optional reverse-bin health probe path override, e.g. `/health`
 - `REVERSE_BIN_HEALTH_STATUS`: optional exact reverse-bin health probe status, e.g. `401`
-
 Passes all `.env` keys through to child process, and may also set:
 - `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`: when TCP listener values must be resolved automatically
 - `PATH`: copied from parent process when not already set in `.env`
@@ -369,7 +368,7 @@ def wrap_landrun(
     wrapper = ["landrun"]
 
     if include_std:
-        wrapper += ["--rox", "/bin,/usr,/lib,/lib64", "--ro", "/etc", "--rw", "/dev"]
+        wrapper += ["--rox", "/bin,/usr,/lib,/lib64", "--ro", "/,/etc", "--rw", "/dev"]
 
     if include_path and (path := os.environ.get("PATH")):
         envs.append(f"PATH={path}")
