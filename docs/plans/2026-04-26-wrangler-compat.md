@@ -19,6 +19,7 @@ Target app shape from `~/Downloads/serverless-registry/`:
 - `wrangler.toml` describes Worker app.
 - `package.json` has local Wrangler dependency.
 - `launch.sh` prepares state dirs and runs `wrangler dev`.
+- no separate sandbox wrapper script is part of the compatibility path.
 - app launch script owns Wrangler prep/state behavior.
 - app launch script reads `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
 - registry `/v2/` can return `401` and still be alive.
@@ -86,6 +87,29 @@ curl -i http://127.0.0.1:9080/v2/
 ```
 
 Expected curl result for registry health smoke: HTTP `401` from app, proving reverse-bin launched backend and proxied request.
+
+### Wrangler launch script contract
+
+The Wrangler app launch script must consume the generic reverse-bin TCP envs. For the registry script, `REVERSE_BIN_*` values must win over local defaults:
+
+```sh
+HOST="${REVERSE_BIN_HOST:-${HOST:-127.0.0.1}}"
+PORT="${REVERSE_BIN_PORT:-${PORT:-9999}}"
+```
+
+The Wrangler command should bind to those values:
+
+```sh
+wrangler --config "$WRANGLER_CONFIG" --env "$WRANGLER_ENV" dev \
+  --ip "$HOST" \
+  --port "$PORT" \
+  --persist-to "$STATE_DIR" \
+  --show-interactive-dev-session=false
+```
+
+If the installed Wrangler version does not support `--ip`, keep `REVERSE_BIN_HOST=127.0.0.1` and omit `--ip`; `REVERSE_BIN_PORT` support remains required.
+
+Delete the old sandbox wrapper script from the compatibility workflow. `utils/run-reverse-bin-app.sh` already runs the detector with `--no-sandbox`, and `launch.sh` owns Wrangler prep/state directly.
 
 ### Config contract
 
@@ -319,7 +343,24 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Run: `uv run python utils/discover-app/test_discover_app.py -v`.
 - [ ] Commit: `feat(discover-app): use reverse-bin tcp envs`
 
-### Task 8: Add manual reverse-bin app runner
+### Task 8: Adapt Wrangler registry launch script for reverse-bin envs
+
+**Files:**
+- Modify locally for smoke testing: `~/Downloads/serverless-registry/launch-env.sh`
+- Modify locally for smoke testing: `~/Downloads/serverless-registry/launch.sh`
+- Delete locally for smoke testing: `~/Downloads/serverless-registry/launch-w-landrun.sh`
+
+**Checklist:**
+
+- [ ] Update `launch-env.sh` so `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT` override local host/port defaults.
+- [ ] Update `launch.sh` so Wrangler receives `--port "$PORT"` from `REVERSE_BIN_PORT` when reverse-bin launches it.
+- [ ] Add `--ip "$HOST"` to Wrangler args if local Wrangler supports it; otherwise require `REVERSE_BIN_HOST=127.0.0.1` for smoke testing.
+- [ ] Ensure `launch.sh --prepare` still works when `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT` are unset.
+- [ ] Delete `launch-w-landrun.sh`; compatibility path must not depend on the sandbox wrapper.
+- [ ] Run: `~/Downloads/serverless-registry/launch.sh --prepare`.
+- [ ] Commit repo changes only; do not commit files under `~/Downloads/serverless-registry` unless that repo is intentionally being modified separately.
+
+### Task 9: Add manual reverse-bin app runner
 
 **Files:**
 - Create: `utils/run-reverse-bin-app.sh`
@@ -340,7 +381,7 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Run: `utils/run-reverse-bin-app.sh examples/reverse-proxy/apps/python3-echo 9080`, then in another shell run `curl -i http://127.0.0.1:9080/` and verify HTTP `200` from the example app.
 - [ ] Commit: `feat(dev): add reverse-bin app runner`
 
-### Task 9: Document explicit launch-script compatibility
+### Task 10: Document explicit launch-script compatibility
 
 **Files:**
 - Modify: `README.md`
@@ -354,6 +395,7 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Document that missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`.
 - [ ] Document that app launch scripts should bind to `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
 - [ ] Document Wrangler as an example of explicit launch-script config, not auto-detection.
+- [ ] Document that no separate sandbox wrapper script is needed or supported by this compatibility workflow.
 - [ ] Link to `utils/run-reverse-bin-app.sh` as manual end-to-end test process.
 - [ ] In `CONTRIBUTING.md`, document this as the preferred generic process for adding compatibility with new app runtimes before adding detector-specific code.
 - [ ] Run: `rg -n "wrangler|health_check|REVERSE_BIN_HEALTH|REVERSE_BIN_PORT|REVERSE_BIN_HOST|run-reverse-bin-app|new app" README.md CONTRIBUTING.md docs utils`.
@@ -370,4 +412,5 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Review diff for naming consistency and no compatibility aliases.
 - [ ] Run detector against copied/sample Wrangler app with explicit `.env` and confirm JSON includes launch command, TCP target derived from `REVERSE_BIN_HOST`/`REVERSE_BIN_PORT`, health fields derived from `REVERSE_BIN_HEALTH_*`, and `health_status=401`.
 - [ ] Run `bash -n utils/run-reverse-bin-app.sh`.
+- [ ] Confirm `~/Downloads/serverless-registry/launch-w-landrun.sh` is absent from the smoke workflow.
 - [ ] Run `utils/run-reverse-bin-app.sh ~/Downloads/serverless-registry 9080`, then `curl -i http://127.0.0.1:9080/v2/`, and confirm HTTP `401` from registry app.
