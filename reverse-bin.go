@@ -44,13 +44,13 @@ import (
 
 const (
 	defaultIdleTimeoutMS         = 300000
-	defaultReadinessTimeoutMS    = 15000
+	defaultHealthTimeoutMS       = 15000
 	defaultTerminationGraceMS    = 5000
 	defaultTerminationKillWaitMS = 1000
 )
 
-func (c *ReverseBin) readinessTimeout() time.Duration {
-	return time.Duration(c.ReadinessTimeoutMS) * time.Millisecond
+func (c *ReverseBin) healthTimeout() time.Duration {
+	return time.Duration(c.HealthTimeoutMS) * time.Millisecond
 }
 
 func (c *ReverseBin) terminationGrace() time.Duration {
@@ -142,8 +142,8 @@ func (c *ReverseBin) getUpstreamFromSupervisor(r *http.Request, ps *processState
 func resolveDialAddress(toAddr string) (string, error) {
 	if isUnixUpstream(toAddr) {
 		socketPath := strings.TrimPrefix(toAddr, "unix/")
-		if !isUnixSocketReady(socketPath) {
-			return "", fmt.Errorf("unix socket not ready: %s", socketPath)
+		if !isUnixSocketHealthy(socketPath) {
+			return "", fmt.Errorf("unix socket not healthy: %s", socketPath)
 		}
 		return toAddr, nil
 	}
@@ -164,7 +164,7 @@ func resolveDialAddress(toAddr string) (string, error) {
 	return target.Host, nil
 }
 
-func isUnixSocketReady(socketPath string) bool {
+func isUnixSocketHealthy(socketPath string) bool {
 	info, err := os.Stat(socketPath)
 	if err != nil {
 		return false
@@ -243,8 +243,9 @@ type proxyOverrides struct {
 	WorkingDirectory *string   `json:"working_directory"`
 	Envs             *[]string `json:"envs"`
 	ReverseProxyTo   *string   `json:"reverse_proxy_to"`
-	ReadinessMethod  *string   `json:"readiness_method"`
-	ReadinessPath    *string   `json:"readiness_path"`
+	HealthMethod     *string   `json:"health_method"`
+	HealthPath       *string   `json:"health_path"`
+	HealthStatus     *int      `json:"health_status"`
 }
 
 type resolvedConfig struct {
@@ -252,8 +253,9 @@ type resolvedConfig struct {
 	WorkingDirectory string
 	Envs             []string
 	ReverseProxyTo   string
-	ReadinessMethod  string
-	ReadinessPath    string
+	HealthMethod     string
+	HealthPath       string
+	HealthStatus     int
 }
 
 type runningBackend struct {
@@ -270,8 +272,9 @@ func (c *ReverseBin) resolveConfig(overrides *proxyOverrides) resolvedConfig {
 		WorkingDirectory: c.WorkingDirectory,
 		Envs:             c.Envs,
 		ReverseProxyTo:   c.ReverseProxyTo,
-		ReadinessMethod:  c.ReadinessMethod,
-		ReadinessPath:    c.ReadinessPath,
+		HealthMethod:     c.HealthMethod,
+		HealthPath:       c.HealthPath,
+		HealthStatus:     c.HealthStatus,
 	}
 	if overrides == nil {
 		return cfg
@@ -288,11 +291,14 @@ func (c *ReverseBin) resolveConfig(overrides *proxyOverrides) resolvedConfig {
 	if overrides.ReverseProxyTo != nil {
 		cfg.ReverseProxyTo = *overrides.ReverseProxyTo
 	}
-	if overrides.ReadinessMethod != nil {
-		cfg.ReadinessMethod = *overrides.ReadinessMethod
+	if overrides.HealthMethod != nil {
+		cfg.HealthMethod = *overrides.HealthMethod
 	}
-	if overrides.ReadinessPath != nil {
-		cfg.ReadinessPath = *overrides.ReadinessPath
+	if overrides.HealthPath != nil {
+		cfg.HealthPath = *overrides.HealthPath
+	}
+	if overrides.HealthStatus != nil {
+		cfg.HealthStatus = *overrides.HealthStatus
 	}
 	return cfg
 }
@@ -401,7 +407,7 @@ func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolved
 			zap.String("command", args[0]),
 			zap.Strings("args", args[1:]))
 
-		detCtx, detCancel := context.WithTimeout(r.Context(), c.readinessTimeout())
+		detCtx, detCancel := context.WithTimeout(r.Context(), c.healthTimeout())
 		defer detCancel()
 
 		detectorCmd := exec.CommandContext(detCtx, args[0], args[1:]...)
@@ -430,8 +436,8 @@ func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolved
 	if len(cfg.Executable) == 0 {
 		return resolvedConfig{}, fmt.Errorf("exec (executable) is required")
 	}
-	if !isUnixUpstream(cfg.ReverseProxyTo) && !readinessConfigured(cfg.ReadinessMethod, cfg.ReadinessPath) {
-		return resolvedConfig{}, fmt.Errorf("readiness_check is required for non-unix reverse_proxy_to targets")
+	if !isUnixUpstream(cfg.ReverseProxyTo) && !healthConfigured(cfg.HealthMethod, cfg.HealthPath) {
+		return resolvedConfig{}, fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
 	}
 	if isUnixUpstream(cfg.ReverseProxyTo) {
 		socketPath := strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")
@@ -442,12 +448,12 @@ func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolved
 	return cfg, nil
 }
 
-func (c *ReverseBin) probeReady(ctx context.Context, cfg resolvedConfig) (bool, error) {
-	if cfg.ReadinessMethod == "" {
+func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig) (bool, error) {
+	if cfg.HealthMethod == "" {
 		if !isUnixUpstream(cfg.ReverseProxyTo) {
-			return false, fmt.Errorf("readiness_check is required for non-unix reverse_proxy_to targets")
+			return false, fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
 		}
-		return isUnixSocketReady(strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")), nil
+		return isUnixSocketHealthy(strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")), nil
 	}
 
 	scheme := "http"
@@ -466,7 +472,7 @@ func (c *ReverseBin) probeReady(ctx context.Context, cfg resolvedConfig) (bool, 
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	if isUnixUpstream(cfg.ReverseProxyTo) {
 		socketPath := strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")
-		checkURL = fmt.Sprintf("%s://localhost%s", scheme, cfg.ReadinessPath)
+		checkURL = fmt.Sprintf("%s://localhost%s", scheme, cfg.HealthPath)
 		client.Transport = &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				var d net.Dialer
@@ -474,10 +480,10 @@ func (c *ReverseBin) probeReady(ctx context.Context, cfg resolvedConfig) (bool, 
 			},
 		}
 	} else {
-		checkURL = fmt.Sprintf("%s://%s%s", scheme, target, cfg.ReadinessPath)
+		checkURL = fmt.Sprintf("%s://%s%s", scheme, target, cfg.HealthPath)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, cfg.ReadinessMethod, checkURL, nil)
+	req, err := http.NewRequestWithContext(ctx, cfg.HealthMethod, checkURL, nil)
 	if err != nil {
 		return false, err
 	}
@@ -487,12 +493,15 @@ func (c *ReverseBin) probeReady(ctx context.Context, cfg resolvedConfig) (bool, 
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
+	if cfg.HealthStatus != 0 {
+		return resp.StatusCode == cfg.HealthStatus, nil
+	}
 	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 }
 
-func (c *ReverseBin) waitReady(ctx context.Context, rb *runningBackend, cfg resolvedConfig) error {
+func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg resolvedConfig) error {
 	tickerInterval := 200 * time.Millisecond
-	if isUnixUpstream(cfg.ReverseProxyTo) && cfg.ReadinessMethod == "" {
+	if isUnixUpstream(cfg.ReverseProxyTo) && cfg.HealthMethod == "" {
 		tickerInterval = 50 * time.Millisecond
 	}
 	ticker := time.NewTicker(tickerInterval)
@@ -510,15 +519,15 @@ func (c *ReverseBin) waitReady(ctx context.Context, rb *runningBackend, cfg reso
 			if rb != nil {
 				rb.done <- err
 			}
-			return fmt.Errorf("reverse proxy process exited during readiness check: %v", err)
+			return fmt.Errorf("reverse proxy process exited during health check: %v", err)
 		case <-ticker.C:
-			ready, err := c.probeReady(ctx, cfg)
+			healthy, err := c.probeHealth(ctx, cfg)
 			if err != nil {
 				continue
 			}
-			if ready {
+			if healthy {
 				if rb != nil && rb.process != nil {
-					c.logger.Info("reverse proxy process ready", zap.Int("pid", rb.process.Pid), zap.String("address", cfg.ReverseProxyTo))
+					c.logger.Info("reverse proxy process healthy", zap.Int("pid", rb.process.Pid), zap.String("address", cfg.ReverseProxyTo))
 				}
 				return nil
 			}
@@ -681,7 +690,7 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 			}
 			if backend != nil && isUnixUpstream(backend.config.ReverseProxyTo) {
 				socketPath := strings.TrimPrefix(backend.config.ReverseProxyTo, "unix/")
-				if !isUnixSocketReady(socketPath) {
+				if !isUnixSocketHealthy(socketPath) {
 					c.logger.Warn("backend process alive but unix socket unavailable; restarting",
 						zap.String("key", ps.key),
 						zap.Int("pid", backend.process.Pid),
@@ -698,14 +707,14 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 					req.reply <- supervisorResult{err: err}
 					continue
 				}
-				startCtx, cancel := context.WithTimeout(req.request.Context(), c.readinessTimeout())
+				startCtx, cancel := context.WithTimeout(req.request.Context(), c.healthTimeout())
 				rb, err := c.launchBackend(c.moduleContext(), cfg, "request")
 				if err == nil {
-					err = c.waitReady(startCtx, rb, cfg)
+					err = c.waitHealthy(startCtx, rb, cfg)
 				}
 				cancel()
 				if err != nil {
-					_ = c.stopBackend(rb, "readiness failed", c.terminationGrace())
+					_ = c.stopBackend(rb, "health failed", c.terminationGrace())
 					req.reply <- supervisorResult{err: err}
 					continue
 				}

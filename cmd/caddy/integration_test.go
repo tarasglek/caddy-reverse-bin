@@ -433,7 +433,7 @@ func TestDynamicDiscovery_WithDiscoverAppPython(t *testing.T) {
 	setup, dispose := createReverseProxySetup(t, `handle /dynamic/* {
 		reverse-bin {
 			dynamic_proxy_detector {{DETECTOR}} --no-sandbox {{APP_DIR}}
-			readiness_check HEAD /
+			health_check HEAD /
 		}
 	}`, map[string]string{
 		"DETECTOR": f.DiscoverApp,
@@ -459,7 +459,7 @@ func TestDynamicDiscovery_WithDiscoverAppDeno(t *testing.T) {
 	setup, dispose := createReverseProxySetup(t, `handle /dynamic/* {
 		reverse-bin {
 			dynamic_proxy_detector {{DETECTOR}} --no-sandbox {{APP_DIR}}
-			readiness_check HEAD /
+			health_check HEAD /
 		}
 	}`, map[string]string{
 		"DETECTOR": f.DiscoverApp,
@@ -504,19 +504,19 @@ sys.exit(2)
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/fail", setup.Port), 503, "", "dynamic route must return 503 when detector exits non-zero")
 }
 
-// TestReadinessCheck verifies Unix readiness behavior for GET, HEAD, and null readiness_check.
-func TestReadinessCheck(t *testing.T) {
+// TestHealthCheck verifies Unix health behavior for GET, HEAD, and omitted health_check.
+func TestHealthCheck(t *testing.T) {
 	requireIntegration(t)
 	f := mustFixtures(t)
 
 	testCases := []struct {
-		name               string
-		readinessDirective string
-		expectedMethod     *string
+		name            string
+		healthDirective string
+		expectedMethod  *string
 	}{
-		{name: "GET", readinessDirective: "readiness_check GET /health", expectedMethod: ptr("GET")},
-		{name: "HEAD", readinessDirective: "readiness_check HEAD /health", expectedMethod: ptr("HEAD")},
-		{name: "NULL", readinessDirective: "readiness_check null", expectedMethod: nil},
+		{name: "GET", healthDirective: "health_check GET /health", expectedMethod: ptr("GET")},
+		{name: "HEAD", healthDirective: "health_check HEAD /health", expectedMethod: ptr("HEAD")},
+		{name: "OMITTED", healthDirective: "", expectedMethod: nil},
 	}
 
 	for _, tc := range testCases {
@@ -530,18 +530,18 @@ func TestReadinessCheck(t *testing.T) {
 				env SOCKET_PATH={{APP_SOCKET}}
 				# pass_all_env keeps uv/python runtime env (PATH/HOME/etc.) available in tests.
 				pass_all_env
-				{{READINESS_DIRECTIVE}}
+				{{HEALTH_DIRECTIVE}}
 			}
 		}`, map[string]string{
-				"PYTHON_APP":          f.PythonApp,
-				"APP_SOCKET":          socketPath,
-				"READINESS_DIRECTIVE": tc.readinessDirective,
+				"PYTHON_APP":       f.PythonApp,
+				"APP_SOCKET":       socketPath,
+				"HEALTH_DIRECTIVE": tc.healthDirective,
 			})
 			defer dispose()
 
 			client := newTestHTTPClient()
 
-			// Request through Caddy to prove proxying works with the configured readiness mode.
+			// Request through Caddy to prove proxying works with the configured health mode.
 			_, pingBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/ping", setup.Port), 200, "", "ready endpoint must proxy request to backend")
 			var pingPayload struct {
 				Backend string `json:"backend"`
@@ -555,7 +555,7 @@ func TestReadinessCheck(t *testing.T) {
 			}
 
 			// Request backend debug endpoint to verify whether /health was probed and by which method.
-			_, healthBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/health-last", setup.Port), 200, "", "health-last endpoint must return readiness probe metadata")
+			_, healthBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/health-last", setup.Port), 200, "", "health-last endpoint must return health probe metadata")
 			if !strings.Contains(healthBody, "last_health_method") {
 				t.Fatalf("/ready/health-last response must include last_health_method (body=%s)", healthBody)
 			}
@@ -567,21 +567,21 @@ func TestReadinessCheck(t *testing.T) {
 			}
 			if tc.expectedMethod == nil {
 				if healthPayload.LastHealthMethod != nil {
-					t.Fatalf("expected null last_health_method for null readiness_check, got %v (body=%s)", *healthPayload.LastHealthMethod, healthBody)
+					t.Fatalf("expected null last_health_method when health_check is omitted, got %v (body=%s)", *healthPayload.LastHealthMethod, healthBody)
 				}
 			} else {
 				if healthPayload.LastHealthMethod == nil || *healthPayload.LastHealthMethod != *tc.expectedMethod {
-					t.Fatalf("expected readiness method %q, got %v (body=%s)", *tc.expectedMethod, healthPayload.LastHealthMethod, healthBody)
+					t.Fatalf("expected health method %q, got %v (body=%s)", *tc.expectedMethod, healthPayload.LastHealthMethod, healthBody)
 				}
 			}
 		})
 	}
 }
 
-// TestReadinessFailureTimeout validates that readiness polling timeout surfaces as 503.
-// Strategy: start a long-running process that never binds reverse_proxy_to, so readiness
+// TestHealthFailureTimeout validates that health polling timeout surfaces as 503.
+// Strategy: start a long-running process that never binds reverse_proxy_to, so health
 // cannot succeed and reverse-bin must fail request with service unavailable.
-func TestReadinessFailureTimeout(t *testing.T) {
+func TestHealthFailureTimeout(t *testing.T) {
 	requireIntegration(t)
 
 	port, err := GetFreePort()
@@ -597,7 +597,7 @@ sleep 30
 		reverse-bin {
 			exec {{SLEEPER}}
 			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
-			readiness_check GET /health
+			health_check GET /health
 		}
 	}`, map[string]string{
 		"SLEEPER":      sleeper,
@@ -606,9 +606,9 @@ sleep 30
 	defer dispose()
 
 	client := &http.Client{Transport: createTestingTransport(), Timeout: 20 * time.Second}
-	// Request a proxied route to trigger backend startup + readiness polling.
-	// Invariant: backend never binds the configured upstream, so readiness times out and reverse-bin must return 503.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/fail/test", setup.Port), 503, "", "request must fail with 503 when readiness polling times out")
+	// Request a proxied route to trigger backend startup + health polling.
+	// Invariant: backend never binds the configured upstream, so health times out and reverse-bin must return 503.
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/fail/test", setup.Port), 503, "", "request must fail with 503 when health polling times out")
 }
 
 // TestLifecycleIdleTimeout verifies a backend process is terminated after configured idle_timeout_ms.
@@ -665,8 +665,8 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 
 // TestMultipleApps verifies two independent reverse-bin handlers can run side-by-side
 // with separate Unix sockets and processes.
-// TestReadinessImmediateExitFailsFast verifies startup failure is reported from process exit instead of readiness timeout.
-func TestReadinessImmediateExitFailsFast(t *testing.T) {
+// TestHealthImmediateExitFailsFast verifies startup failure is reported from process exit instead of health timeout.
+func TestHealthImmediateExitFailsFast(t *testing.T) {
 	requireIntegration(t)
 
 	exiter := createExecutableScript(t, t.TempDir(), "exit-42.sh", `#!/usr/bin/env sh
@@ -686,7 +686,7 @@ exit 42
 
 	client := newTestHTTPClient()
 	started := time.Now()
-	// HTTP request exercises startup path where backend exits before readiness can pass.
+	// HTTP request exercises startup path where backend exits before health can pass.
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/failfast/test", setup.Port), 503, "", "immediate backend exit must return 503")
 	elapsed := time.Since(started)
 	if elapsed >= 2*time.Second {

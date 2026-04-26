@@ -34,7 +34,7 @@ func TestPackagedCaddyfileUsesDebianPaths(t *testing.T) {
 		"/var/lib/reverse-bin/apps",
 		"/run/reverse-bin",
 		"idle_timeout_ms {$REVERSE_BIN_IDLE_TIMEOUT_MS:300000}",
-		"readiness_timeout_ms {$REVERSE_BIN_READINESS_TIMEOUT_MS:15000}",
+		"health_timeout_ms {$REVERSE_BIN_HEALTH_TIMEOUT_MS:15000}",
 		"termination_grace_ms {$REVERSE_BIN_TERMINATION_GRACE_MS:5000}",
 		"termination_kill_wait_ms {$REVERSE_BIN_TERMINATION_KILL_WAIT_MS:1000}",
 	} {
@@ -94,7 +94,7 @@ func TestPackagedDefaultFileDefinesLifecycleDefaults(t *testing.T) {
 	text := string(content)
 	for _, want := range []string{
 		"REVERSE_BIN_IDLE_TIMEOUT_MS=300000",
-		"REVERSE_BIN_READINESS_TIMEOUT_MS=15000",
+		"REVERSE_BIN_HEALTH_TIMEOUT_MS=15000",
 		"REVERSE_BIN_TERMINATION_GRACE_MS=5000",
 		"REVERSE_BIN_TERMINATION_KILL_WAIT_MS=1000",
 	} {
