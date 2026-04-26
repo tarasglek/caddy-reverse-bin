@@ -17,6 +17,13 @@ case "$1" in
 		install -d -o reverse-bin -g reverse-bin /var/lib/reverse-bin/home
 
 		setcap 'cap_net_bind_service=+ep' /usr/bin/reverse-bin-caddy
+
+		if command -v systemctl >/dev/null; then
+			systemctl daemon-reload
+			if systemctl is-enabled --quiet reverse-bin.service; then
+				systemctl restart reverse-bin.service
+			fi
+		fi
 		;;
 esac
 

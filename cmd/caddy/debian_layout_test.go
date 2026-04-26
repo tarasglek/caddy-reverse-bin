@@ -66,6 +66,25 @@ func TestPackagedServiceUsesDebianPaths(t *testing.T) {
 	}
 }
 
+// TestDebianPostinstReloadsSystemdAndRestartsEnabledService verifies package upgrades pick up unit changes without starting disabled installs.
+func TestDebianPostinstReloadsSystemdAndRestartsEnabledService(t *testing.T) {
+	content, err := os.ReadFile("../../debian/postinst")
+	if err != nil {
+		t.Fatalf("read postinst: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"if command -v systemctl >/dev/null; then",
+		"systemctl daemon-reload",
+		"if systemctl is-enabled --quiet reverse-bin.service; then",
+		"systemctl restart reverse-bin.service",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("postinst missing %q", want)
+		}
+	}
+}
+
 // TestPackagedDefaultFileDefinesLifecycleDefaults verifies shared lifecycle defaults are configurable in one place.
 func TestPackagedDefaultFileDefinesLifecycleDefaults(t *testing.T) {
 	content, err := os.ReadFile("../../packaging/debian/reverse-bin")
