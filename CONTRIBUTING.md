@@ -40,4 +40,4 @@ Prefer the generic launch-script workflow before adding detector-specific code:
 
 Blank `REVERSE_BIN_PORT=` means the detector allocates a free TCP port and injects the resolved value into the child env. Missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`. Wrangler apps should use this explicit launch-script workflow; no separate sandbox wrapper is needed.
 
-The detector owns the landrun policy; apps must not request extra sandbox paths through `.env`. The default policy allows read-only filesystem inspection for runtimes like Node/Wrangler/workerd, while execution stays limited to the app tree and standard runtime paths, writes stay restricted to the app data directory, and TCP binds stay restricted to the allocated port.
+The detector owns the landrun policy; apps must not request extra sandbox paths through `.env`. The default policy keeps execution limited to the app tree and standard runtime paths, writes restricted to the app data directory, and TCP binds restricted to the allocated port. Do not grant read-only access to `/` just to satisfy a runtime; investigate and document the precise sandbox incompatibility instead.
