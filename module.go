@@ -56,16 +56,18 @@ type ReverseBin struct {
 
 	// Address to proxy to (for proxy mode)
 	ReverseProxyTo string `json:"reverse_proxy_to,omitempty"`
-	// Readiness check method (GET or HEAD)
-	ReadinessMethod string `json:"readinessMethod,omitempty"`
-	// Readiness check path
-	ReadinessPath string `json:"readinessPath,omitempty"`
+	// Health check method (GET or HEAD)
+	HealthMethod string `json:"healthMethod,omitempty"`
+	// Health check path
+	HealthPath string `json:"healthPath,omitempty"`
+	// Exact health check status; zero accepts any 2xx/3xx response
+	HealthStatus int `json:"healthStatus,omitempty"`
 	// Binary and arguments to run to determine proxy parameters dynamically
 	DynamicProxyDetector []string `json:"dynamic_proxy_detector,omitempty"`
 	// Idle timeout in milliseconds before stopping backend process after last request
 	IdleTimeoutMS int `json:"idleTimeoutMs,omitempty"`
-	// Readiness timeout in milliseconds before startup fails
-	ReadinessTimeoutMS int `json:"readinessTimeoutMs,omitempty"`
+	// Health timeout in milliseconds before startup fails
+	HealthTimeoutMS int `json:"healthTimeoutMs,omitempty"`
 	// Termination grace in milliseconds before SIGKILL
 	TerminationGraceMS int `json:"terminationGraceMs,omitempty"`
 	// Kill wait in milliseconds after SIGKILL before reporting failure
@@ -91,7 +93,7 @@ func isUnixUpstream(addr string) bool {
 	return strings.HasPrefix(addr, "unix/")
 }
 
-func readinessConfigured(method, path string) bool {
+func healthConfigured(method, path string) bool {
 	return strings.TrimSpace(method) != "" && strings.TrimSpace(path) != ""
 }
 
@@ -155,18 +157,20 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 				if !d.Args(&c.ReverseProxyTo) {
 					return d.ArgErr()
 				}
-			case "readiness_check":
+			case "health_check":
 				args := d.RemainingArgs()
-				if len(args) == 1 && strings.EqualFold(args[0], "null") {
-					c.ReadinessMethod = ""
-					c.ReadinessPath = ""
-					continue
-				}
-				if len(args) != 2 {
+				if len(args) != 2 && len(args) != 3 {
 					return d.ArgErr()
 				}
-				c.ReadinessMethod = strings.ToUpper(args[0])
-				c.ReadinessPath = args[1]
+				c.HealthMethod = strings.ToUpper(args[0])
+				c.HealthPath = args[1]
+				if len(args) == 3 {
+					status, err := strconv.Atoi(args[2])
+					if err != nil || status < 100 || status > 599 {
+						return d.Errf("health_check status must be an integer from 100 through 599")
+					}
+					c.HealthStatus = status
+				}
 			case "dynamic_proxy_detector":
 				c.DynamicProxyDetector = d.RemainingArgs()
 				if len(c.DynamicProxyDetector) == 0 {
@@ -178,12 +182,12 @@ func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 					return err
 				}
 				c.IdleTimeoutMS = v
-			case "readiness_timeout_ms":
-				v, err := parsePositiveMilliseconds(d, "readiness_timeout_ms")
+			case "health_timeout_ms":
+				v, err := parsePositiveMilliseconds(d, "health_timeout_ms")
 				if err != nil {
 					return err
 				}
-				c.ReadinessTimeoutMS = v
+				c.HealthTimeoutMS = v
 			case "termination_grace_ms":
 				v, err := parsePositiveMilliseconds(d, "termination_grace_ms")
 				if err != nil {
@@ -226,14 +230,14 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 		}
 	}
 
-	if c.ReadinessMethod != "" {
-		c.ReadinessMethod = strings.ToUpper(c.ReadinessMethod)
+	if c.HealthMethod != "" {
+		c.HealthMethod = strings.ToUpper(c.HealthMethod)
 	}
 	if c.IdleTimeoutMS <= 0 {
 		c.IdleTimeoutMS = defaultIdleTimeoutMS
 	}
-	if c.ReadinessTimeoutMS <= 0 {
-		c.ReadinessTimeoutMS = defaultReadinessTimeoutMS
+	if c.HealthTimeoutMS <= 0 {
+		c.HealthTimeoutMS = defaultHealthTimeoutMS
 	}
 	if c.TerminationGraceMS <= 0 {
 		c.TerminationGraceMS = defaultTerminationGraceMS
@@ -242,8 +246,8 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 		c.TerminationKillWaitMS = defaultTerminationKillWaitMS
 	}
 
-	if !isUnixUpstream(c.ReverseProxyTo) && c.ReverseProxyTo != "" && !readinessConfigured(c.ReadinessMethod, c.ReadinessPath) {
-		return fmt.Errorf("readiness_check is required for non-unix reverse_proxy_to targets")
+	if !isUnixUpstream(c.ReverseProxyTo) && c.ReverseProxyTo != "" && !healthConfigured(c.HealthMethod, c.HealthPath) {
+		return fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
 	}
 
 	rp := &reverseproxy.Handler{

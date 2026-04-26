@@ -25,11 +25,12 @@ type reverseBinConfig struct {
 	PassEnvs              []string
 	PassAll               bool
 	ReverseProxyTo        string
-	ReadinessMethod       string
-	ReadinessPath         string
+	HealthMethod          string
+	HealthPath            string
+	HealthStatus          int
 	DynamicProxyDetector  []string
 	IdleTimeoutMS         int
-	ReadinessTimeoutMS    int
+	HealthTimeoutMS       int
 	TerminationGraceMS    int
 	TerminationKillWaitMS int
 }
@@ -42,11 +43,12 @@ func asConfig(c *ReverseBin) reverseBinConfig {
 		PassEnvs:              c.PassEnvs,
 		PassAll:               c.PassAll,
 		ReverseProxyTo:        c.ReverseProxyTo,
-		ReadinessMethod:       c.ReadinessMethod,
-		ReadinessPath:         c.ReadinessPath,
+		HealthMethod:          c.HealthMethod,
+		HealthPath:            c.HealthPath,
+		HealthStatus:          c.HealthStatus,
 		DynamicProxyDetector:  c.DynamicProxyDetector,
 		IdleTimeoutMS:         c.IdleTimeoutMS,
-		ReadinessTimeoutMS:    c.ReadinessTimeoutMS,
+		HealthTimeoutMS:       c.HealthTimeoutMS,
 		TerminationGraceMS:    c.TerminationGraceMS,
 		TerminationKillWaitMS: c.TerminationKillWaitMS,
 	}
@@ -78,6 +80,10 @@ func testStringPtr(s string) *string {
 	return &s
 }
 
+func testIntPtr(i int) *int {
+	return &i
+}
+
 // TestResolvedConfigUsesDetectorOverrides verifies dynamic detector output overrides static config.
 func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
 	rb := &ReverseBin{
@@ -85,16 +91,18 @@ func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
 		WorkingDirectory: "/static",
 		Envs:             []string{"A=static"},
 		ReverseProxyTo:   "unix//static.sock",
-		ReadinessMethod:  "GET",
-		ReadinessPath:    "/static-ready",
+		HealthMethod:     "GET",
+		HealthPath:       "/static-healthy",
+		HealthStatus:     204,
 	}
 	overrides := &proxyOverrides{
 		Executable:       &[]string{"dynamic", "arg2"},
 		WorkingDirectory: testStringPtr("/dynamic"),
 		Envs:             &[]string{"A=dynamic"},
 		ReverseProxyTo:   testStringPtr("unix//dynamic.sock"),
-		ReadinessMethod:  testStringPtr("HEAD"),
-		ReadinessPath:    testStringPtr("/dynamic-ready"),
+		HealthMethod:     testStringPtr("HEAD"),
+		HealthPath:       testStringPtr("/dynamic-healthy"),
+		HealthStatus:     testIntPtr(401),
 	}
 
 	cfg := rb.resolveConfig(overrides)
@@ -111,24 +119,24 @@ func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
 	if cfg.ReverseProxyTo != "unix//dynamic.sock" {
 		t.Fatalf("expected reverse proxy override, got %q", cfg.ReverseProxyTo)
 	}
-	if cfg.ReadinessMethod != "HEAD" || cfg.ReadinessPath != "/dynamic-ready" {
-		t.Fatalf("expected readiness override HEAD /dynamic-ready, got %s %s", cfg.ReadinessMethod, cfg.ReadinessPath)
+	if cfg.HealthMethod != "HEAD" || cfg.HealthPath != "/dynamic-healthy" || cfg.HealthStatus != 401 {
+		t.Fatalf("expected health override HEAD /dynamic-healthy 401, got %s %s %d", cfg.HealthMethod, cfg.HealthPath, cfg.HealthStatus)
 	}
 }
 
-// TestWaitReadyStopsOnContextCancel verifies readiness polling exits when start context ends.
-func TestWaitReadyStopsOnContextCancel(t *testing.T) {
+// TestWaitHealthyStopsOnContextCancel verifies health polling exits when start context ends.
+func TestWaitHealthyStopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	rb := &ReverseBin{logger: zaptest.NewLogger(t)}
-	err := rb.waitReady(ctx, nil, resolvedConfig{
-		ReverseProxyTo:  "unix//tmp/never-ready.sock",
-		ReadinessMethod: "",
+	err := rb.waitHealthy(ctx, nil, resolvedConfig{
+		ReverseProxyTo: "unix//tmp/never-healthy.sock",
+		HealthMethod:   "",
 	})
 
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("expected context.Canceled from waitReady, got %v", err)
+		t.Fatalf("expected context.Canceled from waitHealthy, got %v", err)
 	}
 }
 
@@ -209,47 +217,113 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "with readiness_check",
+			name: "with health_check",
 			input: `reverse-bin {
   exec ./main.py
   reverse_proxy_to 127.0.0.1:8080
-  readiness_check GET /health
-}`,
-			expected: reverseBinConfig{
-				Executable:      []string{"./main.py"},
-				ReverseProxyTo:  "127.0.0.1:8080",
-				ReadinessMethod: "GET",
-				ReadinessPath:   "/health",
-			},
-			wantErr: false,
-		},
-		{
-			name: "with readiness_check HEAD",
-			input: `reverse-bin {
-  exec ./main.py
-  reverse_proxy_to 127.0.0.1:8080
-  readiness_check head /ready
-}`,
-			expected: reverseBinConfig{
-				Executable:      []string{"./main.py"},
-				ReverseProxyTo:  "127.0.0.1:8080",
-				ReadinessMethod: "HEAD",
-				ReadinessPath:   "/ready",
-			},
-			wantErr: false,
-		},
-		{
-			name: "with readiness_check null",
-			input: `reverse-bin {
-  exec ./main.py
-  reverse_proxy_to unix//tmp/app.sock
-  readiness_check null
+  health_check GET /health
 }`,
 			expected: reverseBinConfig{
 				Executable:     []string{"./main.py"},
-				ReverseProxyTo: "unix//tmp/app.sock",
+				ReverseProxyTo: "127.0.0.1:8080",
+				HealthMethod:   "GET",
+				HealthPath:     "/health",
 			},
 			wantErr: false,
+		},
+		{
+			name: "with health_check HEAD",
+			input: `reverse-bin {
+  exec ./main.py
+  reverse_proxy_to 127.0.0.1:8080
+  health_check head /healthy
+}`,
+			expected: reverseBinConfig{
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: "127.0.0.1:8080",
+				HealthMethod:   "HEAD",
+				HealthPath:     "/healthy",
+			},
+			wantErr: false,
+		},
+		{
+			name: "health_check rejects null",
+			input: `reverse-bin {
+  exec ./main.py
+  reverse_proxy_to unix//tmp/app.sock
+  health_check null
+}`,
+			expected: reverseBinConfig{},
+			wantErr:  true,
+		},
+		{
+			name: "with health_check and explicit status",
+			input: `reverse-bin {
+  exec ./main.py
+  reverse_proxy_to 127.0.0.1:8080
+  health_check GET /v2/ 401
+}`,
+			expected: reverseBinConfig{
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: "127.0.0.1:8080",
+				HealthMethod:   "GET",
+				HealthPath:     "/v2/",
+				HealthStatus:   401,
+			},
+			wantErr: false,
+		},
+		{
+			name: "with health_check default status range",
+			input: `reverse-bin {
+  exec ./main.py
+  reverse_proxy_to 127.0.0.1:8080
+  health_check GET /health
+}`,
+			expected: reverseBinConfig{
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: "127.0.0.1:8080",
+				HealthMethod:   "GET",
+				HealthPath:     "/health",
+				HealthStatus:   0,
+			},
+			wantErr: false,
+		},
+		{
+			name: "with health_timeout_ms",
+			input: `reverse-bin {
+  exec ./main.py
+  reverse_proxy_to 127.0.0.1:8080
+  health_check GET /health
+  health_timeout_ms 15000
+}`,
+			expected: reverseBinConfig{
+				Executable:      []string{"./main.py"},
+				ReverseProxyTo:  "127.0.0.1:8080",
+				HealthMethod:    "GET",
+				HealthPath:      "/health",
+				HealthTimeoutMS: 15000,
+			},
+			wantErr: false,
+		},
+		{
+			name: "health_check rejects low explicit status",
+			input: `reverse-bin {
+  exec ./main.py
+  reverse_proxy_to 127.0.0.1:8080
+  health_check GET /v2/ 99
+}`,
+			expected: reverseBinConfig{},
+			wantErr:  true,
+		},
+		{
+			name: "health_check rejects high explicit status",
+			input: `reverse-bin {
+  exec ./main.py
+  reverse_proxy_to 127.0.0.1:8080
+  health_check GET /v2/ 600
+}`,
+			expected: reverseBinConfig{},
+			wantErr:  true,
 		},
 		{
 			name: "with dynamic_proxy_detector",
@@ -270,10 +344,10 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
   pass_env HOME PATH
   pass_all_env
   reverse_proxy_to 127.0.0.1:3000
-  readiness_check GET /healthz
+  health_check GET /healthz
   dynamic_proxy_detector /bin/detect {host} {path}
   idle_timeout_ms 100
-  readiness_timeout_ms 15000
+  health_timeout_ms 15000
   termination_grace_ms 5000
   termination_kill_wait_ms 1000
 }`,
@@ -284,11 +358,11 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 				PassEnvs:              []string{"HOME", "PATH"},
 				PassAll:               true,
 				ReverseProxyTo:        "127.0.0.1:3000",
-				ReadinessMethod:       "GET",
-				ReadinessPath:         "/healthz",
+				HealthMethod:          "GET",
+				HealthPath:            "/healthz",
 				DynamicProxyDetector:  []string{"/bin/detect", "{host}", "{path}"},
 				IdleTimeoutMS:         100,
-				ReadinessTimeoutMS:    15000,
+				HealthTimeoutMS:       15000,
 				TerminationGraceMS:    5000,
 				TerminationKillWaitMS: 1000,
 			},
@@ -334,6 +408,60 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 				t.Errorf("Parsing yielded invalid result.\nGot:      %#v\nExpected: %#v", asConfig(&c), tt.expected)
 			}
 		})
+	}
+}
+
+// TestProbeHealthAcceptsExplicitStatus verifies auth-protected endpoints can be healthy.
+func TestProbeHealthAcceptsExplicitStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This HTTP request tests health probing against an auth-protected registry route.
+		if r.Method != http.MethodGet || r.URL.Path != "/v2/" {
+			t.Fatalf("unexpected health request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+
+	rb := &ReverseBin{logger: zaptest.NewLogger(t)}
+	ok, err := rb.probeHealth(context.Background(), resolvedConfig{
+		ReverseProxyTo: server.URL,
+		HealthMethod:   http.MethodGet,
+		HealthPath:     "/v2/",
+		HealthStatus:   http.StatusUnauthorized,
+	})
+
+	if err != nil {
+		t.Fatalf("probeHealth returned error: %v", err)
+	}
+	if !ok {
+		t.Fatalf("expected explicit 401 health status to be accepted")
+	}
+}
+
+// TestProbeHealthRejectsUnexpectedExplicitStatus verifies explicit status is exact.
+func TestProbeHealthRejectsUnexpectedExplicitStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This HTTP request tests that 2xx is not accepted when health_status requires 401.
+		if r.Method != http.MethodGet || r.URL.Path != "/v2/" {
+			t.Fatalf("unexpected health request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	rb := &ReverseBin{logger: zaptest.NewLogger(t)}
+	ok, err := rb.probeHealth(context.Background(), resolvedConfig{
+		ReverseProxyTo: server.URL,
+		HealthMethod:   http.MethodGet,
+		HealthPath:     "/v2/",
+		HealthStatus:   http.StatusUnauthorized,
+	})
+
+	if err != nil {
+		t.Fatalf("probeHealth returned error: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected 200 response to be rejected when explicit health status is 401")
 	}
 }
 
@@ -444,7 +572,7 @@ func TestReverseBin_ProvisionValidation(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "invalid static non-unix without readiness_check",
+			name: "invalid static non-unix without health_check",
 			cfg: reverseBinConfig{
 				Executable:     []string{"./main.py"},
 				ReverseProxyTo: "127.0.0.1:8080",
@@ -452,17 +580,17 @@ func TestReverseBin_ProvisionValidation(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "valid static non-unix with readiness_check",
+			name: "valid static non-unix with health_check",
 			cfg: reverseBinConfig{
-				Executable:      []string{"./main.py"},
-				ReverseProxyTo:  "127.0.0.1:8080",
-				ReadinessMethod: "GET",
-				ReadinessPath:   "/health",
+				Executable:     []string{"./main.py"},
+				ReverseProxyTo: "127.0.0.1:8080",
+				HealthMethod:   "GET",
+				HealthPath:     "/health",
 			},
 			wantErr: false,
 		},
 		{
-			name: "valid static unix without readiness_check",
+			name: "valid static unix without health_check",
 			cfg: reverseBinConfig{
 				Executable:     []string{"./main.py"},
 				ReverseProxyTo: "unix//tmp/app.sock",
@@ -499,14 +627,14 @@ func TestReverseBin_ProvisionValidation(t *testing.T) {
 			hasDetector := len(tt.cfg.DynamicProxyDetector) > 0
 			hasExecutable := len(tt.cfg.Executable) > 0
 			hasProxyTo := tt.cfg.ReverseProxyTo != ""
-			hasReadiness := tt.cfg.ReadinessMethod != "" && tt.cfg.ReadinessPath != ""
+			hasHealth := tt.cfg.HealthMethod != "" && tt.cfg.HealthPath != ""
 			nonUnix := hasProxyTo && !isUnixUpstream(tt.cfg.ReverseProxyTo)
 
-			shouldFail := (!hasDetector && !hasExecutable) || (!hasDetector && !hasProxyTo) || (nonUnix && !hasReadiness)
+			shouldFail := (!hasDetector && !hasExecutable) || (!hasDetector && !hasProxyTo) || (nonUnix && !hasHealth)
 
 			if shouldFail != tt.wantErr {
-				t.Errorf("expected error=%v, got error=%v (hasDetector=%v, hasExecutable=%v, hasProxyTo=%v, nonUnix=%v, hasReadiness=%v)",
-					tt.wantErr, shouldFail, hasDetector, hasExecutable, hasProxyTo, nonUnix, hasReadiness)
+				t.Errorf("expected error=%v, got error=%v (hasDetector=%v, hasExecutable=%v, hasProxyTo=%v, nonUnix=%v, hasHealth=%v)",
+					tt.wantErr, shouldFail, hasDetector, hasExecutable, hasProxyTo, nonUnix, hasHealth)
 			}
 		})
 	}
