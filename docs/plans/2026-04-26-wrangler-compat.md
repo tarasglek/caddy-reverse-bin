@@ -36,6 +36,57 @@ REVERSE_BIN_HEALTH_STATUS=401
 
 Detector must derive `reverse_proxy_to` from `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`. Blank `REVERSE_BIN_PORT` means allocate a free TCP port and inject the resolved value into the child env. Missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`. Do not add Wrangler-specific auto-detection; use explicit `.env` launch-script config.
 
+### Manual reverse-bin launch process
+
+Add a dev helper that runs one app through real reverse-bin/Caddy without Debian packaging or systemd:
+
+```sh
+utils/run-reverse-bin-app.sh /path/to/app 9080
+```
+
+The helper must generate a temporary Caddyfile and run:
+
+```sh
+go run ./cmd/caddy run --adapter caddyfile --config "$TEMP_CADDYFILE"
+```
+
+Generated Caddyfile shape:
+
+```caddyfile
+{
+	admin off
+	http_port 9080
+}
+
+http://127.0.0.1:9080 {
+	reverse-bin {
+		dynamic_proxy_detector /absolute/repo/utils/discover-app/discover-app.py --no-sandbox /absolute/app
+		idle_timeout_ms 300000
+		health_timeout_ms 15000
+		termination_grace_ms 5000
+		termination_kill_wait_ms 1000
+	}
+}
+```
+
+The app `.env` supplies launch command, TCP bind envs, and health overrides. Example Wrangler smoke:
+
+```sh
+cat > ~/Downloads/serverless-registry/.env <<'EOF'
+REVERSE_BIN_COMMAND=./launch.sh
+REVERSE_BIN_HOST=127.0.0.1
+REVERSE_BIN_PORT=
+REVERSE_BIN_HEALTH_METHOD=GET
+REVERSE_BIN_HEALTH_PATH=/v2/
+REVERSE_BIN_HEALTH_STATUS=401
+EOF
+
+utils/run-reverse-bin-app.sh ~/Downloads/serverless-registry 9080
+curl -i http://127.0.0.1:9080/v2/
+```
+
+Expected curl result for registry health smoke: HTTP `401` from app, proving reverse-bin launched backend and proxied request.
+
 ### Config contract
 
 Use health names only. No compatibility aliases.
@@ -268,7 +319,26 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Run: `uv run python utils/discover-app/test_discover_app.py -v`.
 - [ ] Commit: `feat(discover-app): use reverse-bin tcp envs`
 
-### Task 8: Document explicit launch-script compatibility
+### Task 8: Add manual reverse-bin app runner
+
+**Files:**
+- Create: `utils/run-reverse-bin-app.sh`
+- Modify: `README.md`
+
+**Checklist:**
+
+- [ ] Create `utils/run-reverse-bin-app.sh` with usage `utils/run-reverse-bin-app.sh APP_DIR [HTTP_PORT]`.
+- [ ] Resolve repo root from script location, and resolve `APP_DIR` to an absolute path.
+- [ ] Generate a temporary Caddyfile using the shape from "Manual reverse-bin launch process".
+- [ ] Use `dynamic_proxy_detector "$REPO_ROOT/utils/discover-app/discover-app.py" --no-sandbox "$APP_DIR"`.
+- [ ] Run `go run ./cmd/caddy run --adapter caddyfile --config "$TEMP_CADDYFILE"` from repo root.
+- [ ] Trap shell exit and remove the temporary Caddyfile.
+- [ ] Add usage docs with curl smoke command.
+- [ ] Run: `bash -n utils/run-reverse-bin-app.sh`.
+- [ ] Run: `utils/run-reverse-bin-app.sh examples/reverse-proxy/apps/python3-echo 9080`, then in another shell run `curl -i http://127.0.0.1:9080/` and verify HTTP `200` from the example app.
+- [ ] Commit: `feat(dev): add reverse-bin app runner`
+
+### Task 9: Document explicit launch-script compatibility
 
 **Files:**
 - Modify: `README.md`
@@ -281,7 +351,8 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Document that missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`.
 - [ ] Document that app launch scripts should bind to `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
 - [ ] Document Wrangler as an example of explicit launch-script config, not auto-detection.
-- [ ] Run: `rg -n "wrangler|health_check|REVERSE_BIN_HEALTH|REVERSE_BIN_PORT|REVERSE_BIN_HOST" README.md docs utils`.
+- [ ] Link to `utils/run-reverse-bin-app.sh` as manual end-to-end test process.
+- [ ] Run: `rg -n "wrangler|health_check|REVERSE_BIN_HEALTH|REVERSE_BIN_PORT|REVERSE_BIN_HOST|run-reverse-bin-app" README.md docs utils`.
 - [ ] Commit: `docs(discover-app): document tcp launch envs`
 
 ---
@@ -294,3 +365,5 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Confirm only acceptable historical references remain, or none.
 - [ ] Review diff for naming consistency and no compatibility aliases.
 - [ ] Run detector against copied/sample Wrangler app with explicit `.env` and confirm JSON includes launch command, TCP target derived from `REVERSE_BIN_HOST`/`REVERSE_BIN_PORT`, health fields derived from `REVERSE_BIN_HEALTH_*`, and `health_status=401`.
+- [ ] Run `bash -n utils/run-reverse-bin-app.sh`.
+- [ ] Run `utils/run-reverse-bin-app.sh ~/Downloads/serverless-registry 9080`, then `curl -i http://127.0.0.1:9080/v2/`, and confirm HTTP `401` from registry app.
