@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -291,7 +292,7 @@ func (c *ReverseBin) Cleanup() error {
 		}
 		if ps.process != nil {
 			c.logger.Info("cleaning up proxy subprocess", zap.Int("pid", ps.process.Pid))
-			c.killProcessGroup(ps.process)
+			_ = signalProcessGroup(ps.process, syscall.SIGKILL)
 			ps.process = nil
 		}
 		ps.mu.Unlock()
