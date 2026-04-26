@@ -264,6 +264,144 @@ type proxyOverrides struct {
 	ReadinessPath    *string   `json:"readiness_path"`
 }
 
+type resolvedConfig struct {
+	Executable       []string
+	WorkingDirectory string
+	Envs             []string
+	ReverseProxyTo   string
+	ReadinessMethod  string
+	ReadinessPath    string
+}
+
+type runningBackend struct {
+	cmd     *exec.Cmd
+	process *os.Process
+	done    chan error
+	cancel  context.CancelFunc
+	config  resolvedConfig
+}
+
+func (c *ReverseBin) resolveConfig(overrides *proxyOverrides) resolvedConfig {
+	cfg := resolvedConfig{
+		Executable:       c.Executable,
+		WorkingDirectory: c.WorkingDirectory,
+		Envs:             c.Envs,
+		ReverseProxyTo:   c.ReverseProxyTo,
+		ReadinessMethod:  c.ReadinessMethod,
+		ReadinessPath:    c.ReadinessPath,
+	}
+	if overrides == nil {
+		return cfg
+	}
+	if overrides.Executable != nil && len(*overrides.Executable) > 0 {
+		cfg.Executable = *overrides.Executable
+	}
+	if overrides.WorkingDirectory != nil {
+		cfg.WorkingDirectory = *overrides.WorkingDirectory
+	}
+	if overrides.Envs != nil {
+		cfg.Envs = *overrides.Envs
+	}
+	if overrides.ReverseProxyTo != nil {
+		cfg.ReverseProxyTo = *overrides.ReverseProxyTo
+	}
+	if overrides.ReadinessMethod != nil {
+		cfg.ReadinessMethod = *overrides.ReadinessMethod
+	}
+	if overrides.ReadinessPath != nil {
+		cfg.ReadinessPath = *overrides.ReadinessPath
+	}
+	return cfg
+}
+
+func (c *ReverseBin) launchBackend(ctx context.Context, cfg resolvedConfig, reason string) (*runningBackend, error) {
+	if len(cfg.Executable) == 0 {
+		return nil, fmt.Errorf("exec (executable) is required")
+	}
+
+	backendCtx, cancel := context.WithCancel(ctx)
+	cmd := exec.CommandContext(backendCtx, cfg.Executable[0], cfg.Executable[1:]...)
+	configureBackendProcAttrs(cmd)
+	cmd.Dir = cfg.WorkingDirectory
+	if cmd.Dir == "" {
+		cmd.Dir = "."
+	}
+
+	var cmdEnv []string
+	if c.PassAll {
+		cmdEnv = os.Environ()
+	} else {
+		for _, key := range c.PassEnvs {
+			if val, ok := os.LookupEnv(key); ok {
+				cmdEnv = append(cmdEnv, key+"="+val)
+			}
+		}
+	}
+	cmdEnv = append(cmdEnv, cfg.Envs...)
+	cmd.Env = cmdEnv
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	if err := cmd.Start(); err != nil {
+		cancel()
+		c.logger.Error("failed to start proxy subprocess",
+			zap.String("executable", cmd.Path),
+			zap.Strings("args", cmd.Args),
+			zap.String("reason", reason),
+			zap.Error(err))
+		return nil, err
+	}
+
+	pid := cmd.Process.Pid
+	c.logger.Info("started proxy subprocess",
+		zap.Int("pid", pid),
+		zap.String("executable", cmd.Path),
+		zap.Strings("args", cmd.Args),
+		zap.String("reason", reason))
+
+	logPipe := func(pipe io.ReadCloser, label string) {
+		defer wg.Done()
+		scanner := bufio.NewScanner(pipe)
+		for scanner.Scan() {
+			c.logger.Info("", zap.Int("pid", pid), zap.String(label, scanner.Text()))
+		}
+	}
+
+	go logPipe(stdoutPipe, "stdout")
+	go logPipe(stderrPipe, "stderr")
+
+	done := make(chan error, 1)
+	go func() {
+		err := cmd.Wait()
+		wg.Wait()
+		c.logger.Info("proxy subprocess terminated",
+			zap.Int("pid", pid),
+			zap.String("reason", reason),
+			zap.Error(err))
+		done <- err
+	}()
+
+	return &runningBackend{
+		cmd:     cmd,
+		process: cmd.Process,
+		done:    done,
+		cancel:  cancel,
+		config:  cfg,
+	}, nil
+}
+
 func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string) (*proxyOverrides, error) {
 	overrides := new(proxyOverrides)
 	// If a dynamic proxy detector is configured, execute it to determine
@@ -307,128 +445,44 @@ func (c *ReverseBin) startProcess(r *http.Request, ps *processState, key string)
 			return nil, fmt.Errorf("failed to unmarshal detector output: %v\nOutput: %s", err, outBuf.String())
 		}
 	}
-	var execPath string
-	var execArgs []string
+	cfg := c.resolveConfig(overrides)
+	overrides.Executable = &cfg.Executable
+	overrides.WorkingDirectory = &cfg.WorkingDirectory
+	overrides.Envs = &cfg.Envs
+	overrides.ReverseProxyTo = &cfg.ReverseProxyTo
+	overrides.ReadinessMethod = &cfg.ReadinessMethod
+	overrides.ReadinessPath = &cfg.ReadinessPath
 
-	if overrides.Executable != nil && len(*overrides.Executable) > 0 {
-		execPath = (*overrides.Executable)[0]
-		execArgs = (*overrides.Executable)[1:]
-	} else if len(c.Executable) > 0 {
-		execPath = c.Executable[0]
-		execArgs = c.Executable[1:]
-	}
-	if overrides.WorkingDirectory == nil {
-		overrides.WorkingDirectory = &c.WorkingDirectory
-	}
-	if overrides.Envs == nil {
-		overrides.Envs = &c.Envs
-	}
-	if overrides.ReverseProxyTo == nil {
-		overrides.ReverseProxyTo = &c.ReverseProxyTo
-	}
-	if overrides.ReadinessMethod == nil {
-		overrides.ReadinessMethod = &c.ReadinessMethod
-	}
-	if overrides.ReadinessPath == nil {
-		overrides.ReadinessPath = &c.ReadinessPath
-	}
-
-	if !isUnixUpstream(*overrides.ReverseProxyTo) && !readinessConfigured(*overrides.ReadinessMethod, *overrides.ReadinessPath) {
+	if !isUnixUpstream(cfg.ReverseProxyTo) && !readinessConfigured(cfg.ReadinessMethod, cfg.ReadinessPath) {
 		return nil, fmt.Errorf("readiness_check is required for non-unix reverse_proxy_to targets")
 	}
 
-	if isUnixUpstream(*overrides.ReverseProxyTo) {
-		socketPath := strings.TrimPrefix(*overrides.ReverseProxyTo, "unix/")
+	if isUnixUpstream(cfg.ReverseProxyTo) {
+		socketPath := strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")
 		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
 			return nil, fmt.Errorf("failed to remove pre-existing unix socket %s: %w", socketPath, err)
 		}
 	}
 
-	ctx, cancel := context.WithCancel(c.ctx)
-	cmd := exec.CommandContext(ctx, execPath, execArgs...)
-	configureBackendProcAttrs(cmd)
-	cmd.Dir = *overrides.WorkingDirectory
-	if cmd.Dir == "" {
-		cmd.Dir = "."
-	}
-
-	var cmdEnv []string
-	if c.PassAll {
-		cmdEnv = os.Environ()
-	} else {
-		for _, key := range c.PassEnvs {
-			if val, ok := os.LookupEnv(key); ok {
-				cmdEnv = append(cmdEnv, key+"="+val)
-			}
-		}
-	}
-	cmdEnv = append(cmdEnv, *overrides.Envs...)
-	cmd.Env = cmdEnv
-
-	// Set up output capturing before starting the process to ensure no output is missed.
-	// We use a dummy PID placeholder until the process starts and we get the real one.
-	stdoutPipe, err := cmd.StdoutPipe()
+	backend, err := c.launchBackend(c.ctx, cfg, "request")
 	if err != nil {
-		cancel()
 		return nil, err
 	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		c.logger.Error("failed to start proxy subprocess",
-			zap.String("executable", cmd.Path),
-			zap.Strings("args", cmd.Args),
-			zap.Error(err))
-		return nil, err
-	}
-	ps.process = cmd.Process
-	ps.cancel = cancel
+	ps.process = backend.process
+	ps.cancel = backend.cancel
 	pid := ps.process.Pid
-
-	c.logger.Info("started proxy subprocess",
-		zap.Int("pid", pid),
-		zap.String("executable", cmd.Path),
-		zap.Strings("args", cmd.Args))
-
-	logPipe := func(pipe io.ReadCloser, label string) {
-		defer wg.Done()
-		scanner := bufio.NewScanner(pipe)
-		for scanner.Scan() {
-			c.logger.Info("", zap.Int("pid", pid), zap.String(label, scanner.Text()))
-		}
-	}
-
-	go logPipe(stdoutPipe, "stdout")
-	go logPipe(stderrPipe, "stderr")
 
 	exitChan := make(chan error, 1)
 	go func() {
-		err := cmd.Wait()
-		wg.Wait()
+		err := <-backend.done
 
 		ps.mu.Lock()
-		reason := ps.terminationMsg
-		if reason == "" {
-			reason = "unexpected exit"
-		}
-		ps.terminationMsg = ""
-		if ps.process == cmd.Process {
+		if ps.process == backend.process {
 			ps.process = nil
 		}
+		ps.terminationMsg = ""
 		ps.mu.Unlock()
 
-		c.logger.Info("proxy subprocess terminated",
-			zap.Int("pid", pid),
-			zap.String("reason", reason),
-			zap.Error(err))
 		exitChan <- err
 	}()
 

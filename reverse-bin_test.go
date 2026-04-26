@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -63,6 +64,48 @@ func TestProcessKillPlanWindows(t *testing.T) {
 	}
 	if plan.signal != syscall.SIGKILL {
 		t.Fatalf("windows kill plan must preserve requested signal: got %v", plan.signal)
+	}
+}
+
+func testStringPtr(s string) *string {
+	return &s
+}
+
+// TestResolvedConfigUsesDetectorOverrides verifies dynamic detector output overrides static config.
+func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
+	rb := &ReverseBin{
+		Executable:       []string{"static", "arg"},
+		WorkingDirectory: "/static",
+		Envs:             []string{"A=static"},
+		ReverseProxyTo:   "unix//static.sock",
+		ReadinessMethod:  "GET",
+		ReadinessPath:    "/static-ready",
+	}
+	overrides := &proxyOverrides{
+		Executable:       &[]string{"dynamic", "arg2"},
+		WorkingDirectory: testStringPtr("/dynamic"),
+		Envs:             &[]string{"A=dynamic"},
+		ReverseProxyTo:   testStringPtr("unix//dynamic.sock"),
+		ReadinessMethod:  testStringPtr("HEAD"),
+		ReadinessPath:    testStringPtr("/dynamic-ready"),
+	}
+
+	cfg := rb.resolveConfig(overrides)
+
+	if got, want := strings.Join(cfg.Executable, " "), "dynamic arg2"; got != want {
+		t.Fatalf("expected executable override %q, got %q", want, got)
+	}
+	if cfg.WorkingDirectory != "/dynamic" {
+		t.Fatalf("expected working directory override, got %q", cfg.WorkingDirectory)
+	}
+	if got, want := strings.Join(cfg.Envs, ","), "A=dynamic"; got != want {
+		t.Fatalf("expected env override %q, got %q", want, got)
+	}
+	if cfg.ReverseProxyTo != "unix//dynamic.sock" {
+		t.Fatalf("expected reverse proxy override, got %q", cfg.ReverseProxyTo)
+	}
+	if cfg.ReadinessMethod != "HEAD" || cfg.ReadinessPath != "/dynamic-ready" {
+		t.Fatalf("expected readiness override HEAD /dynamic-ready, got %s %s", cfg.ReadinessMethod, cfg.ReadinessPath)
 	}
 }
 
