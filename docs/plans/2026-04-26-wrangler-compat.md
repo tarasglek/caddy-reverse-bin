@@ -38,7 +38,7 @@ Detector must derive `reverse_proxy_to` from `REVERSE_BIN_HOST` and `REVERSE_BIN
 
 ### Manual reverse-bin launch process
 
-Add a dev helper that runs one app through real reverse-bin/Caddy without Debian packaging or systemd:
+Add a dev helper that runs one app through real reverse-bin/Caddy without Debian packaging or systemd. This becomes the generic compatibility workflow for bringing up any new app type: write app `.env`, run it through `utils/run-reverse-bin-app.sh`, curl the expected route, then promote the working `.env`/launch-script pattern into docs or examples.
 
 ```sh
 utils/run-reverse-bin-app.sh /path/to/app 9080
@@ -324,6 +324,7 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 **Files:**
 - Create: `utils/run-reverse-bin-app.sh`
 - Modify: `README.md`
+- Modify: `CONTRIBUTING.md`
 
 **Checklist:**
 
@@ -334,6 +335,7 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Run `go run ./cmd/caddy run --adapter caddyfile --config "$TEMP_CADDYFILE"` from repo root.
 - [ ] Trap shell exit and remove the temporary Caddyfile.
 - [ ] Add usage docs with curl smoke command.
+- [ ] Update `CONTRIBUTING.md` with the generic new-app compatibility workflow: create `.env`, run `utils/run-reverse-bin-app.sh APP_DIR PORT`, curl expected route/status, then add docs/examples once working.
 - [ ] Run: `bash -n utils/run-reverse-bin-app.sh`.
 - [ ] Run: `utils/run-reverse-bin-app.sh examples/reverse-proxy/apps/python3-echo 9080`, then in another shell run `curl -i http://127.0.0.1:9080/` and verify HTTP `200` from the example app.
 - [ ] Commit: `feat(dev): add reverse-bin app runner`
@@ -342,6 +344,7 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 
 **Files:**
 - Modify: `README.md`
+- Modify: `CONTRIBUTING.md`
 - Possibly create example under `examples/` if project has suitable app examples.
 
 **Checklist:**
@@ -352,7 +355,8 @@ return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 - [ ] Document that app launch scripts should bind to `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
 - [ ] Document Wrangler as an example of explicit launch-script config, not auto-detection.
 - [ ] Link to `utils/run-reverse-bin-app.sh` as manual end-to-end test process.
-- [ ] Run: `rg -n "wrangler|health_check|REVERSE_BIN_HEALTH|REVERSE_BIN_PORT|REVERSE_BIN_HOST|run-reverse-bin-app" README.md docs utils`.
+- [ ] In `CONTRIBUTING.md`, document this as the preferred generic process for adding compatibility with new app runtimes before adding detector-specific code.
+- [ ] Run: `rg -n "wrangler|health_check|REVERSE_BIN_HEALTH|REVERSE_BIN_PORT|REVERSE_BIN_HOST|run-reverse-bin-app|new app" README.md CONTRIBUTING.md docs utils`.
 - [ ] Commit: `docs(discover-app): document tcp launch envs`
 
 ---
