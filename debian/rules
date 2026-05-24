@@ -11,6 +11,7 @@ override_dh_auto_build:
 	go build -o build/reverse-bin-caddy ./cmd/caddy
 	install -m 0755 "$(shell command -v uv)" build/uv
 	install -m 0755 "$(shell command -v landrun)" build/landrun
+	install -m 0755 "$(shell command -v deno)" build/deno
 
 override_dh_auto_test:
 
