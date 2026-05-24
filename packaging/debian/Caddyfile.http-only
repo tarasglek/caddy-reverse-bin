@@ -4,7 +4,7 @@ http://:{$REVERSE_BIN_HTTP_PORT:7777} {
 	@app host *.{$DOMAIN_SUFFIX}
 	handle @app {
 		reverse-bin * {
-			dynamic_proxy_detector "/usr/lib/reverse-bin/discover-app.py" --no-sandbox "/var/lib/reverse-bin/apps/{http.request.host.labels.2}"
+			dynamic_proxy_detector "/usr/lib/reverse-bin/discover-app.py" "/var/lib/reverse-bin/apps/{http.request.host.labels.2}"
 			health_check HEAD /
 			idle_timeout_ms {$REVERSE_BIN_IDLE_TIMEOUT_MS:300000}
 			health_timeout_ms {$REVERSE_BIN_HEALTH_TIMEOUT_MS:15000}

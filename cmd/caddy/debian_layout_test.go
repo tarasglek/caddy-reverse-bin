@@ -49,6 +49,21 @@ func TestPackagedCaddyfileUsesDebianPaths(t *testing.T) {
 }
 
 // TestPackagedServiceUsesDebianPaths verifies the packaged service uses the approved binary, PATH, and home dir.
+func TestPackagedCaddyfilesUseSandboxedDiscovery(t *testing.T) {
+	for _, path := range []string{
+		"../../packaging/debian/Caddyfile.acme",
+		"../../packaging/debian/Caddyfile.http-only",
+	} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read packaged Caddyfile %s: %v", path, err)
+		}
+		if strings.Contains(string(content), "--no-sandbox") {
+			t.Fatalf("packaged Caddyfile %s must not disable app sandboxing", path)
+		}
+	}
+}
+
 func TestPackagedServiceUsesDebianPaths(t *testing.T) {
 	content, err := os.ReadFile("../../packaging/debian/reverse-bin.service")
 	if err != nil {
