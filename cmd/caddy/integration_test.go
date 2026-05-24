@@ -628,6 +628,110 @@ http.server.HTTPServer((host, port), Handler).serve_forever()
 	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/registry/ok", setup.Port), 200, "registry-backend", "explicit 401 health status must allow backend startup and proxying")
 }
 
+func TestHealthCheckAcceptsRedirectWithoutFollowing(t *testing.T) {
+	requireIntegration(t)
+
+	port, err := GetFreePort()
+	if err != nil {
+		t.Fatalf("failed to allocate backend port: %v", err)
+	}
+
+	app := createExecutableScript(t, t.TempDir(), "redirect-health.py", `#!/usr/bin/env python3
+import http.server
+import os
+
+PORT = int(os.environ["BACKEND_PORT"])
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            self.send_response(302)
+            self.send_header("Location", "http://127.0.0.1:1/unreachable")
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"redirect-health-ok")
+
+    def log_message(self, *_args):
+        return
+
+http.server.HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+`)
+
+	setup, dispose := createReverseProxySetup(t, `handle /redirect-health/* {
+		reverse-bin {
+			exec {{APP}}
+			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
+			env BACKEND_PORT={{BACKEND_PORT}}
+			health_check GET /health
+		}
+	}`, map[string]string{
+		"APP":          app,
+		"BACKEND_PORT": fmt.Sprintf("%d", port),
+	})
+	defer dispose()
+
+	// HTTP request verifies health treats the backend's 302 as healthy instead of following its Location.
+	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/redirect-health/ok", setup.Port), 200, "redirect-health-ok", "health probe must accept 3xx response without following redirect")
+}
+
+func TestHealthCheckSetsForwardedHeaders(t *testing.T) {
+	requireIntegration(t)
+
+	port, err := GetFreePort()
+	if err != nil {
+		t.Fatalf("failed to allocate backend port: %v", err)
+	}
+
+	app := createExecutableScript(t, t.TempDir(), "forwarded-health.py", `#!/usr/bin/env python3
+import http.server
+import os
+
+PORT = int(os.environ["BACKEND_PORT"])
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/health":
+            host = self.headers.get("X-Forwarded-Host", "")
+            proto = self.headers.get("X-Forwarded-Proto", "")
+            if host.startswith("localhost:") and proto == "http":
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"healthy")
+                return
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(f"host={host} proto={proto}".encode())
+            return
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"forwarded-health-ok")
+
+    def log_message(self, *_args):
+        return
+
+http.server.HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+`)
+
+	setup, dispose := createReverseProxySetup(t, `handle /fwd/* {
+		reverse-bin {
+			exec {{APP}}
+			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
+			env BACKEND_PORT={{BACKEND_PORT}}
+			health_check GET /health
+		}
+	}`, map[string]string{
+		"APP":          app,
+		"BACKEND_PORT": fmt.Sprintf("%d", port),
+	})
+	defer dispose()
+
+	// HTTP request triggers backend startup; the health probe must receive
+	// X-Forwarded-Host and X-Forwarded-Proto before proxying can start.
+	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/fwd/ok", setup.Port), 200, "forwarded-health-ok", "health probe must include forwarded host/proto headers from triggering request")
+}
+
 func TestHealthFailureTimeout(t *testing.T) {
 	requireIntegration(t)
 

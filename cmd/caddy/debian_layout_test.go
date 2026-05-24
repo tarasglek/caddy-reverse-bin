@@ -23,11 +23,15 @@ func TestDebianLayoutConstants(t *testing.T) {
 
 // TestPackagedCaddyfileUsesDebianPaths verifies the packaged config uses the approved absolute paths.
 func TestPackagedCaddyfileUsesDebianPaths(t *testing.T) {
-	content, err := os.ReadFile("../../packaging/debian/Caddyfile")
+	acmeContent, err := os.ReadFile("../../packaging/debian/Caddyfile.acme")
 	if err != nil {
-		t.Fatalf("read packaged Caddyfile: %v", err)
+		t.Fatalf("read packaged ACME Caddyfile: %v", err)
 	}
-	text := string(content)
+	httpOnlyContent, err := os.ReadFile("../../packaging/debian/Caddyfile.http-only")
+	if err != nil {
+		t.Fatalf("read packaged HTTP-only Caddyfile: %v", err)
+	}
+	text := string(acmeContent) + "\n" + string(httpOnlyContent)
 	for _, want := range []string{
 		"/usr/lib/reverse-bin/allow-domain.py",
 		"/usr/lib/reverse-bin/discover-app.py",
@@ -52,7 +56,7 @@ func TestPackagedServiceUsesDebianPaths(t *testing.T) {
 	}
 	text := string(content)
 	for _, want := range []string{
-		"ExecStart=/usr/bin/reverse-bin-caddy run --config /etc/reverse-bin/Caddyfile --adapter caddyfile",
+		"ExecStart=/usr/bin/reverse-bin-caddy run --config ${REVERSE_BIN_CADDYFILE} --adapter caddyfile",
 		"WorkingDirectory=/var/lib/reverse-bin/home",
 		"RuntimeDirectory=reverse-bin",
 		"Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin",
