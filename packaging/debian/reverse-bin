@@ -7,6 +7,14 @@
 OPS_EMAIL=admin@example.com
 DOMAIN_SUFFIX=example.com
 
+# Select the Caddy config used by the systemd unit.
+# Use Caddyfile.acme for public HTTPS with on-demand ACME certificates.
+# Use Caddyfile.http-only behind a trusted proxy/tunnel such as Cloudflare Tunnel.
+REVERSE_BIN_CADDYFILE=/etc/reverse-bin/Caddyfile.acme
+
+# HTTP-only listener port. Only used by Caddyfile.http-only.
+REVERSE_BIN_HTTP_PORT=7777
+
 # Shared backend lifecycle defaults used by every packaged reverse-bin block.
 REVERSE_BIN_IDLE_TIMEOUT_MS=300000
 REVERSE_BIN_HEALTH_TIMEOUT_MS=15000

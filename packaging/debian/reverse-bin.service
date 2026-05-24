@@ -11,7 +11,7 @@ WorkingDirectory=/var/lib/reverse-bin/home
 RuntimeDirectory=reverse-bin
 Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin
 EnvironmentFile=-/etc/default/reverse-bin
-ExecStart=/usr/bin/reverse-bin-caddy run --config /etc/reverse-bin/Caddyfile --adapter caddyfile
+ExecStart=/usr/bin/reverse-bin-caddy run --config ${REVERSE_BIN_CADDYFILE} --adapter caddyfile
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=45s

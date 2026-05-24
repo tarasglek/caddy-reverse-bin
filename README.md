@@ -7,7 +7,8 @@
 The package installs these primary paths:
 
 - binary: `/usr/bin/reverse-bin-caddy`
-- config: `/etc/reverse-bin/Caddyfile`
+- config entrypoint: selected by `REVERSE_BIN_CADDYFILE` in `/etc/default/reverse-bin`
+- packaged configs: `/etc/reverse-bin/Caddyfile.acme`, `/etc/reverse-bin/Caddyfile.http-only`
 - defaults: `/etc/default/reverse-bin`
 - helper scripts: `/usr/lib/reverse-bin/`
 - writable app root: `/var/lib/reverse-bin/apps/`
@@ -31,8 +32,8 @@ This produces a `.deb` in the parent directory.
 ## Runtime model
 
 - Caddy runs from the packaged systemd unit.
-- The service reads `/etc/reverse-bin/Caddyfile`.
 - The service loads deployment-specific variables from `/etc/default/reverse-bin`.
+- The service reads the Caddy config path from `REVERSE_BIN_CADDYFILE`.
 - App directories live under `/var/lib/reverse-bin/apps/`.
 - Example apps ship under `/usr/share/doc/reverse-bin/examples/` and can be copied into the app root.
 
@@ -53,6 +54,23 @@ Set these values in `/etc/default/reverse-bin` before restarting:
 OPS_EMAIL=admin@overthinker.dev
 DOMAIN_SUFFIX=overthinker.dev
 ```
+
+## TLS and Cloudflare Tunnel modes
+
+For public HTTPS with Caddy-managed on-demand ACME certificates, use:
+
+```sh
+REVERSE_BIN_CADDYFILE=/etc/reverse-bin/Caddyfile.acme
+```
+
+When reverse-bin is behind a trusted proxy or Cloudflare Tunnel that terminates TLS, use HTTP-only mode:
+
+```sh
+REVERSE_BIN_CADDYFILE=/etc/reverse-bin/Caddyfile.http-only
+REVERSE_BIN_HTTP_PORT=7777
+```
+
+Point the tunnel ingress at `http://localhost:${REVERSE_BIN_HTTP_PORT}`. HTTP-only mode should not be exposed directly to the public internet without a trusted TLS-terminating proxy in front of it.
 
 ## Health checks
 
