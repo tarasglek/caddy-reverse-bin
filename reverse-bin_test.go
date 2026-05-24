@@ -133,7 +133,7 @@ func TestWaitHealthyStopsOnContextCancel(t *testing.T) {
 	err := rb.waitHealthy(ctx, nil, resolvedConfig{
 		ReverseProxyTo: "unix//tmp/never-healthy.sock",
 		HealthMethod:   "",
-	})
+	}, nil)
 
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled from waitHealthy, got %v", err)
@@ -428,7 +428,7 @@ func TestProbeHealthAcceptsExplicitStatus(t *testing.T) {
 		HealthMethod:   http.MethodGet,
 		HealthPath:     "/v2/",
 		HealthStatus:   http.StatusUnauthorized,
-	})
+	}, nil)
 
 	if err != nil {
 		t.Fatalf("probeHealth returned error: %v", err)
@@ -455,7 +455,7 @@ func TestProbeHealthRejectsUnexpectedExplicitStatus(t *testing.T) {
 		HealthMethod:   http.MethodGet,
 		HealthPath:     "/v2/",
 		HealthStatus:   http.StatusUnauthorized,
-	})
+	}, nil)
 
 	if err != nil {
 		t.Fatalf("probeHealth returned error: %v", err)

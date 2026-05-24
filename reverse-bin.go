@@ -448,7 +448,7 @@ func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolved
 	return cfg, nil
 }
 
-func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig) (bool, error) {
+func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig, sourceReq *http.Request) (bool, error) {
 	if cfg.HealthMethod == "" {
 		if !isUnixUpstream(cfg.ReverseProxyTo) {
 			return false, fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
@@ -469,7 +469,12 @@ func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig) (bool,
 	target = strings.TrimPrefix(target, "https://")
 
 	var checkURL string
-	client := &http.Client{Timeout: 500 * time.Millisecond}
+	client := &http.Client{
+		Timeout: 500 * time.Millisecond,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	if isUnixUpstream(cfg.ReverseProxyTo) {
 		socketPath := strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")
 		checkURL = fmt.Sprintf("%s://localhost%s", scheme, cfg.HealthPath)
@@ -487,6 +492,7 @@ func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig) (bool,
 	if err != nil {
 		return false, err
 	}
+	setForwardedHealthHeaders(req, sourceReq)
 	resp, err := client.Do(req)
 	if err != nil {
 		return false, err
@@ -499,7 +505,39 @@ func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig) (bool,
 	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
 }
 
-func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg resolvedConfig) error {
+func setForwardedHealthHeaders(healthReq *http.Request, sourceReq *http.Request) {
+	if healthReq == nil || sourceReq == nil {
+		return
+	}
+
+	if sourceReq.Host != "" {
+		healthReq.Header.Set("X-Forwarded-Host", sourceReq.Host)
+	}
+
+	proto := sourceReq.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		proto = "http"
+		if sourceReq.TLS != nil {
+			proto = "https"
+		}
+	}
+	healthReq.Header.Set("X-Forwarded-Proto", proto)
+
+	if sourceReq.RemoteAddr == "" {
+		return
+	}
+	clientIP, _, err := net.SplitHostPort(sourceReq.RemoteAddr)
+	if err != nil {
+		clientIP = sourceReq.RemoteAddr
+	}
+	if existing := sourceReq.Header.Get("X-Forwarded-For"); existing != "" {
+		healthReq.Header.Set("X-Forwarded-For", existing+", "+clientIP)
+	} else {
+		healthReq.Header.Set("X-Forwarded-For", clientIP)
+	}
+}
+
+func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg resolvedConfig, sourceReq *http.Request) error {
 	tickerInterval := 200 * time.Millisecond
 	if isUnixUpstream(cfg.ReverseProxyTo) && cfg.HealthMethod == "" {
 		tickerInterval = 50 * time.Millisecond
@@ -521,7 +559,7 @@ func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg re
 			}
 			return fmt.Errorf("reverse proxy process exited during health check: %v", err)
 		case <-ticker.C:
-			healthy, err := c.probeHealth(ctx, cfg)
+			healthy, err := c.probeHealth(ctx, cfg, sourceReq)
 			if err != nil {
 				continue
 			}
@@ -710,7 +748,7 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 				startCtx, cancel := context.WithTimeout(req.request.Context(), c.healthTimeout())
 				rb, err := c.launchBackend(c.moduleContext(), cfg, "request")
 				if err == nil {
-					err = c.waitHealthy(startCtx, rb, cfg)
+					err = c.waitHealthy(startCtx, rb, cfg, req.request)
 				}
 				cancel()
 				if err != nil {
