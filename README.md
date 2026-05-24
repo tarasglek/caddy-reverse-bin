@@ -10,7 +10,7 @@ The package installs these primary paths:
 - config entrypoint: selected by `REVERSE_BIN_CADDYFILE` in `/etc/default/reverse-bin`
 - packaged configs: `/etc/reverse-bin/Caddyfile.acme`, `/etc/reverse-bin/Caddyfile.http-only`
 - defaults: `/etc/default/reverse-bin`
-- helper scripts: `/usr/lib/reverse-bin/`
+- helper scripts and bundled runtimes: `/usr/lib/reverse-bin/`
 - writable app root: `/var/lib/reverse-bin/apps/`
 - service home: `/var/lib/reverse-bin/home`
 - packaged examples: `/usr/share/doc/reverse-bin/examples/`
