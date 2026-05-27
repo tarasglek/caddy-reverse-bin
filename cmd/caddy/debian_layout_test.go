@@ -48,7 +48,32 @@ func TestPackagedCaddyfileUsesDebianPaths(t *testing.T) {
 	}
 }
 
-// TestPackagedServiceUsesDebianPaths verifies the packaged service uses the approved binary, PATH, and home dir.
+// TestPackagedCaddyfilesDocumentHostToAppMapping verifies packaged routing explains apex and subdomain app mapping.
+func TestPackagedCaddyfilesDocumentHostToAppMapping(t *testing.T) {
+	for _, path := range []string{
+		"../../packaging/debian/Caddyfile.acme",
+		"../../packaging/debian/Caddyfile.http-only",
+	} {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read packaged Caddyfile %s: %v", path, err)
+		}
+		text := string(content)
+		for _, want := range []string{
+			"# Map request host to the app directory consumed by discover-app.py.",
+			"# The apex domain has no subdomain label, so serve it from the conventional \"www\" app.",
+			"map {host} {reverse_bin_app_dir}",
+			"{$DOMAIN_SUFFIX} /var/lib/reverse-bin/apps/www",
+			"default /var/lib/reverse-bin/apps/{http.request.host.labels.2}",
+			`dynamic_proxy_detector "/usr/lib/reverse-bin/discover-app.py" "{reverse_bin_app_dir}"`,
+		} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("packaged Caddyfile %s missing documented host mapping fragment %q", path, want)
+			}
+		}
+	}
+}
+
 func TestPackagedCaddyfilesUseSandboxedDiscovery(t *testing.T) {
 	for _, path := range []string{
 		"../../packaging/debian/Caddyfile.acme",

@@ -1,3 +1,12 @@
+reverse-bin (0.0.0-7) unstable; urgency=medium
+
+  * feat(discovery): serve static index.html apps with Caddy.
+  * fix(packaging): route apex domain to the www app.
+  * fix(packaging): keep app discovery sandboxed by default.
+  * fix(health): preserve forwarded headers and redirect status in health probes.
+
+ -- Taras Glek <taras@example.com>  Wed, 27 May 2026 15:51:16 +0300
+
 reverse-bin (0.0.0-6) unstable; urgency=medium
 
   * feat(health): support explicit health probe status codes.
