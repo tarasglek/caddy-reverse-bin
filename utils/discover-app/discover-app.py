@@ -63,7 +63,7 @@ class DiscoverAppResult(TypedDict, total=False):
 
 @dataclass(frozen=True)
 class DetectedApp:
-    kind: str                  # e.g. "main.ts" or "main.py"
+    kind: str                  # e.g. "main.ts", "main.py", "index.html", or "dist/index.html"
     supports_unix_socket: bool
 
 
@@ -293,7 +293,15 @@ def detect_app(working_dir: Path) -> DetectedApp:
     if path.exists() and os.access(path, os.X_OK):
         return DetectedApp(kind="main.py", supports_unix_socket=True)
 
-    raise FileNotFoundError(f"No supported entry point (main.ts or executable main.py) found in {working_dir}")
+    # e.g. static HTML app
+    if (working_dir / "index.html").is_file():
+        return DetectedApp(kind="index.html", supports_unix_socket=False)
+    if (working_dir / "dist/index.html").is_file():
+        return DetectedApp(kind="dist/index.html", supports_unix_socket=False)
+
+    raise FileNotFoundError(
+        f"No supported entry point (main.ts, executable main.py, index.html, or dist/index.html) found in {working_dir}"
+    )
 
 
 def resolve_command(working_dir: Path, config: EnvAppConfig) -> CommandResolution:
@@ -323,6 +331,11 @@ def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> lis
 
     if detection.kind == "main.py":
         return ["./main.py"]
+
+    if detection.kind in {"index.html", "dist/index.html"}:
+        port = extract_port(reverse_proxy_to)
+        root = "." if detection.kind == "index.html" else "dist"
+        return ["reverse-bin-caddy", "file-server", "--listen", f"127.0.0.1:{port}", "--root", root]
 
     raise ValueError(f"Unsupported detected app kind: {detection.kind}")
 

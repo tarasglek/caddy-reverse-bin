@@ -414,7 +414,7 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1)
         self.assertRegex(
             completed.stderr,
-            r"^Error: No supported entry point \(main\.ts or executable main\.py\) found in .+\n$",
+            r"^Error: No supported entry point \(main\.ts, executable main\.py, index\.html, or dist/index\.html\) found in .+\n$",
         )
 
     def test_resolve_app_preserves_explicit_listen_in_child_envs(self) -> None:
@@ -713,6 +713,32 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(payload["health_method"], "GET")
         self.assertEqual(payload["health_path"], "/v2/")
         self.assertEqual(payload["health_status"], 401)
+
+    def test_resolve_app_detects_root_index_html_after_runtime_entrypoints(self) -> None:
+        # Intent: verify static root index.html is served by Caddy only after Python/Deno entrypoints are absent.
+        (self.app_dir / "index.html").write_text("<h1>static</h1>\n")
+
+        resolved = discover_app.resolve_app(self.app_dir, dot_env={"REVERSE_BIN_PORT": "9999"})
+
+        self.assertEqual(
+            resolved.executable,
+            ["reverse-bin-caddy", "file-server", "--listen", "127.0.0.1:9999", "--root", "."],
+        )
+        self.assertEqual(resolved.reverse_proxy_to, "127.0.0.1:9999")
+
+    def test_resolve_app_detects_dist_index_html_after_root_index_html(self) -> None:
+        # Intent: verify dist/index.html is served by Caddy when no runtime entrypoint or root index.html exists.
+        dist_dir = self.app_dir / "dist"
+        dist_dir.mkdir()
+        (dist_dir / "index.html").write_text("<h1>static dist</h1>\n")
+
+        resolved = discover_app.resolve_app(self.app_dir, dot_env={"REVERSE_BIN_PORT": "9999"})
+
+        self.assertEqual(
+            resolved.executable,
+            ["reverse-bin-caddy", "file-server", "--listen", "127.0.0.1:9999", "--root", "dist"],
+        )
+        self.assertEqual(resolved.reverse_proxy_to, "127.0.0.1:9999")
 
     def test_main_rejects_main_ts_with_explicit_socket_path(self) -> None:
         # Intent: verify an explicit unix socket choice fails fast when the inferred TypeScript runtime only supports TCP.
