@@ -13,6 +13,8 @@ The package installs these primary paths:
 - helper scripts and bundled runtimes: `/usr/lib/reverse-bin/`
 - writable app root: `/var/lib/reverse-bin/apps/`
 - service home: `/var/lib/reverse-bin/home`
+- SOPS age identity: `/var/lib/reverse-bin/keys/age.key`
+- SOPS age recipient: `/var/lib/reverse-bin/keys/age.pub`
 - packaged examples: `/usr/share/doc/reverse-bin/examples/`
 
 ## What it does
@@ -36,6 +38,7 @@ This produces a `.deb` in the parent directory.
 - The service reads the Caddy config path from `REVERSE_BIN_CADDYFILE`.
 - App directories live under `/var/lib/reverse-bin/apps/`.
 - Example apps ship under `/usr/share/doc/reverse-bin/examples/` and can be copied into the app root.
+- The package generates the age identity once on install and never overwrites the private key.
 
 ## Example deployment flow
 
@@ -107,6 +110,19 @@ REVERSE_BIN_HEALTH_STATUS=401
 - `REVERSE_BIN_HEALTH_STATUS` is optional and enables exact-status health checks like registry `/v2/` returning `401`.
 
 Wrangler apps use this same explicit launch-script pattern; there is no Wrangler-specific detector or separate sandbox wrapper in the compatibility path.
+
+## Encrypted app env files
+
+Apps may use either plaintext `.env` or encrypted `secrets.enc.env`, not both. `discover-app.py` rejects app directories containing both files to avoid ambiguous secret sources.
+
+Create `secrets.enc.env` with the package age recipient:
+
+```bash
+cat /var/lib/reverse-bin/keys/age.pub
+sops --encrypt --input-type dotenv --output-type dotenv --age <recipient> secrets.env > secrets.enc.env
+```
+
+At runtime, systemd sets `SOPS_AGE_KEY_FILE=/var/lib/reverse-bin/keys/age.key`. `discover-app.py` decrypts `secrets.enc.env` in memory with bundled `/usr/lib/reverse-bin/sops` and passes parsed dotenv keys to the child app. The private key stays outside app directories; child apps only receive `SOPS_AGE_KEY_FILE` if the app env explicitly defines it.
 
 ## Manual app smoke runner
 
