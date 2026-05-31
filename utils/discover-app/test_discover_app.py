@@ -23,11 +23,12 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.addCleanup(self.temp_dir.cleanup)
         self.app_dir = Path(self.temp_dir.name)
 
-    def run_cli(self) -> subprocess.CompletedProcess[str]:
+    def run_cli(self, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [os.environ.get("PYTHON", sys.executable), str(MODULE_PATH), "--no-sandbox", str(self.app_dir)],
             capture_output=True,
             text=True,
+            env=env,
         )
 
     def make_main_py(self) -> None:
@@ -326,6 +327,35 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(env_map["LISTEN"], "8080")
         self.assertEqual(env_map["CUSTOM"], "from-memory")
 
+    def test_find_env_source_rejects_plaintext_and_encrypted_env_files(self) -> None:
+        # Intent: verify app config has exactly one env source and rejects ambiguous plaintext plus encrypted secrets.
+        (self.app_dir / ".env").write_text("CUSTOM=plain\n")
+        (self.app_dir / "secrets.enc.env").write_text("CUSTOM=encrypted\n")
+
+        with self.assertRaisesRegex(ValueError, "Cannot use both \\.env and encrypted env file"):
+            discover_app.find_env_source(self.app_dir)
+
+    def test_load_app_env_decrypts_sops_dotenv_without_writing_plaintext(self) -> None:
+        # Intent: verify encrypted dotenv content is decrypted in memory, parsed, and never materialized beside secrets.enc.env.
+        encrypted_path = self.app_dir / "secrets.enc.env"
+        encrypted_path.write_text("sops metadata placeholder\n")
+        calls: list[list[str]] = []
+
+        def fake_runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout="SECRET=decrypted\nEMPTY=\nIGNORED\n", stderr="")
+
+        env_map = discover_app.load_app_env(self.app_dir, runner=fake_runner)
+
+        self.assertEqual(env_map["SECRET"], "decrypted")
+        self.assertEqual(env_map["EMPTY"], "")
+        self.assertNotIn("IGNORED", env_map)
+        self.assertEqual(
+            calls,
+            [["sops", "--decrypt", "--input-type", "dotenv", "--output-type", "dotenv", str(encrypted_path)]],
+        )
+        self.assertEqual(sorted(path.name for path in self.app_dir.iterdir()), ["secrets.enc.env"])
+
     def test_build_app_envs_applies_overrides(self) -> None:
         # Intent: verify generated env values can override blank explicit config when a port is auto-assigned.
         envs = discover_app.build_app_envs(
@@ -506,6 +536,30 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(payload["executable"], ["./main.py"])
         self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:8080")
         self.assertIn("LISTEN=8080", payload["envs"])
+
+    def test_main_uses_sops_dotenv_for_app_env(self) -> None:
+        # Intent: verify the CLI decrypts secrets.enc.env through sops and feeds resulting dotenv keys to the app env.
+        self.make_main_py()
+        (self.app_dir / "secrets.enc.env").write_text("sops metadata placeholder\n")
+        fake_bin = self.app_dir / "fake-bin"
+        fake_bin.mkdir()
+        fake_sops = fake_bin / "sops"
+        fake_sops.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' 'REVERSE_BIN_PORT=9999' 'SECRET_KEY=from-sops'\n"
+        )
+        fake_sops.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+
+        completed = self.run_cli(env=env)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        payload = json.loads(completed.stdout)
+        env_map = self.envs_as_map(payload["envs"])
+        self.assertEqual(payload["executable"], ["./main.py"])
+        self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:9999")
+        self.assertEqual(env_map["SECRET_KEY"], "from-sops")
 
     def test_main_inferrs_main_py_command_from_partial_socket_path_config(self) -> None:
         # Intent: verify a SOCKET_PATH-only .env still infers ./main.py for supported unix-socket Python apps.

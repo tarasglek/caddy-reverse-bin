@@ -12,6 +12,9 @@ override_dh_auto_build:
 	install -m 0755 "$(shell command -v uv)" build/uv
 	install -m 0755 "$(shell command -v landrun)" build/landrun
 	install -m 0755 "$(shell command -v deno)" build/deno
+	install -m 0755 "$(shell command -v sops)" build/sops
+	install -m 0755 "$(shell command -v age)" build/age
+	install -m 0755 "$(shell command -v age-keygen)" build/age-keygen
 
 override_dh_auto_test:
 

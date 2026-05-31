@@ -32,10 +32,12 @@ import argparse
 import json
 import os
 import socket
+import subprocess
 import sys
 from dataclasses import dataclass
+from io import StringIO
 from pathlib import Path
-from typing import TypedDict
+from typing import Callable, TypedDict
 
 from dotenv import dotenv_values
 
@@ -68,6 +70,12 @@ class DetectedApp:
 
 
 @dataclass(frozen=True)
+class EnvSource:
+    path: Path
+    encrypted: bool
+
+
+@dataclass(frozen=True)
 class ResolvedApp:
     executable: list[str]          # e.g. ["deno", "serve", "main.ts"]
     reverse_proxy_to: str          # e.g. "127.0.0.1:8080" or "unix/app.sock"
@@ -81,6 +89,43 @@ class ResolvedApp:
 class CommandResolution:
     explicit_command: list[str] | None
     detection: DetectedApp | None
+
+
+def find_env_source(working_dir: Path) -> EnvSource | None:
+    plaintext = working_dir / ".env"
+    encrypted = working_dir / "secrets.enc.env"
+    if plaintext.exists() and encrypted.exists():
+        raise ValueError("Cannot use both .env and encrypted env file secrets.enc.env")
+    if encrypted.exists():
+        return EnvSource(path=encrypted, encrypted=True)
+    if plaintext.exists():
+        return EnvSource(path=plaintext, encrypted=False)
+    return None
+
+
+def decrypt_sops_dotenv(
+    path: Path,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> str:
+    args = ["sops", "--decrypt", "--input-type", "dotenv", "--output-type", "dotenv", str(path)]
+    completed = runner(args, capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise ValueError(f"failed to decrypt {path}: {completed.stderr.strip()}")
+    return completed.stdout
+
+
+def load_app_env(
+    working_dir: Path,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> dict[str, str]:
+    source = find_env_source(working_dir)
+    if source is None:
+        return {}
+    if source.encrypted:
+        values = dotenv_values(stream=StringIO(decrypt_sops_dotenv(source.path, runner=runner)))
+    else:
+        values = dotenv_values(source.path)
+    return {k: v for k, v in values.items() if v is not None}
 
 
 def resolve_unix_socket_path(working_dir: Path, socket_path: str) -> str:
@@ -415,10 +460,8 @@ def main() -> None:
         print(f"Error: directory {working_dir} does not exist", file=sys.stderr)
         raise SystemExit(1)
 
-    env_file = working_dir / ".env"
-    dot_env = {k: v for k, v in dotenv_values(env_file).items() if v is not None}
-
     try:
+        dot_env = load_app_env(working_dir)
         resolved = resolve_app(working_dir, dot_env=dot_env)
         envs = build_app_envs(working_dir, dot_env, resolved.env_overrides)
         executable = resolved.executable

@@ -15,6 +15,18 @@ case "$1" in
 		install -d -o reverse-bin -g reverse-bin /var/lib/reverse-bin
 		install -d -o reverse-bin -g reverse-bin /var/lib/reverse-bin/apps
 		install -d -o reverse-bin -g reverse-bin /var/lib/reverse-bin/home
+		install -d -m 0755 -o reverse-bin -g reverse-bin /var/lib/reverse-bin/keys
+
+		if [ ! -f /var/lib/reverse-bin/keys/age.key ]; then
+			/usr/lib/reverse-bin/age-keygen -o /var/lib/reverse-bin/keys/age.key
+			/usr/lib/reverse-bin/age-keygen -y /var/lib/reverse-bin/keys/age.key > /var/lib/reverse-bin/keys/age.pub
+		elif [ ! -f /var/lib/reverse-bin/keys/age.pub ]; then
+			/usr/lib/reverse-bin/age-keygen -y /var/lib/reverse-bin/keys/age.key > /var/lib/reverse-bin/keys/age.pub
+		fi
+		chown reverse-bin:reverse-bin /var/lib/reverse-bin/keys/age.key
+		chown reverse-bin:reverse-bin /var/lib/reverse-bin/keys/age.pub
+		chmod 600 /var/lib/reverse-bin/keys/age.key
+		chmod 644 /var/lib/reverse-bin/keys/age.pub
 
 		setcap 'cap_net_bind_service=+ep' /usr/bin/reverse-bin-caddy
 

@@ -100,12 +100,46 @@ func TestPackagedServiceUsesDebianPaths(t *testing.T) {
 		"WorkingDirectory=/var/lib/reverse-bin/home",
 		"RuntimeDirectory=reverse-bin",
 		"Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin",
+		"Environment=SOPS_AGE_KEY_FILE=/var/lib/reverse-bin/keys/age.key",
 		"EnvironmentFile=-/etc/default/reverse-bin",
 		"TimeoutStopSec=45s",
 		"User=reverse-bin",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("service file missing %q", want)
+		}
+	}
+}
+
+// TestDebianPackagingBundlesSopsAndAge verifies encrypted env decryption does not rely on host-installed tools.
+func TestDebianPackagingBundlesSopsAndAge(t *testing.T) {
+	content, err := os.ReadFile("../../debian/install")
+	if err != nil {
+		t.Fatalf("read debian/install: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"build/sops usr/lib/reverse-bin/",
+		"build/age usr/lib/reverse-bin/",
+		"build/age-keygen usr/lib/reverse-bin/",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("debian/install missing %q", want)
+		}
+	}
+
+	rulesContent, err := os.ReadFile("../../debian/rules")
+	if err != nil {
+		t.Fatalf("read debian/rules: %v", err)
+	}
+	rules := string(rulesContent)
+	for _, want := range []string{
+		`install -m 0755 "$(shell command -v sops)" build/sops`,
+		`install -m 0755 "$(shell command -v age)" build/age`,
+		`install -m 0755 "$(shell command -v age-keygen)" build/age-keygen`,
+	} {
+		if !strings.Contains(rules, want) {
+			t.Fatalf("debian/rules missing %q", want)
 		}
 	}
 }
@@ -122,6 +156,28 @@ func TestDebianPostinstReloadsSystemdAndRestartsEnabledService(t *testing.T) {
 		"systemctl daemon-reload",
 		"if systemctl is-enabled --quiet reverse-bin.service; then",
 		"systemctl restart reverse-bin.service",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("postinst missing %q", want)
+		}
+	}
+}
+
+// TestDebianPostinstCreatesAgeIdentity verifies the package creates but never overwrites the SOPS age keypair.
+func TestDebianPostinstCreatesAgeIdentity(t *testing.T) {
+	content, err := os.ReadFile("../../debian/postinst")
+	if err != nil {
+		t.Fatalf("read postinst: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"install -d -m 0755 -o reverse-bin -g reverse-bin /var/lib/reverse-bin/keys",
+		"if [ ! -f /var/lib/reverse-bin/keys/age.key ]; then",
+		"/usr/lib/reverse-bin/age-keygen -o /var/lib/reverse-bin/keys/age.key",
+		"/usr/lib/reverse-bin/age-keygen -y /var/lib/reverse-bin/keys/age.key > /var/lib/reverse-bin/keys/age.pub",
+		"chown reverse-bin:reverse-bin /var/lib/reverse-bin/keys/age.key",
+		"chmod 600 /var/lib/reverse-bin/keys/age.key",
+		"chmod 644 /var/lib/reverse-bin/keys/age.pub",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("postinst missing %q", want)

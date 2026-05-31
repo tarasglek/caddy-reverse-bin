@@ -10,6 +10,7 @@ Group=reverse-bin
 WorkingDirectory=/var/lib/reverse-bin/home
 RuntimeDirectory=reverse-bin
 Environment=PATH=/usr/lib/reverse-bin:/usr/bin:/bin
+Environment=SOPS_AGE_KEY_FILE=/var/lib/reverse-bin/keys/age.key
 EnvironmentFile=-/etc/default/reverse-bin
 ExecStart=/usr/bin/reverse-bin-caddy run --config ${REVERSE_BIN_CADDYFILE} --adapter caddyfile
 Restart=on-failure
