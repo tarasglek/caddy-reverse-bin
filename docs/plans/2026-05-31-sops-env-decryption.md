@@ -4,7 +4,7 @@
 
 **Goal:** Let discover-app load encrypted SOPS dotenv files for app secrets while rejecting ambiguous plaintext-plus-encrypted env config.
 
-**Architecture:** Add one env-loader layer in `utils/discover-app/discover-app.py`. Loader accepts exactly one app env source: `.env`, `secrets.enc.env`, or `.enc.env`. Encrypted source decrypts with `sops --decrypt --input-type dotenv --output-type dotenv` in memory, then parses dotenv text with existing `python-dotenv` support. Debian packaging creates and owns a reverse-bin age identity like an SSH host key.
+**Architecture:** Add one env-loader layer in `utils/discover-app/discover-app.py`. Loader accepts exactly one app env source: `.env` or `secrets.enc.env`. Encrypted source decrypts with packaged `sops --decrypt --input-type dotenv --output-type dotenv` in memory, then parses dotenv text with existing `python-dotenv` support. Debian packaging creates and owns a reverse-bin age identity like an SSH host key, and bundles `sops` so runtime decryption does not depend on host packages.
 
 **Tech Stack:** Python 3.13 stdlib, `python-dotenv`, `sops`, `age`, Debian maintainer scripts, systemd.
 
@@ -13,17 +13,19 @@
 ## Checklist
 
 - [ ] Decide encrypted env filename policy.
-  - Use `secrets.enc.env` for app secrets.
-  - Also support `.enc.env` only if already needed.
-  - Reject when `.env` and any encrypted env file both exist.
-  - Reject when multiple encrypted env files exist.
+  - Use only `secrets.enc.env` for app secrets.
+  - Do not support `.enc.env`.
+  - Reject when `.env` and `secrets.enc.env` both exist.
 
 - [ ] Decide age key location.
   - Package-managed identity: `/var/lib/reverse-bin/keys/age.key`.
-  - Owner: `reverse-bin:reverse-bin`.
-  - Mode: `0600`.
-  - Directory mode: `0700`.
-  - Treat like SSH server host key: generate once on install; never overwrite.
+  - Public recipient file: `/var/lib/reverse-bin/keys/age.pub`.
+  - Private owner: `reverse-bin:reverse-bin`.
+  - Private mode: `0600`.
+  - Public owner: `root:root` or `reverse-bin:reverse-bin`.
+  - Public mode: `0644` so deploy tooling can read recipient.
+  - Directory mode: `0755` if public key lives there; private key remains `0600`.
+  - Treat private key like SSH server host key: generate once on install; never overwrite.
 
 - [ ] Decide SOPS env injection.
   - systemd env: `SOPS_AGE_KEY_FILE=/var/lib/reverse-bin/keys/age.key`.
@@ -49,13 +51,14 @@
 - [ ] Implement env-source discovery.
   - Add helper in `utils/discover-app/discover-app.py`:
     - `find_env_source(working_dir: Path) -> EnvSource | None`
-    - returns plaintext `.env`, encrypted env path, or none.
-    - raises on ambiguous sources.
+    - returns plaintext `.env`, encrypted `secrets.enc.env`, or none.
+    - raises when both sources exist.
 
 - [ ] Implement in-memory SOPS decrypt.
   - Add helper:
     - `decrypt_sops_dotenv(path: Path) -> str`
     - command: `sops --decrypt --input-type dotenv --output-type dotenv <path>`
+    - rely on packaged `/usr/lib/reverse-bin/sops` being on service `PATH`.
     - capture stdout/stderr.
     - timeout optional only if production needs; no test retry loops.
     - on failure: raise `ValueError("failed to decrypt <file>: <stderr>")`.
@@ -68,25 +71,33 @@
   - Replace direct `dotenv_values(env_file)` with `load_app_env(working_dir)`.
   - Keep `build_app_envs()` unchanged.
 
-- [ ] Add Debian key generation test.
+- [ ] Add Debian key generation and bundled-sops tests.
   - File likely: `cmd/caddy/debian_packaging_test.go` or new shell-focused packaging test if pattern exists.
   - Verify maintainer script contains install command for key dir and non-overwrite generation guard.
+  - Verify package install mapping includes `sops` under `/usr/lib/reverse-bin/sops`.
+
+- [ ] Package `sops` binary.
+  - Add build/download step matching existing bundled tools (`deno`, `uv`, `landrun`).
+  - Install binary to `/usr/lib/reverse-bin/sops`.
+  - Ensure systemd `PATH=/usr/lib/reverse-bin:/usr/bin:/bin` finds bundled `sops` first.
 
 - [ ] Update `debian/postinst` and packaged source equivalent if needed.
   - Create `/var/lib/reverse-bin/keys`.
   - If `age.key` missing: `age-keygen -o /var/lib/reverse-bin/keys/age.key`.
-  - `chown reverse-bin:reverse-bin`.
-  - `chmod 600`.
-  - Do not overwrite existing key.
+  - If `age.pub` missing or private key was newly generated: `age-keygen -y /var/lib/reverse-bin/keys/age.key > /var/lib/reverse-bin/keys/age.pub`.
+  - `chown reverse-bin:reverse-bin /var/lib/reverse-bin/keys/age.key`.
+  - `chmod 600 /var/lib/reverse-bin/keys/age.key`.
+  - `chmod 644 /var/lib/reverse-bin/keys/age.pub`.
+  - Do not overwrite existing private key.
 
 - [ ] Update systemd service.
   - File: `packaging/debian/reverse-bin.service` and generated/installed copy if duplicated.
   - Add `Environment=SOPS_AGE_KEY_FILE=/var/lib/reverse-bin/keys/age.key`.
 
 - [ ] Update docs.
-  - `README.md`: explain `secrets.enc.env`, conflict with `.env`, key path, and how to add recipient.
+  - `README.md`: explain `secrets.enc.env`, conflict with `.env`, private key path, public recipient path, and how to add recipient.
   - Example commands:
-    - `sudo -u reverse-bin age-keygen -y /var/lib/reverse-bin/keys/age.key`
+    - `cat /var/lib/reverse-bin/keys/age.pub`
     - `sops --encrypt --input-type dotenv --output-type dotenv --age <recipient> secrets.env > secrets.enc.env`
 
 - [ ] Run focused tests.
