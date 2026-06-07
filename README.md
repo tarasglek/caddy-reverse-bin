@@ -141,3 +141,8 @@ curl -i http://127.0.0.1:9080/v2/
 ```
 
 Expected registry smoke result: HTTP `401` from the app, proving reverse-bin launched and proxied it.
+
+## related projects
+
+* https://github.com/sablierapp/sablier
+* https://github.com/losfair/zeroserve
