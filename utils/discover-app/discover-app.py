@@ -426,7 +426,7 @@ def wrap_landrun(
     wrapper = ["landrun"]
 
     if include_std:
-        wrapper += ["--rox", "/bin,/usr,/lib,/lib64", "--ro", "/etc", "--rw", "/dev"]
+        wrapper += ["--rox", "/bin,/usr,/lib,/lib64,/proc,/sys/fs/cgroup", "--ro", "/etc", "--rw", "/dev"]
 
     if include_path and (path := os.environ.get("PATH")):
         envs.append(f"PATH={path}")

@@ -1,3 +1,9 @@
+reverse-bin (0.0.0-8) unstable; urgency=medium
+
+  * fix(discover-app): expose cgroup metadata to sandboxed apps.
+
+ -- Taras Glek <taras@example.com>  Sun, 14 Jun 2026 14:12:00 +0300
+
 reverse-bin (0.0.0-7) unstable; urgency=medium
 
   * feat(discovery): serve static index.html apps with Caddy.

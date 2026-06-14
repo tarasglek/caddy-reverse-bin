@@ -416,8 +416,11 @@ class DiscoverAppResultTests(unittest.TestCase):
         # Intent: verify the default landrun policy does not grant read-only access to the whole filesystem.
         command = discover_app.wrap_landrun(["./launch.sh"], include_path=False)
 
+        command_text = " ".join(command)
         self.assertIn("/etc", command)
-        self.assertNotIn("/,/etc", command)
+        self.assertIn("/proc", command_text)
+        self.assertIn("/sys/fs/cgroup", command_text)
+        self.assertNotIn("/,/etc", command_text)
         self.assertNotIn("--unrestricted-filesystem", command)
 
     def test_main_emits_explicit_listen_config_without_sandbox(self) -> None:
