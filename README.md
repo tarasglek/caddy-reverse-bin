@@ -161,7 +161,8 @@ Encrypt it to JSON with the package age recipient:
 
 ```bash
 cat /var/lib/reverse-bin/keys/age.pub
-sops --encrypt --input-type dotenv --output-type json --age <recipient> secrets.env > secrets.enc.json
+sops --encrypt --input-type dotenv --output-type json --age <recipient> .env > secrets.enc.json
+rm .env
 ```
 
 Add every human/operator identity that should edit secrets as a SOPS recipient. Include the package age recipient for runtime decryption, plus each deployer SSH public key so people can edit without access to the server private key.
