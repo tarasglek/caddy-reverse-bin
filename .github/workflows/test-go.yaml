@@ -65,18 +65,52 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Cache packaged runtime tools
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/bin
+          key: ${{ runner.os }}-runtime-tools-eget-1.3.4-v1
+
       - name: Install packaged runtime tools
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
-          GOBIN="$HOME/.local/bin" go install github.com/zyedidia/eget@v1.3.4
+          mkdir -p "$HOME/.local/bin"
+          export GOBIN="$HOME/.local/bin"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/eget" Zouuup/landrun --to "$HOME/.local/bin/landrun"
-          "$HOME/.local/bin/eget" denoland/deno --asset x86_64-unknown-linux-gnu.zip --asset '^denort' --to "$HOME/.local/bin/deno"
-          "$HOME/.local/bin/eget" getsops/sops --asset linux.amd64 --asset '^sbom' --to "$HOME/.local/bin/sops"
-          "$HOME/.local/bin/eget" FiloSottile/age --asset linux-amd64 --file age --to "$HOME/.local/bin/age"
-          "$HOME/.local/bin/eget" FiloSottile/age --asset linux-amd64 --file age-keygen --to "$HOME/.local/bin/age-keygen"
+
+          retry() {
+            local delay=2
+            for attempt in 1 2 3 4; do
+              "$@" && return 0
+              if [ "$attempt" -eq 4 ]; then
+                return 1
+              fi
+              sleep "$delay"
+              delay=$((delay * 2))
+            done
+          }
+
+          if [ ! -x "$HOME/.local/bin/eget" ]; then
+            retry go install github.com/zyedidia/eget@v1.3.4
+          fi
+          if [ ! -x "$HOME/.local/bin/landrun" ]; then
+            retry "$HOME/.local/bin/eget" Zouuup/landrun --to "$HOME/.local/bin/landrun"
+          fi
+          if [ ! -x "$HOME/.local/bin/deno" ]; then
+            retry "$HOME/.local/bin/eget" denoland/deno --asset x86_64-unknown-linux-gnu.zip --asset '^denort' --to "$HOME/.local/bin/deno"
+          fi
+          if [ ! -x "$HOME/.local/bin/sops" ]; then
+            retry "$HOME/.local/bin/eget" getsops/sops --asset linux.amd64 --asset '^sbom' --to "$HOME/.local/bin/sops"
+          fi
+          if [ ! -x "$HOME/.local/bin/age" ]; then
+            retry "$HOME/.local/bin/eget" FiloSottile/age --asset linux-amd64 --file age --to "$HOME/.local/bin/age"
+          fi
+          if [ ! -x "$HOME/.local/bin/age-keygen" ]; then
+            retry "$HOME/.local/bin/eget" FiloSottile/age --asset linux-amd64 --file age-keygen --to "$HOME/.local/bin/age-keygen"
+          fi
+
           "$HOME/.local/bin/eget" --version
           "$HOME/.local/bin/landrun" --version
           "$HOME/.local/bin/deno" --version
