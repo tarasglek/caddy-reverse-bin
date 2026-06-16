@@ -92,30 +92,27 @@ jobs:
             done
           }
 
+          install_eget_tool() {
+            local tool="$1"
+            shift
+            if [ ! -x "$HOME/.local/bin/$tool" ]; then
+              retry "$HOME/.local/bin/eget" "$@" --to "$HOME/.local/bin/$tool"
+            fi
+          }
+
           if [ ! -x "$HOME/.local/bin/eget" ]; then
             retry go install github.com/zyedidia/eget@v1.3.4
           fi
-          if [ ! -x "$HOME/.local/bin/landrun" ]; then
-            retry "$HOME/.local/bin/eget" Zouuup/landrun --to "$HOME/.local/bin/landrun"
-          fi
-          if [ ! -x "$HOME/.local/bin/deno" ]; then
-            retry "$HOME/.local/bin/eget" denoland/deno --asset x86_64-unknown-linux-gnu.zip --asset '^denort' --to "$HOME/.local/bin/deno"
-          fi
-          if [ ! -x "$HOME/.local/bin/sops" ]; then
-            retry "$HOME/.local/bin/eget" getsops/sops --asset linux.amd64 --asset '^sbom' --to "$HOME/.local/bin/sops"
-          fi
-          if [ ! -x "$HOME/.local/bin/age" ]; then
-            retry "$HOME/.local/bin/eget" FiloSottile/age --asset linux-amd64 --file age --to "$HOME/.local/bin/age"
-          fi
-          if [ ! -x "$HOME/.local/bin/age-keygen" ]; then
-            retry "$HOME/.local/bin/eget" FiloSottile/age --asset linux-amd64 --file age-keygen --to "$HOME/.local/bin/age-keygen"
-          fi
 
-          "$HOME/.local/bin/eget" --version
-          "$HOME/.local/bin/landrun" --version
-          "$HOME/.local/bin/deno" --version
-          "$HOME/.local/bin/sops" --version
-          "$HOME/.local/bin/age" --version
+          install_eget_tool landrun Zouuup/landrun
+          install_eget_tool deno denoland/deno --asset x86_64-unknown-linux-gnu.zip --asset '^denort'
+          install_eget_tool sops getsops/sops --asset linux.amd64 --asset '^sbom'
+          install_eget_tool age FiloSottile/age --asset linux-amd64 --file age
+          install_eget_tool age-keygen FiloSottile/age --asset linux-amd64 --file age-keygen
+
+          for tool in eget landrun deno sops age; do
+            "$HOME/.local/bin/$tool" --version
+          done
 
       - name: Install Debian package build dependencies
         run: |
