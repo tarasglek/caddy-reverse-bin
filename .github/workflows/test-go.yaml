@@ -71,8 +71,8 @@ jobs:
           GOBIN="$HOME/.local/bin" go install github.com/zyedidia/eget@v1.3.4
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/eget" Zouuup/landrun --to "$HOME/.local/bin/landrun"
-          "$HOME/.local/bin/eget" denoland/deno --to "$HOME/.local/bin/deno"
-          "$HOME/.local/bin/eget" getsops/sops --to "$HOME/.local/bin/sops"
+          "$HOME/.local/bin/eget" denoland/deno --asset x86_64-unknown-linux-gnu.zip --asset '^denort' --to "$HOME/.local/bin/deno"
+          "$HOME/.local/bin/eget" getsops/sops --asset linux.amd64 --to "$HOME/.local/bin/sops"
           "$HOME/.local/bin/eget" FiloSottile/age --asset linux-amd64 --file age --to "$HOME/.local/bin/age"
           "$HOME/.local/bin/eget" FiloSottile/age --asset linux-amd64 --file age-keygen --to "$HOME/.local/bin/age-keygen"
           "$HOME/.local/bin/eget" --version
