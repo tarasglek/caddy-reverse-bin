@@ -336,18 +336,18 @@ class DiscoverAppResultTests(unittest.TestCase):
 
         self.assertIn("DENO_NO_UPDATE_CHECK=1", envs)
 
-    def test_find_env_source_rejects_plaintext_and_encrypted_env_files(self) -> None:
-        # Intent: verify app config has exactly one env source and rejects ambiguous plaintext plus encrypted secrets.
+    def test_find_env_source_rejects_plaintext_and_encrypted_json_files(self) -> None:
+        # Intent: verify app config has exactly one env source and rejects ambiguous plaintext plus encrypted JSON secrets.
         (self.app_dir / ".env").write_text("CUSTOM=plain\n")
-        (self.app_dir / "secrets.enc.env").write_text("CUSTOM=encrypted\n")
+        (self.app_dir / "secrets.enc.json").write_text('{"CUSTOM":"encrypted"}\n')
 
-        with self.assertRaisesRegex(ValueError, "Cannot use both \\.env and encrypted env file"):
+        with self.assertRaisesRegex(ValueError, "Cannot use both \\.env and encrypted env file secrets\\.enc\\.json"):
             discover_app.find_env_source(self.app_dir)
 
-    def test_load_app_env_decrypts_sops_dotenv_without_writing_plaintext(self) -> None:
-        # Intent: verify encrypted dotenv content is decrypted in memory, parsed, and never materialized beside secrets.enc.env.
-        encrypted_path = self.app_dir / "secrets.enc.env"
-        encrypted_path.write_text("sops metadata placeholder\n")
+    def test_load_app_env_decrypts_sops_json_to_dotenv_without_writing_plaintext(self) -> None:
+        # Intent: verify encrypted JSON content is decrypted to dotenv in memory, parsed, and never materialized beside secrets.enc.json.
+        encrypted_path = self.app_dir / "secrets.enc.json"
+        encrypted_path.write_text('{"sops":"metadata placeholder"}\n')
         calls: list[list[str]] = []
 
         def fake_runner(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -361,9 +361,9 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertNotIn("IGNORED", env_map)
         self.assertEqual(
             calls,
-            [["sops", "--decrypt", "--input-type", "dotenv", "--output-type", "dotenv", str(encrypted_path)]],
+            [["sops", "--decrypt", "--input-type", "json", "--output-type", "dotenv", str(encrypted_path)]],
         )
-        self.assertEqual(sorted(path.name for path in self.app_dir.iterdir()), ["secrets.enc.env"])
+        self.assertEqual(sorted(path.name for path in self.app_dir.iterdir()), ["secrets.enc.json"])
 
     def test_build_app_envs_applies_overrides(self) -> None:
         # Intent: verify generated env values can override blank explicit config when a port is auto-assigned.
@@ -549,10 +549,10 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(payload["reverse_proxy_to"], "127.0.0.1:8080")
         self.assertIn("LISTEN=8080", payload["envs"])
 
-    def test_main_uses_sops_dotenv_for_app_env(self) -> None:
-        # Intent: verify the CLI decrypts secrets.enc.env through sops and feeds resulting dotenv keys to the app env.
+    def test_main_uses_sops_json_for_app_env(self) -> None:
+        # Intent: verify the CLI decrypts secrets.enc.json through sops and feeds resulting dotenv keys to the app env.
         self.make_main_py()
-        (self.app_dir / "secrets.enc.env").write_text("sops metadata placeholder\n")
+        (self.app_dir / "secrets.enc.json").write_text('{"sops":"metadata placeholder"}\n')
         fake_bin = self.app_dir / "fake-bin"
         fake_bin.mkdir()
         fake_sops = fake_bin / "sops"

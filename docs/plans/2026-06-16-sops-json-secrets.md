@@ -57,11 +57,11 @@ Docs must show JSON cleartext example, encryption command, and recipient guidanc
 3. Add JSON example.
 4. Add explicit guidance to include package age recipient and each operator/deployer SSH public key as SOPS recipients.
 5. Mention `https://github.com/tarasglek/github-to-sops` for deriving SOPS recipients from GitHub SSH keys, and show it run via `uv run`.
-6. Run `rg "secrets\.enc\.env|input-type dotenv|SOPS Env" README.md utils docs packaging debian .github` and verify no stale relevant references remain.
+6. Run a repo search for the old encrypted env filename and old SOPS dotenv-input command, then verify no stale relevant references remain.
 
 ### Task 4: Final verification and commit
 
 **Steps:**
 1. Run `uv run --with python-dotenv python -m unittest utils/discover-app/test_discover_app.py`.
-2. Run `rg "secrets\.enc\.env" .` and verify no matches.
+2. Run a repo search for the old encrypted env filename and verify no matches.
 3. Commit with `feat(discovery): use sops json secrets`.

@@ -93,9 +93,9 @@ class CommandResolution:
 
 def find_env_source(working_dir: Path) -> EnvSource | None:
     plaintext = working_dir / ".env"
-    encrypted = working_dir / "secrets.enc.env"
+    encrypted = working_dir / "secrets.enc.json"
     if plaintext.exists() and encrypted.exists():
-        raise ValueError("Cannot use both .env and encrypted env file secrets.enc.env")
+        raise ValueError("Cannot use both .env and encrypted env file secrets.enc.json")
     if encrypted.exists():
         return EnvSource(path=encrypted, encrypted=True)
     if plaintext.exists():
@@ -103,11 +103,11 @@ def find_env_source(working_dir: Path) -> EnvSource | None:
     return None
 
 
-def decrypt_sops_dotenv(
+def decrypt_sops_json_to_dotenv(
     path: Path,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> str:
-    args = ["sops", "--decrypt", "--input-type", "dotenv", "--output-type", "dotenv", str(path)]
+    args = ["sops", "--decrypt", "--input-type", "json", "--output-type", "dotenv", str(path)]
     completed = runner(args, capture_output=True, text=True)
     if completed.returncode != 0:
         raise ValueError(f"failed to decrypt {path}: {completed.stderr.strip()}")
@@ -122,7 +122,7 @@ def load_app_env(
     if source is None:
         return {}
     if source.encrypted:
-        values = dotenv_values(stream=StringIO(decrypt_sops_dotenv(source.path, runner=runner)))
+        values = dotenv_values(stream=StringIO(decrypt_sops_json_to_dotenv(source.path, runner=runner)))
     else:
         values = dotenv_values(source.path)
     return {k: v for k, v in values.items() if v is not None}

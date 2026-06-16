@@ -1,10 +1,10 @@
-# SOPS Env Decryption Implementation Plan
+# SOPS JSON Decryption Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Let discover-app load encrypted SOPS dotenv files for app secrets while rejecting ambiguous plaintext-plus-encrypted env config.
+**Goal:** Let discover-app load encrypted SOPS JSON files for app secrets while rejecting ambiguous plaintext-plus-encrypted env config.
 
-**Architecture:** Add one env-loader layer in `utils/discover-app/discover-app.py`. Loader accepts exactly one app env source: `.env` or `secrets.enc.env`. Encrypted source decrypts with packaged `sops --decrypt --input-type dotenv --output-type dotenv` in memory, then parses dotenv text with existing `python-dotenv` support. Debian packaging creates and owns a reverse-bin age identity like an SSH host key, and bundles `sops` so runtime decryption does not depend on host packages.
+**Architecture:** Add one env-loader layer in `utils/discover-app/discover-app.py`. Loader accepts exactly one app env source: `.env` or `secrets.enc.json`. Encrypted source decrypts with packaged `sops --decrypt --input-type json --output-type dotenv` in memory, then parses dotenv text with existing `python-dotenv` support. Debian packaging creates and owns a reverse-bin age identity like an SSH host key, and bundles `sops` so runtime decryption does not depend on host packages.
 
 **Tech Stack:** Python 3.13 stdlib, `python-dotenv`, `sops`, `age`, Debian maintainer scripts, systemd.
 
@@ -12,10 +12,9 @@
 
 ## Checklist
 
-- [ ] Decide encrypted env filename policy.
-  - Use only `secrets.enc.env` for app secrets.
-  - Do not support `.enc.env`.
-  - Reject when `.env` and `secrets.enc.env` both exist.
+- [ ] Decide encrypted JSON filename policy.
+  - Use only `secrets.enc.json` for app secrets.
+  - Reject when `.env` and `secrets.enc.json` both exist.
 
 - [ ] Decide age key location.
   - Package-managed identity: `/var/lib/reverse-bin/keys/age.key`.
@@ -32,7 +31,7 @@
   - Keep key outside app dirs.
   - Do not pass `SOPS_AGE_KEY_FILE` to child app unless app env explicitly contains it.
 
-- [ ] Add failing unit test: `.env` + `secrets.enc.env` rejects.
+- [ ] Add failing unit test: `.env` + `secrets.enc.json` rejects.
   - File: `utils/discover-app/test_discover_app.py`.
   - Intent comment required.
   - Expected stderr exact enough: `Cannot use both .env and encrypted env file`.
@@ -51,13 +50,13 @@
 - [ ] Implement env-source discovery.
   - Add helper in `utils/discover-app/discover-app.py`:
     - `find_env_source(working_dir: Path) -> EnvSource | None`
-    - returns plaintext `.env`, encrypted `secrets.enc.env`, or none.
+    - returns plaintext `.env`, encrypted `secrets.enc.json`, or none.
     - raises when both sources exist.
 
 - [ ] Implement in-memory SOPS decrypt.
   - Add helper:
     - `decrypt_sops_dotenv(path: Path) -> str`
-    - command: `sops --decrypt --input-type dotenv --output-type dotenv <path>`
+    - command: `sops --decrypt --input-type json --output-type dotenv <path>`
     - rely on packaged `/usr/lib/reverse-bin/sops` being on service `PATH`.
     - capture stdout/stderr.
     - timeout optional only if production needs; no test retry loops.
@@ -95,10 +94,10 @@
   - Add `Environment=SOPS_AGE_KEY_FILE=/var/lib/reverse-bin/keys/age.key`.
 
 - [ ] Update docs.
-  - `README.md`: explain `secrets.enc.env`, conflict with `.env`, private key path, public recipient path, and how to add recipient.
+  - `README.md`: explain `secrets.enc.json`, conflict with `.env`, private key path, public recipient path, and how to add recipient.
   - Example commands:
     - `cat /var/lib/reverse-bin/keys/age.pub`
-    - `sops --encrypt --input-type dotenv --output-type dotenv --age <recipient> secrets.env > secrets.enc.env`
+    - `sops --encrypt --input-type json --output-type json --age <recipient> secrets.json > secrets.enc.json`
 
 - [ ] Run focused tests.
   - `uv run --with python-dotenv python -m unittest utils/discover-app/test_discover_app.py`
