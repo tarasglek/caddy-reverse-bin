@@ -66,6 +66,8 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install packaged runtime tools
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
           GOBIN="$HOME/.local/bin" go install github.com/zyedidia/eget@v1.3.4
