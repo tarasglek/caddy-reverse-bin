@@ -198,46 +198,6 @@ func signalProcessGroup(proc *os.Process, sig syscall.Signal) error {
 	return syscall.Kill(plan.pid, plan.signal)
 }
 
-func isProcessAlive(proc *os.Process) bool {
-	if proc == nil {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		// Best-effort on Windows; cmd.Wait() watcher will eventually clear state.
-		return true
-	}
-	// Signal(0) means "existence check only" (no signal delivered).
-	// It returns nil when the PID still exists in the process table.
-	if proc.Signal(syscall.Signal(0)) != nil {
-		return false
-	}
-	// Linux nuance: Signal(0) can still succeed for zombie processes.
-	// A zombie PID exists but cannot accept work, so treat it as dead.
-	if runtime.GOOS == "linux" && isZombiePID(proc.Pid) {
-		return false
-	}
-	return true
-}
-
-func isZombiePID(pid int) bool {
-	// Reads /proc/<pid>/stat to detect zombie state ('Z').
-	// This prevents us from considering a reaped-but-not-collected child
-	// process as "alive" during restart checks.
-	statPath := fmt.Sprintf("/proc/%d/stat", pid)
-	data, err := os.ReadFile(statPath)
-	if err != nil {
-		return false
-	}
-	// /proc/<pid>/stat format: "pid (comm) state ..."
-	// The state character is located immediately after the final ') '.
-	closeIdx := bytes.LastIndexByte(data, ')')
-	if closeIdx == -1 || closeIdx+2 >= len(data) {
-		return false
-	}
-	state := data[closeIdx+2]
-	return state == 'Z'
-}
-
 type proxyOverrides struct {
 	Executable       *[]string `json:"executable"`
 	WorkingDirectory *string   `json:"working_directory"`
