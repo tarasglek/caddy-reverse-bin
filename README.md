@@ -167,8 +167,8 @@ creation_rules:
   - path_regex: secrets\\.enc\\.json$
     key_groups:
       - age:
-        - $SERVER_RECIPIENT
-        - $SSH_RECIPIENT
+        - $SERVER_RECIPIENT # reverse-bin server key: /var/lib/reverse-bin/keys/age.pub
+        - $SSH_RECIPIENT # your SSH public key for editing secrets
 EOF
 ```
 
