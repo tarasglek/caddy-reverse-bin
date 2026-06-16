@@ -176,13 +176,13 @@ For GitHub-managed SSH keys, `github-to-sops` can add users to an existing `.sop
 
 ```bash
 GITHUB_USER=$(gh api user --jq .login)
-uv run github-to-sops -- --github-users "$GITHUB_USER" import-keys --inplace-edit .sops.yaml
+uvx github-to-sops --github-users "$GITHUB_USER" import-keys --inplace-edit .sops.yaml
 ```
 
 Later, refresh GitHub keys and re-encrypt committed secrets with:
 
 ```bash
-uv run github-to-sops -- updatekeys
+uvx github-to-sops updatekeys
 ```
 
 See: https://github.com/tarasglek/github-to-sops
