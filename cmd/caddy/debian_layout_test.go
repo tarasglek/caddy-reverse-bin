@@ -163,6 +163,26 @@ func TestDebianPostinstReloadsSystemdAndRestartsEnabledService(t *testing.T) {
 	}
 }
 
+// TestDebianPostinstCreatesAppsSopsConfig verifies installs seed app secrets recipient config from the server public key.
+func TestDebianPostinstCreatesAppsSopsConfig(t *testing.T) {
+	content, err := os.ReadFile("../../debian/postinst")
+	if err != nil {
+		t.Fatalf("read postinst: %v", err)
+	}
+	text := string(content)
+	for _, want := range []string{
+		"if [ ! -f /var/lib/reverse-bin/apps/.sops.yaml ]; then",
+		"# See /usr/share/doc/reverse-bin/README.md.gz section \"Encrypted app env files\".",
+		"path_regex: secrets\\.enc\\.json$",
+		"reverse-bin server key: /var/lib/reverse-bin/keys/age.pub",
+		"sed 's/^/        - /' /var/lib/reverse-bin/keys/age.pub >> /var/lib/reverse-bin/apps/.sops.yaml",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("postinst missing %q", want)
+		}
+	}
+}
+
 // TestDebianPostinstCreatesAgeIdentity verifies the package creates but never overwrites the SOPS age keypair.
 func TestDebianPostinstCreatesAgeIdentity(t *testing.T) {
 	content, err := os.ReadFile("../../debian/postinst")
