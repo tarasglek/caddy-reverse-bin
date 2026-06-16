@@ -157,7 +157,7 @@ REVERSE_BIN_PORT=
 SECRET_KEY=change-me
 ```
 
-Create `.sops.yaml` with the package age recipient plus your SSH public key. The age recipient lets reverse-bin decrypt at runtime; the SSH public key lets you edit secrets without access to the server private key.
+The package seeds `/var/lib/reverse-bin/apps/.sops.yaml` with the reverse-bin server key. For app checkouts elsewhere, create `.sops.yaml` with the package age recipient plus your SSH public key. The age recipient lets reverse-bin decrypt at runtime; the SSH public key lets you edit secrets without access to the server private key.
 
 ```bash
 SERVER_RECIPIENT=$(cat /var/lib/reverse-bin/keys/age.pub)
