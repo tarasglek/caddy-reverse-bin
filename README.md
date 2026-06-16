@@ -40,6 +40,37 @@ This produces a `.deb` in the parent directory.
 - Example apps ship under `/usr/share/doc/reverse-bin/examples/` and can be copied into the app root.
 - The package generates the age identity once on install and never overwrites the private key.
 
+## App lifecycle model
+
+- Apps live under `/var/lib/reverse-bin/apps/<app-name>`.
+- Reverse-bin discovers each app dynamically and decides how to launch it.
+- On incoming request, reverse-bin starts the app if it is not already running.
+- The app runs as a subprocess behind a local TCP port or Unix socket.
+- Caddy/reverse-bin proxies public HTTP traffic to that local app subprocess.
+- Reverse-bin injects runtime environment such as `REVERSE_BIN_HOST`, `REVERSE_BIN_PORT`, and `HOME`.
+- `HOME` is set to `/var/lib/reverse-bin/apps/<app-name>/data` when the app does not define `HOME` itself.
+- App runtime state should live under `/var/lib/reverse-bin/apps/<app-name>/data`.
+- Apps run inside a `landrun` sandbox with read access to app source, read-write access to app `data/`, required runtime/system paths, and any network/bind permissions granted by the discovered launch policy.
+- App subprocesses are reused while active and terminated after the idle timeout.
+- If the discovered runtime uses watch mode, edits in the app directory can restart the subprocess automatically.
+
+Important implications:
+
+- The deployed app copy is `/var/lib/reverse-bin/apps/<app-name>`.
+- Runtime app path is `/var/lib/reverse-bin/apps/<app-name>`. It may be bind-mounted elsewhere. Check with `mount` or `findmnt` before assuming a separate checkout is not live.
+- A developer checkout is not the running code unless it has been deployed there.
+- Direct edits under `/var/lib/reverse-bin/apps/` can affect production immediately.
+- Files under app `data/` are runtime state, not source.
+- Package managers and language runtimes should put caches, managed toolchains, virtualenvs, databases, and generated files under app `data/`.
+- For Deno apps with npm/remote imports, put cache state under app `data/` in `.env`:
+  ```sh
+  DENO_DIR=data/.cache/deno
+  ```
+- Deno apps should also expose `GET /` or configure `REVERSE_BIN_HEALTH_PATH=/health`.
+- The Debian package includes `uv` at `/usr/lib/reverse-bin/uv`, and `reverse-bin.service` puts `/usr/lib/reverse-bin` on `PATH`.
+- For `uv` apps, prefer app-local state such as `UV_CACHE_DIR=$HOME/.cache/uv`, `UV_PYTHON_INSTALL_DIR=$HOME/.local/share/uv/python`, or a prebuilt virtualenv under `data/`; otherwise uv-managed Python installs created outside app `data/` may not be exposed by the sandbox.
+- Long-lived app subprocesses can hold file locks or database handles until idle termination.
+
 ## Example deployment flow
 
 ```bash
@@ -107,6 +138,8 @@ REVERSE_BIN_HEALTH_STATUS=401
 - Blank `REVERSE_BIN_PORT=` asks the detector to allocate a free TCP port and inject the resolved value into the child environment.
 - Missing `REVERSE_BIN_HOST` defaults to `127.0.0.1`.
 - App launch scripts should bind to `REVERSE_BIN_HOST` and `REVERSE_BIN_PORT`.
+- App launch scripts may use packaged `uv` directly; it is available on the reverse-bin service `PATH`.
+- `HOME` defaults to app `data/`, so tools that respect `HOME` can keep runtime state there. If a tool uses separate cache/data variables, set them explicitly in `.env` or `launch.sh`.
 - `REVERSE_BIN_HEALTH_STATUS` is optional and enables exact-status health checks like registry `/v2/` returning `401`.
 
 Wrangler apps use this same explicit launch-script pattern; there is no Wrangler-specific detector or separate sandbox wrapper in the compatibility path.
