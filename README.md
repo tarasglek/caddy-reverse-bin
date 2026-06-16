@@ -157,12 +157,24 @@ REVERSE_BIN_PORT=
 SECRET_KEY=change-me
 ```
 
-Encrypt it to JSON with the package age recipient plus your SSH public key:
+Create `.sops.yaml` with the package age recipient plus your SSH public key:
 
 ```bash
 SERVER_RECIPIENT=$(cat /var/lib/reverse-bin/keys/age.pub)
 SSH_RECIPIENT="$(awk '{print $1" "$2}' ~/.ssh/id_ed25519.pub)"
-sops --encrypt --input-type dotenv --output-type json --age "$SERVER_RECIPIENT,$SSH_RECIPIENT" .env > secrets.enc.json && rm .env
+cat > .sops.yaml <<EOF
+creation_rules:
+  - path_regex: secrets\\.enc\\.json$
+    age: >-
+      $SERVER_RECIPIENT,
+      $SSH_RECIPIENT
+EOF
+```
+
+Encrypt `.env` to JSON, then remove plaintext only after encryption succeeds:
+
+```bash
+sops --encrypt --input-type dotenv --output-type json --filename-override secrets.enc.json .env > secrets.enc.json && rm .env
 ```
 
 Add every human/operator identity that should edit secrets as a SOPS recipient. Include the package age recipient for runtime decryption, plus each deployer SSH public key so people can edit without access to the server private key.
