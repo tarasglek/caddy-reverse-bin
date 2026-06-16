@@ -148,22 +148,20 @@ Wrangler apps use this same explicit launch-script pattern; there is no Wrangler
 
 Apps may use either plaintext `.env` or encrypted `secrets.enc.json`, not both. `discover-app.py` rejects app directories containing both files to avoid ambiguous secret sources.
 
-Create cleartext JSON first:
+Create plaintext dotenv first:
 
-```json
-{
-  "REVERSE_BIN_COMMAND": "./launch.sh",
-  "REVERSE_BIN_HOST": "127.0.0.1",
-  "REVERSE_BIN_PORT": "",
-  "SECRET_KEY": "change-me"
-}
+```sh
+REVERSE_BIN_COMMAND=./launch.sh
+REVERSE_BIN_HOST=127.0.0.1
+REVERSE_BIN_PORT=
+SECRET_KEY=change-me
 ```
 
-Encrypt it with the package age recipient:
+Encrypt it to JSON with the package age recipient:
 
 ```bash
 cat /var/lib/reverse-bin/keys/age.pub
-sops --encrypt --input-type json --output-type json --age <recipient> secrets.json > secrets.enc.json
+sops --encrypt --input-type dotenv --output-type json --age <recipient> secrets.env > secrets.enc.json
 ```
 
 Add every human/operator identity that should edit secrets as a SOPS recipient. Include the package age recipient for runtime decryption, plus each deployer SSH public key so people can edit without access to the server private key.
