@@ -14,7 +14,7 @@ sops --decrypt --input-type json --output-type dotenv secrets.enc.json
 
 Existing dotenv parser then produces child app env. Current launch behavior stays same after parsing.
 
-Docs must show JSON cleartext example, encryption command, and recipient guidance. Guidance must explicitly say: include package age recipient plus each operator/deployer SSH public key as SOPS recipients so humans can edit secrets without server private key. Mention `https://github.com/tarasglek/github-to-sops` as helper for turning GitHub SSH keys into SOPS recipient config.
+Docs must show JSON cleartext example, encryption command, and recipient guidance. Guidance must explicitly say: include package age recipient plus each operator/deployer SSH public key as SOPS recipients so humans can edit secrets without server private key. Mention `https://github.com/tarasglek/github-to-sops` as helper for turning GitHub SSH keys into SOPS recipient config, and show running it with `uv run`.
 
 **Architecture:** `discover-app.py` discovers `.env` or `secrets.enc.json`. Encrypted JSON is decrypted with SOPS as JSON input and dotenv output, then parsed by existing dotenv code. Tests and docs remove every old encrypted env filename mention.
 
@@ -56,7 +56,7 @@ Docs must show JSON cleartext example, encryption command, and recipient guidanc
 2. Document `secrets.enc.json` only.
 3. Add JSON example.
 4. Add explicit guidance to include package age recipient and each operator/deployer SSH public key as SOPS recipients.
-5. Mention `https://github.com/tarasglek/github-to-sops` for deriving SOPS recipients from GitHub SSH keys.
+5. Mention `https://github.com/tarasglek/github-to-sops` for deriving SOPS recipients from GitHub SSH keys, and show it run via `uv run`.
 6. Run `rg "secrets\.enc\.env|input-type dotenv|SOPS Env" README.md utils docs packaging debian .github` and verify no stale relevant references remain.
 
 ### Task 4: Final verification and commit
