@@ -1,3 +1,10 @@
+reverse-bin (0.0.0-9) unstable; urgency=medium
+
+  * feat(discovery): use SOPS JSON secrets.
+  * docs(readme): document SOPS SSH/GitHub recipient setup.
+
+ -- Taras Glek <taras@example.com>  Tue, 16 Jun 2026 00:00:00 +0000
+
 reverse-bin (0.0.0-8) unstable; urgency=medium
 
   * fix(discover-app): expose cgroup metadata to sandboxed apps.
