@@ -157,7 +157,7 @@ REVERSE_BIN_PORT=
 SECRET_KEY=change-me
 ```
 
-Create `.sops.yaml` with the package age recipient plus your SSH public key:
+Create `.sops.yaml` with the package age recipient plus your SSH public key. The age recipient lets reverse-bin decrypt at runtime; the SSH public key lets you edit secrets without access to the server private key.
 
 ```bash
 SERVER_RECIPIENT=$(cat /var/lib/reverse-bin/keys/age.pub)
@@ -165,27 +165,33 @@ SSH_RECIPIENT="$(awk '{print $1" "$2}' ~/.ssh/id_ed25519.pub)"
 cat > .sops.yaml <<EOF
 creation_rules:
   - path_regex: secrets\\.enc\\.json$
-    age: >-
-      $SERVER_RECIPIENT,
-      $SSH_RECIPIENT
+    key_groups:
+      - age:
+        - $SERVER_RECIPIENT
+        - $SSH_RECIPIENT
 EOF
 ```
+
+For GitHub-managed SSH keys, `github-to-sops` can add users to an existing `.sops.yaml`. Example: add your current GitHub account using `gh` and `uv`:
+
+```bash
+GITHUB_USER=$(gh api user --jq .login)
+uv run github-to-sops -- --github-users "$GITHUB_USER" import-keys --inplace-edit .sops.yaml
+```
+
+Later, refresh GitHub keys and re-encrypt committed secrets with:
+
+```bash
+uv run github-to-sops -- updatekeys
+```
+
+See: https://github.com/tarasglek/github-to-sops
 
 Encrypt `.env` to JSON, then remove plaintext only after encryption succeeds:
 
 ```bash
 sops --encrypt --input-type dotenv --output-type json --filename-override secrets.enc.json .env > secrets.enc.json && rm .env
 ```
-
-Add every human/operator identity that should edit secrets as a SOPS recipient. Include the package age recipient for runtime decryption, plus each deployer SSH public key so people can edit without access to the server private key.
-
-`github-to-sops` can turn GitHub SSH keys into SOPS recipient config for teams. Run it with `uv`, for example:
-
-```bash
-uv run github-to-sops --help
-```
-
-See: https://github.com/tarasglek/github-to-sops
 
 At runtime, systemd sets `SOPS_AGE_KEY_FILE=/var/lib/reverse-bin/keys/age.key`. `discover-app.py` decrypts `secrets.enc.json` in memory with bundled `/usr/lib/reverse-bin/sops`, asks SOPS to output dotenv, and passes parsed keys to the child app. The private key stays outside app directories; child apps only receive `SOPS_AGE_KEY_FILE` if the app env explicitly defines it.
 
