@@ -385,6 +385,10 @@ def build_detected_command(detection: DetectedApp, reverse_proxy_to: str) -> lis
     raise ValueError(f"Unsupported detected app kind: {detection.kind}")
 
 
+def is_deno_command(executable: list[str]) -> bool:
+    return bool(executable) and Path(executable[0]).name == "deno"
+
+
 def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
     config = load_env_app_config(dot_env)
     command = resolve_command(working_dir, config)
@@ -396,6 +400,9 @@ def resolve_app(working_dir: Path, *, dot_env: dict[str, str]) -> ResolvedApp:
     else:
         assert command.detection is not None
         executable = build_detected_command(command.detection, reverse_proxy_to)
+
+    if is_deno_command(executable) and "DENO_NO_UPDATE_CHECK" not in dot_env:
+        env_overrides = {**env_overrides, "DENO_NO_UPDATE_CHECK": "1"}
 
     return ResolvedApp(
         executable=executable,

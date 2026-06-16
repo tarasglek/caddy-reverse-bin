@@ -327,6 +327,15 @@ class DiscoverAppResultTests(unittest.TestCase):
         self.assertEqual(env_map["LISTEN"], "8080")
         self.assertEqual(env_map["CUSTOM"], "from-memory")
 
+    def test_resolve_app_sets_deno_no_update_check_for_main_ts(self) -> None:
+        # Intent: avoid Deno update checks in reverse-bin managed Deno apps without requiring every app .env to set it.
+        (self.app_dir / "main.ts").write_text("export default { fetch: () => new Response('ok') };\n")
+
+        resolved = discover_app.resolve_app(self.app_dir, dot_env={})
+        envs = discover_app.build_app_envs(self.app_dir, {}, resolved.env_overrides)
+
+        self.assertIn("DENO_NO_UPDATE_CHECK=1", envs)
+
     def test_find_env_source_rejects_plaintext_and_encrypted_env_files(self) -> None:
         # Intent: verify app config has exactly one env source and rejects ambiguous plaintext plus encrypted secrets.
         (self.app_dir / ".env").write_text("CUSTOM=plain\n")
