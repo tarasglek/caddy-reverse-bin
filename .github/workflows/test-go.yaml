@@ -107,8 +107,8 @@ jobs:
           install_eget_tool landrun Zouuup/landrun
           install_eget_tool deno denoland/deno --asset x86_64-unknown-linux-gnu.zip --asset '^denort'
           install_eget_tool sops getsops/sops --asset linux.amd64 --asset '^sbom'
-          install_eget_tool age FiloSottile/age --asset linux-amd64 --file age
-          install_eget_tool age-keygen FiloSottile/age --asset linux-amd64 --file age-keygen
+          install_eget_tool age FiloSottile/age --asset linux-amd64 --asset '^proof' --file age
+          install_eget_tool age-keygen FiloSottile/age --asset linux-amd64 --asset '^proof' --file age-keygen
 
           for tool in eget landrun deno sops age; do
             "$HOME/.local/bin/$tool" --version
