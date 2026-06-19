@@ -22,16 +22,12 @@
                 {
                   "handler": "reverse-bin",
                   "executable": [
-                    "uv",
-                    "run",
-                    "--script",
-                    "{{PYTHON_APP}}"
+                    "{{GO_ECHO}}"
                   ],
                   "reverse_proxy_to": "unix//{{APP_SOCKET}}",
                   "envs": [
                     "SOCKET_PATH={{APP_SOCKET}}"
-                  ],
-                  "passAllEnvs": true
+                  ]
                 }
               ]
             }

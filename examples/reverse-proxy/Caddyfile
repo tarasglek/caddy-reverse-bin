@@ -4,7 +4,7 @@
 
 http://localhost:9080 {
 	reverse-bin {
-		exec uv run --script ./apps/python3-unix-echo/main.py
+		exec ./apps/go-echo/go-echo
 		dir .
 		reverse_proxy_to unix//tmp/reverse-bin-example.sock
 		env SOCKET_PATH=/tmp/reverse-bin-example.sock

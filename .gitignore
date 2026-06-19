@@ -1,5 +1,6 @@
 body.html
 index.html
+!/examples/reverse-proxy/apps/static-site/index.html
 doc/mid*txt
 *.0
 *.1
@@ -53,6 +54,7 @@ __pycache__/
 
 # Local build artifacts
 /caddy
+examples/reverse-proxy/apps/go-echo/go-echo
 *.deb
 *.buildinfo
 *.changes
