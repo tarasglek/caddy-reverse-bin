@@ -1,3 +1,0 @@
-# Compatibility entrypoint. The packaged systemd unit selects the active
-# config with REVERSE_BIN_CADDYFILE from /etc/default/reverse-bin.
-import /etc/reverse-bin/Caddyfile.acme
