@@ -11,8 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -111,22 +111,47 @@ func requireCommand(t *testing.T, name string) {
 }
 
 type fixtures struct {
-	PythonApp string
+	GoEchoBin string
 	AppDir    string
 }
+
+var (
+	goEchoBuildOnce sync.Once
+	goEchoBuildPath string
+	goEchoBuildErr  error
+)
 
 func mustFixtures(t *testing.T) fixtures {
 	t.Helper()
 	repoRoot := getRepoRoot()
-	f := fixtures{
-		PythonApp: filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo/main.py"),
-		AppDir:    filepath.Join(repoRoot, "examples/reverse-proxy/apps/python3-unix-echo"),
-	}
+	appDir := filepath.Join(repoRoot, "examples/reverse-proxy/apps/go-echo")
+	mainGo := filepath.Join(appDir, "main.go")
 	requirePaths(t,
-		pathCheck{Label: "python test app", Path: f.PythonApp, MustBeRegular: true},
-		pathCheck{Label: "dynamic app dir", Path: f.AppDir, MustBeDir: true},
+		pathCheck{Label: "go echo app", Path: mainGo, MustBeRegular: true},
+		pathCheck{Label: "dynamic app dir", Path: appDir, MustBeDir: true},
 	)
-	return f
+
+	goEchoBuildOnce.Do(func() {
+		binDir, err := os.MkdirTemp("", "reverse-bin-go-echo-*")
+		if err != nil {
+			goEchoBuildErr = fmt.Errorf("failed to create go echo build dir: %w", err)
+			return
+		}
+		goEchoBuildPath = filepath.Join(binDir, "go-echo")
+		if runtime.GOOS == "windows" {
+			goEchoBuildPath += ".exe"
+		}
+		cmd := exec.Command("go", "build", "-o", goEchoBuildPath, ".")
+		cmd.Dir = appDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			goEchoBuildErr = fmt.Errorf("failed to build go echo app: %w\n%s", err, string(out))
+		}
+	})
+	if goEchoBuildErr != nil {
+		t.Fatal(goEchoBuildErr)
+	}
+	return fixtures{GoEchoBin: goEchoBuildPath, AppDir: appDir}
 }
 
 func renderTemplate(input string, values map[string]string) string {
@@ -258,14 +283,14 @@ func createBasicReverseProxySetup(t *testing.T, f fixtures) (*reverseProxySetup,
 	tmpDir := t.TempDir()
 	handleBlock := `handle /test/path* {
 		reverse-bin {
-			exec uv run --script {{PYTHON_APP}}
+			exec {{GO_ECHO}}
 			reverse_proxy_to unix/{{APP_SOCKET}}
 			env SOCKET_PATH={{APP_SOCKET}}
 		}
 	}`
 
 	return createReverseProxySetup(t, handleBlock, map[string]string{
-		"PYTHON_APP": f.PythonApp,
+		"GO_ECHO":    f.GoEchoBin,
 		"APP_SOCKET": filepath.Join(tmpDir, "app.sock"),
 	})
 }
@@ -296,12 +321,12 @@ func TestProcessCrashAndRestart(t *testing.T) {
 	socketPath := createSocketPath(t)
 	setup, dispose := createReverseProxySetup(t, `handle /test/* {
 		reverse-bin {
-			exec uv run --script {{PYTHON_APP}}
+			exec {{GO_ECHO}}
 			reverse_proxy_to unix/{{APP_SOCKET}}
 			env SOCKET_PATH={{APP_SOCKET}}
 		}
 	}`, map[string]string{
-		"PYTHON_APP": f.PythonApp,
+		"GO_ECHO":    f.GoEchoBin,
 		"APP_SOCKET": socketPath,
 	})
 	defer dispose()
@@ -377,12 +402,12 @@ import json
 import sys
 from pathlib import Path
 
-app_dir = Path(sys.argv[1]).resolve()
+go_echo = Path(sys.argv[1]).resolve()
 socket_path = Path(sys.argv[2]).resolve()
 result = {
-    "executable": ["python3", str(app_dir / "main.py")],
+    "executable": [str(go_echo)],
     "reverse_proxy_to": f"unix/{socket_path}",
-    "working_directory": str(app_dir),
+    "working_directory": str(go_echo.parent),
     "envs": [f"SOCKET_PATH={socket_path}"],
 }
 print(json.dumps(result))
@@ -391,7 +416,7 @@ print(json.dumps(result))
 	setup, dispose := createReverseProxySetup(t, `# Only /dynamic/* routes use dynamic discovery.
 	handle /dynamic/* {
 		reverse-bin {
-			dynamic_proxy_detector {{DETECTOR}} {{APP_DIR}} {{SOCKET_PATH}}
+			dynamic_proxy_detector {{DETECTOR}} {{GO_ECHO}} {{SOCKET_PATH}}
 		}
 	}
 	# Explicit non-dynamic route for matcher verification.
@@ -399,7 +424,7 @@ print(json.dumps(result))
 		respond "non-dynamic"
 	}`, map[string]string{
 		"DETECTOR":    detector,
-		"APP_DIR":     f.AppDir,
+		"GO_ECHO":     f.GoEchoBin,
 		"SOCKET_PATH": socketPath,
 	})
 	defer dispose()
@@ -466,15 +491,13 @@ func TestHealthCheck(t *testing.T) {
 
 			setup, dispose := createReverseProxySetup(t, `handle_path /ready/* {
 			reverse-bin {
-				exec uv run --script {{PYTHON_APP}}
+				exec {{GO_ECHO}}
 				reverse_proxy_to unix/{{APP_SOCKET}}
 				env SOCKET_PATH={{APP_SOCKET}}
-				# pass_all_env keeps uv/python runtime env (PATH/HOME/etc.) available in tests.
-				pass_all_env
 				{{HEALTH_DIRECTIVE}}
 			}
 		}`, map[string]string{
-				"PYTHON_APP":       f.PythonApp,
+				"GO_ECHO":          f.GoEchoBin,
 				"APP_SOCKET":       socketPath,
 				"HEALTH_DIRECTIVE": tc.healthDirective,
 			})
@@ -524,152 +547,82 @@ func TestHealthCheck(t *testing.T) {
 // cannot succeed and reverse-bin must fail request with service unavailable.
 func TestHealthCheckAcceptsExplicitUnauthorizedStatus(t *testing.T) {
 	requireIntegration(t)
+	f := mustFixtures(t)
 
 	port, err := GetFreePort()
 	if err != nil {
 		t.Fatalf("failed to allocate backend port: %v", err)
 	}
 
-	app := createExecutableScript(t, t.TempDir(), "auth-health.py", `#!/usr/bin/env python3
-import http.server
-import os
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/v2/":
-            self.send_response(401)
-            self.end_headers()
-            self.wfile.write(b"auth-required")
-            return
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"registry-backend")
-
-host = os.environ["REVERSE_BIN_HOST"]
-port = int(os.environ["REVERSE_BIN_PORT"])
-http.server.HTTPServer((host, port), Handler).serve_forever()
-`)
-
 	setup, dispose := createReverseProxySetup(t, `handle /registry/* {
 		reverse-bin {
-			exec {{APP}}
-			env REVERSE_BIN_HOST=127.0.0.1 REVERSE_BIN_PORT={{BACKEND_PORT}}
+			exec {{GO_ECHO}}
+			env REVERSE_BIN_HOST=127.0.0.1 REVERSE_BIN_PORT={{BACKEND_PORT}} HEALTH_STATUS=401
 			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
-			health_check GET /v2/ 401
+			health_check GET /health 401
 		}
 	}`, map[string]string{
-		"APP":          app,
-		"BACKEND_PORT": strconv.Itoa(port),
+		"GO_ECHO":      f.GoEchoBin,
+		"BACKEND_PORT": fmt.Sprintf("%d", port),
 	})
 	defer dispose()
 
 	client := newTestHTTPClient()
-	// HTTP request verifies reverse-bin accepts auth-protected /v2/ health status 401 before proxying normal traffic.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/registry/ok", setup.Port), 200, "registry-backend", "explicit 401 health status must allow backend startup and proxying")
+	// HTTP request verifies reverse-bin accepts an explicit 401 health status before proxying normal traffic.
+	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/registry/ok", setup.Port), 200, "echo-backend", "explicit 401 health status must allow backend startup and proxying")
 }
 
 func TestHealthCheckAcceptsRedirectWithoutFollowing(t *testing.T) {
 	requireIntegration(t)
+	f := mustFixtures(t)
 
 	port, err := GetFreePort()
 	if err != nil {
 		t.Fatalf("failed to allocate backend port: %v", err)
 	}
 
-	app := createExecutableScript(t, t.TempDir(), "redirect-health.py", `#!/usr/bin/env python3
-import http.server
-import os
-
-PORT = int(os.environ["BACKEND_PORT"])
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            self.send_response(302)
-            self.send_header("Location", "http://127.0.0.1:1/unreachable")
-            self.end_headers()
-            return
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"redirect-health-ok")
-
-    def log_message(self, *_args):
-        return
-
-http.server.HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
-`)
-
 	setup, dispose := createReverseProxySetup(t, `handle /redirect-health/* {
 		reverse-bin {
-			exec {{APP}}
+			exec {{GO_ECHO}}
 			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
-			env BACKEND_PORT={{BACKEND_PORT}}
+			env REVERSE_BIN_HOST=127.0.0.1 REVERSE_BIN_PORT={{BACKEND_PORT}} HEALTH_STATUS=302
 			health_check GET /health
 		}
 	}`, map[string]string{
-		"APP":          app,
+		"GO_ECHO":      f.GoEchoBin,
 		"BACKEND_PORT": fmt.Sprintf("%d", port),
 	})
 	defer dispose()
 
 	// HTTP request verifies health treats the backend's 302 as healthy instead of following its Location.
-	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/redirect-health/ok", setup.Port), 200, "redirect-health-ok", "health probe must accept 3xx response without following redirect")
+	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/redirect-health/ok", setup.Port), 200, "echo-backend", "health probe must accept 3xx response without following redirect")
 }
 
 func TestHealthCheckSetsForwardedHeaders(t *testing.T) {
 	requireIntegration(t)
+	f := mustFixtures(t)
 
 	port, err := GetFreePort()
 	if err != nil {
 		t.Fatalf("failed to allocate backend port: %v", err)
 	}
 
-	app := createExecutableScript(t, t.TempDir(), "forwarded-health.py", `#!/usr/bin/env python3
-import http.server
-import os
-
-PORT = int(os.environ["BACKEND_PORT"])
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            host = self.headers.get("X-Forwarded-Host", "")
-            proto = self.headers.get("X-Forwarded-Proto", "")
-            if host.startswith("localhost:") and proto == "http":
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b"healthy")
-                return
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(f"host={host} proto={proto}".encode())
-            return
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"forwarded-health-ok")
-
-    def log_message(self, *_args):
-        return
-
-http.server.HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
-`)
-
 	setup, dispose := createReverseProxySetup(t, `handle /fwd/* {
 		reverse-bin {
-			exec {{APP}}
+			exec {{GO_ECHO}}
 			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
-			env BACKEND_PORT={{BACKEND_PORT}}
+			env REVERSE_BIN_HOST=127.0.0.1 REVERSE_BIN_PORT={{BACKEND_PORT}} REQUIRE_FORWARDED_HEALTH=1
 			health_check GET /health
 		}
 	}`, map[string]string{
-		"APP":          app,
+		"GO_ECHO":      f.GoEchoBin,
 		"BACKEND_PORT": fmt.Sprintf("%d", port),
 	})
 	defer dispose()
 
 	// HTTP request triggers backend startup; the health probe must receive
 	// X-Forwarded-Host and X-Forwarded-Proto before proxying can start.
-	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/fwd/ok", setup.Port), 200, "forwarded-health-ok", "health probe must include forwarded host/proto headers from triggering request")
+	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/fwd/ok", setup.Port), 200, "echo-backend", "health probe must include forwarded host/proto headers from triggering request")
 }
 
 func TestHealthFailureTimeout(t *testing.T) {
@@ -710,15 +663,13 @@ func TestLifecycleIdleTimeout(t *testing.T) {
 	socketPath := createSocketPath(t)
 	setup, dispose := createReverseProxySetup(t, `handle /test/* {
 		reverse-bin {
-			exec uv run --script {{PYTHON_APP}}
+			exec {{GO_ECHO}}
 			reverse_proxy_to unix/{{APP_SOCKET}}
 			env SOCKET_PATH={{APP_SOCKET}}
-			# pass_all_env keeps uv/python runtime env (PATH/HOME/etc.) available in tests.
-			pass_all_env
 			idle_timeout_ms 100
 		}
 	}`, map[string]string{
-		"PYTHON_APP": f.PythonApp,
+		"GO_ECHO":    f.GoEchoBin,
 		"APP_SOCKET": socketPath,
 	})
 	defer dispose()
@@ -1021,21 +972,19 @@ func TestMultipleApps(t *testing.T) {
 
 	setup, dispose := createReverseProxySetup(t, `handle_path /app1/* {
 		reverse-bin {
-			exec uv run --script {{PYTHON_APP}}
+			exec {{GO_ECHO}}
 			reverse_proxy_to unix/{{APP_SOCKET_1}}
 			env SOCKET_PATH={{APP_SOCKET_1}}
-			pass_all_env
 		}
 	}
 	handle_path /app2/* {
 		reverse-bin {
-			exec uv run --script {{PYTHON_APP}}
+			exec {{GO_ECHO}}
 			reverse_proxy_to unix/{{APP_SOCKET_2}}
 			env SOCKET_PATH={{APP_SOCKET_2}}
-			pass_all_env
 		}
 	}`, map[string]string{
-		"PYTHON_APP":   f.PythonApp,
+		"GO_ECHO":      f.GoEchoBin,
 		"APP_SOCKET_1": socket1,
 		"APP_SOCKET_2": socket2,
 	})
