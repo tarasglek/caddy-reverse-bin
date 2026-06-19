@@ -1,24 +1,12 @@
 {
-	debug
-	admin unix//tmp/caddy.sock {
-		origins caddy-wants-origin-for-unix-socket
-	}
 	http_port 9080
-	https_port 9443
 }
 
-http://python.{$DOMAIN:localhost} {
-	bind 0.0.0.0
-	reverse-bin * {
-		exec python3 -m http.server 8001
-		reverse_proxy_to :8001
-		readiness_check HEAD /
-	}
-}
-
-http://*.{$DOMAIN:localhost} {
-	bind 0.0.0.0
-	reverse-bin * {
-		dynamic_proxy_detector "{$CONFIG_DIR}/../../utils/discover-app/discover-app.py" "{$CONFIG_DIR}/apps/{http.request.host.labels.1}"
+http://localhost:9080 {
+	reverse-bin {
+		exec uv run --script ./apps/python3-unix-echo/main.py
+		dir .
+		reverse_proxy_to unix//tmp/reverse-bin-example.sock
+		env SOCKET_PATH=/tmp/reverse-bin-example.sock
 	}
 }
