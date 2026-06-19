@@ -13,6 +13,7 @@ Keep existing workflow action references readable and tag-based for now, add aut
 - Dependabot keeps Actions up to date without manual SHA maintenance.
 - actionlint catches workflow syntax and expression issues before they break CI.
 - zizmor flags risky Actions patterns, including places where future SHA pinning may matter most.
+- zizmor runs advisory-only so existing tag-based action refs do not fail CI.
 - This does not provide full immutability from SHA pinning, but avoids its readability and update burden.
 
 ## Files
