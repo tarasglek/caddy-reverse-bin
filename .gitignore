@@ -54,7 +54,7 @@ __pycache__/
 
 # Local build artifacts
 /caddy
-examples/reverse-proxy/apps/go-echo/go-echo
+cmd/caddy/testdata/go-echo/go-echo
 *.deb
 *.buildinfo
 *.changes
