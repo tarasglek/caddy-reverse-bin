@@ -218,8 +218,7 @@ func (c *ReverseBin) Provision(ctx caddy.Context) error {
 	c.logger.Info("reverse-bin module provisioned",
 		zap.String("version", Version),
 		zap.String("commit", Commit),
-		zap.String("build_date", BuildDate),
-		zap.String("readme", "/usr/share/doc/reverse-bin/README.md"))
+		zap.String("build_date", BuildDate))
 
 	if len(c.DynamicProxyDetector) == 0 {
 		if len(c.Executable) == 0 {

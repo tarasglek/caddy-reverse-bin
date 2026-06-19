@@ -41,11 +41,6 @@ build :
 	$(CADDY_BIN) list-modules | grep http.handlers.reverse-bin
 	$(CADDY_BIN) version
 
-.PHONY: deb
-
-deb:
-	dpkg-buildpackage -us -uc -b
-
 release-dry-run :
 	$$(go env GOPATH)/bin/goreleaser release --snapshot --clean --skip=publish
 
