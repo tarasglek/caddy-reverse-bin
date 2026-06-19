@@ -124,7 +124,7 @@ var (
 func mustFixtures(t *testing.T) fixtures {
 	t.Helper()
 	repoRoot := getRepoRoot()
-	appDir := filepath.Join(repoRoot, "examples/reverse-proxy/apps/go-echo")
+	appDir := filepath.Join(repoRoot, "cmd/caddy/testdata/go-echo")
 	mainGo := filepath.Join(appDir, "main.go")
 	requirePaths(t,
 		pathCheck{Label: "go echo app", Path: mainGo, MustBeRegular: true},

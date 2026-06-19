@@ -3,10 +3,6 @@
 }
 
 http://localhost:9080 {
-	reverse-bin {
-		exec ./apps/go-echo/go-echo
-		dir .
-		reverse_proxy_to unix//tmp/reverse-bin-example.sock
-		env SOCKET_PATH=/tmp/reverse-bin-example.sock
-	}
+	root * ./apps/static-site
+	file_server
 }
