@@ -6,7 +6,7 @@ import (
 	"os"
 
 	jsonschema "github.com/invopop/jsonschema"
-	reversebin "github.com/tarasglek/caddy-reverse-bin"
+	"github.com/tarasglek/caddy-reverse-bin/detectorschema"
 )
 
 func main() {
@@ -17,7 +17,7 @@ func main() {
 		AllowAdditionalProperties:  false,
 	}
 
-	schema := reflector.Reflect(&reversebin.DetectorOutput{})
+	schema := reflector.Reflect(&detectorschema.DetectorOutput{})
 
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
