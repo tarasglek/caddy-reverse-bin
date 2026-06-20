@@ -31,7 +31,7 @@ builds:
 
 archives:
   - id: binaries
-    ids:
+    builds:
       - caddy-reverse-bin
     formats:
       - binary
