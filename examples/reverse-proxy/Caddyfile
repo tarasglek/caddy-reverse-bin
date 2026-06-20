@@ -4,6 +4,8 @@
 }
 
 http://localhost:9080 {
+	# Static configured app: reverse-bin always spawns a child Caddy file server
+	# and proxies this route to its fixed TCP upstream.
 	handle_path /static-detector/static/* {
 		reverse-bin {
 			exec ./tmp/caddy file-server --listen 127.0.0.1:19081 --root ./examples/reverse-proxy/apps/static
@@ -12,6 +14,8 @@ http://localhost:9080 {
 		}
 	}
 
+	# Static configured app: reverse-bin always spawns the Go echo child process
+	# and proxies this route to its fixed Unix-socket upstream.
 	handle_path /static-detector/echo/* {
 		reverse-bin {
 			exec ./examples/reverse-proxy/apps/go-echo/go-echo
@@ -20,6 +24,9 @@ http://localhost:9080 {
 		}
 	}
 
+	# Dynamic configured apps: one reverse-bin route calls the detector for each
+	# app path. The detector emits JSON choosing either the static Caddy file
+	# server or the Go echo server subprocess and upstream.
 	handle_path /dynamic-detector/* {
 		reverse-bin {
 			dynamic_proxy_detector ./examples/reverse-proxy/detector/example-detector {path}
