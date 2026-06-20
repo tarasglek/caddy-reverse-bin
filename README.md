@@ -50,6 +50,8 @@ This Caddy `reverse-bin` module is my attempt to combine that old-school dev UX 
 
 For common app-server auto-detection and the more opinionated hosting setup, see https://github.com/tarasglek/reverse-bin-hosting.
 
+This project came out of feelings of nostalgia for the classic 2000s dev-loop brought on by trying https://www.smallweb.run/. Less is more: a simple process-based reverse proxy gets your surprisingly far; no need for hyperscale cargo culting.
+
 ## Development
 
 Run all plugin tests:
@@ -66,7 +68,7 @@ make build
 ```
 
 ## Related projects
-
 - https://github.com/tarasglek/reverse-bin-hosting
+- https://www.smallweb.run/
 - https://github.com/sablierapp/sablier
 - https://github.com/losfair/zeroserve
