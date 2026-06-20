@@ -6,7 +6,7 @@ EXAMPLE_CADDY := ./tmp/caddy
 EXAMPLE_ECHO := $(EXAMPLE_DIR)/apps/go-echo/go-echo
 EXAMPLE_DETECTOR := $(EXAMPLE_DIR)/detector/example-detector
 
-.PHONY: all documentation lint ok cov tests test check build release-dry-run clean example-build example-run example-smoke
+.PHONY: all documentation lint ok cov tests test test-go test-smoke check static-check build release-dry-run clean example-build example-run example-smoke
 
 all: ok documentation lint
 
@@ -24,10 +24,16 @@ ok/%.html: doc/%.html | ok
 cov: all
 	go test $(GO_TEST_FLAGS) -v -coverprofile=coverage ./... && go tool cover -html=coverage -o=coverage.html
 
-tests test:
+tests test: test-go
+
+test-go:
 	go test $(GO_TEST_FLAGS) ./...
 
-check:
+test-smoke: example-smoke
+
+check: test-go test-smoke
+
+static-check:
 	golint .
 	go vet -all .
 	gofmt -s -l .

@@ -40,10 +40,10 @@ Unix socket upstreams use `reverse_proxy_to unix//path/to/app.sock`. For Unix so
 
 In the 2000s one could set up multi-user web servers with the Apache [UserDir](https://httpd.apache.org/docs/2.4/mod/mod_userdir.html) module, enable `cgi-bin` with Perl, or enable `mod_php`. There was no CI/CD; one would often just edit in production. There were plenty of security and performance problems with this, but the edit/deploy cycle was incredible and collaboration was immediate. You could just `mkdir` or copy an existing site and edit files with immediate results.
 
-This Caddy `reverse-bin` module is my attempt to combine that old-school dev UX with Unix-style process composition and modern reverse-proxy/load-balancer learnings. It enables the following:
+This Caddy `reverse-bin` module is my attempt to combine that old-school dev UX with Unix-style process composition and modern reverse-proxy/load-balancer approach. I decided to extend Caddy because it is sufficiently configurable to cover a wide varity of hosting needs and is written in a fairly safe language. The caddy-reverse-bin module enables the following:
 
 * On-demand servers that scale down when idle: e.g. spawn `npm run dev` (or some equivalent) when traffic hits your app, then kill it after some idle timeout
-* Dynamic detector hooks for choosing app launch/proxy settings at request time; see [`examples/reverse-proxy/`](examples/reverse-proxy/) and its [example detector](examples/reverse-proxy/detector/main.go)
+* Dynamic detector to decouple app-shape detection from web-server core; see [`examples/reverse-proxy/`](examples/reverse-proxy/) and its [example detector](examples/reverse-proxy/detector/main.go)
 * A process-spawning model that is great for delegating security to something like [landrun](https://github.com/zouuup/landrun) or VMs like [smolvm](https://github.com/smol-machines/smolvm)
 * Hosting on a shared SSH server for collaboration
 * SSH also enables CI/CD via the magic of `git config receive.denyCurrentBranch updateInstead`
@@ -54,10 +54,16 @@ This project came out of feelings of nostalgia for the classic 2000s dev-loop br
 
 ## Development
 
-Run all plugin tests:
+Run the full local verification suite, including Go tests and the example HTTP smoke test:
 
 ```bash
-go test ./...
+make check
+```
+
+Run only the Go unit/integration tests:
+
+```bash
+make test
 ```
 
 Build a local Caddy binary with this plugin:
