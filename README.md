@@ -52,6 +52,8 @@ For common app-server auto-detection and the more opinionated hosting setup, see
 
 This project came out of feelings of nostalgia for the classic 2000s dev-loop brought on by trying https://www.smallweb.run/. Less is more: a simple process-based reverse proxy gets your surprisingly far; no need for hyperscale cargo culting.
 
+Note I used LLMs heavily in this project, it still took over 4-months of spare-time to develop this concept into code I can use for person projects.
+
 ## Development
 
 Run the full local verification suite, including Go tests and the example HTTP smoke test:
