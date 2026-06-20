@@ -9,6 +9,9 @@ on:  # yamllint disable-line rule:truthy
       - "**/*.go"
       - "go.mod"
       - "go.sum"
+      - "Makefile"
+      - "examples/reverse-proxy/Caddyfile"
+      - "examples/reverse-proxy/**/*.html"
       - ".github/workflows/test-go.yaml"
   pull_request:
     branches: [main, master]
@@ -16,6 +19,9 @@ on:  # yamllint disable-line rule:truthy
       - "**/*.go"
       - "go.mod"
       - "go.sum"
+      - "Makefile"
+      - "examples/reverse-proxy/Caddyfile"
+      - "examples/reverse-proxy/**/*.html"
       - ".github/workflows/test-go.yaml"
 
 
@@ -61,8 +67,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-
       - name: Run tests
-        run: go test ./...
+        run: make test
+
+      - name: Run example smoke test
+        run: make example-smoke
