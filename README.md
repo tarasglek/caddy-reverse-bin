@@ -1,8 +1,10 @@
 # caddy-reverse-bin
 
-`caddy-reverse-bin` is a Caddy HTTP handler that starts an application process on demand and reverse-proxies requests to it.
+`caddy-reverse-bin` is a modern CGI-bin for reverse proxies: drop in an executable, let Caddy spawn it on demand, and proxy requests to it.
 
-This repository contains the Caddy plugin, its development Caddy binary entrypoint, and plugin tests. Opinionated Debian/systemd hosting, packaged runtime helpers, deployment docs, and hosted app examples live in https://github.com/tarasglek/reverse-bin-hosting.
+This repository contains the Caddy plugin, its development Caddy binary entrypoint, and plugin tests.
+
+An assempled Debian/systemd hosting setup with packaged runtime helpers, deployment docs, and hosted app examples live in https://github.com/tarasglek/reverse-bin-hosting.
 
 ## Caddyfile usage
 
