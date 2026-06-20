@@ -3,6 +3,19 @@
 }
 
 http://localhost:9080 {
-	root * ./apps/static-site
-	file_server
+	handle_path /static/* {
+		reverse-bin {
+			exec ./tmp/caddy file-server --listen 127.0.0.1:19081 --root ./examples/reverse-proxy/apps/static-site
+			reverse_proxy_to 127.0.0.1:19081
+			health_check GET /
+		}
+	}
+
+	handle_path /echo/* {
+		reverse-bin {
+			exec ./examples/reverse-proxy/apps/go-echo/go-echo
+			reverse_proxy_to unix//tmp/reverse-bin-go-echo.sock
+			env SOCKET_PATH=/tmp/reverse-bin-go-echo.sock
+		}
+	}
 }
