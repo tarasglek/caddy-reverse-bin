@@ -7,8 +7,9 @@ pushd $CONFIG_DIR/../..
 
 air="go run github.com/air-verse/air@v1.64.4"
 
-# Build the example backend spawned by reverse-bin.
+# Build the example backend and detector spawned by reverse-bin.
 go build -o "$CONFIG_DIR/apps/go-echo/go-echo" "$CONFIG_DIR/apps/go-echo"
+go build -o "$CONFIG_DIR/detector/example-detector" "$CONFIG_DIR/detector"
 
 # Call the central run script. The example Caddyfile also spawns ./tmp/caddy as
 # a child static file server to demonstrate reverse-bin managing a Caddy subprocess.
