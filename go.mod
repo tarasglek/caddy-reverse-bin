@@ -1,4 +1,4 @@
-module github.com/tarasglek/reverse-bin
+module github.com/tarasglek/caddy-reverse-bin
 
 go 1.25.0
 
