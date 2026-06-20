@@ -4,7 +4,7 @@
 
 This repository contains the Caddy plugin, its development Caddy binary entrypoint, and plugin tests.
 
-An assempled Debian/systemd hosting setup with packaged runtime helpers, deployment docs, and hosted app examples live in https://github.com/tarasglek/reverse-bin-hosting.
+A Debian/systemd hosting setup derived from this lives in https://github.com/tarasglek/reverse-bin-hosting.
 
 ## Caddyfile usage
 
