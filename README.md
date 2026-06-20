@@ -32,9 +32,23 @@ Common subdirectives:
 - `health_timeout_ms <ms>`: timeout for health checks.
 - `termination_grace_ms <ms>`: graceful termination timeout.
 - `termination_kill_wait_ms <ms>`: delay before force-killing a process after graceful termination fails.
-- `dynamic_proxy_detector <command> [args...]`: command that discovers launch/proxy settings dynamically. See `examples/reverse-proxy/` for a small detector example.
+- `dynamic_proxy_detector <command> [args...]`: command that discovers launch/proxy settings dynamically.
 
 Unix socket upstreams use `reverse_proxy_to unix//path/to/app.sock`. For Unix sockets, `reverse-bin` treats the socket file becoming available as readiness, so `health_check` is optional. TCP/HTTP static upstreams require `health_check` so the handler can tell when the launched process is ready.
+
+## Motivation
+
+In the 2000s one could set up multi-user web servers with the Apache [UserDir](https://httpd.apache.org/docs/2.4/mod/mod_userdir.html) module, enable `cgi-bin` with Perl, or enable `mod_php`. There was no CI/CD; one would often just edit in production. There were plenty of security and performance problems with this, but the edit/deploy cycle was incredible and collaboration was immediate. You could just `mkdir` or copy an existing site and edit files with immediate results.
+
+This Caddy `reverse-bin` module is my minimalist attempt to combine that old-school dev UX with modern reverse-proxy/load-balancer learnings. It enables the following:
+
+* On-demand servers that scale down when idle: e.g. spawn `npm run dev` (or some equivalent) when traffic hits your app, then kill it after some idle timeout
+* Dynamic detector hooks for choosing app launch/proxy settings at request time; see [`examples/reverse-proxy/`](examples/reverse-proxy/) and its [example detector](examples/reverse-proxy/detector/main.go)
+* A process-spawning model that is great for delegating security to something like [landrun](https://github.com/zouuup/landrun) or VMs like [smolvm](https://github.com/smol-machines/smolvm)
+* Hosting on a shared SSH server for collaboration
+* SSH also enables CI/CD via the magic of `git config receive.denyCurrentBranch updateInstead`
+
+For common app-server auto-detection and the more opinionated hosting setup, see https://github.com/tarasglek/reverse-bin-hosting.
 
 ## Development
 
@@ -50,10 +64,6 @@ Build a local Caddy binary with this plugin:
 make build
 ./caddy list-modules | grep http.handlers.reverse-bin
 ```
-
-## Hosting package
-
-For the opinionated packaged product with Debian packaging, systemd units, helper runtimes, app discovery scripts, and deployment documentation, use https://github.com/tarasglek/reverse-bin-hosting.
 
 ## Related projects
 
