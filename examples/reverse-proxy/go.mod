@@ -1,4 +1,4 @@
-module github.com/tarasglek/reverse-bin/examples/reverse-proxy
+module github.com/tarasglek/caddy-reverse-bin/examples/reverse-proxy
 
 go 1.25.0
 

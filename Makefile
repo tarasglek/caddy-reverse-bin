@@ -51,7 +51,7 @@ doc.go: doc/document.md doc/go.awk
 	gofmt -s -w $@
 
 build:
-	go run github.com/caddyserver/xcaddy/cmd/xcaddy@latest build --output $(CADDY_BIN) --with github.com/tarasglek/reverse-bin=.
+	go run github.com/caddyserver/xcaddy/cmd/xcaddy@latest build --output $(CADDY_BIN) --with github.com/tarasglek/caddy-reverse-bin=.
 	$(CADDY_BIN) list-modules | grep http.handlers.reverse-bin
 	$(CADDY_BIN) version
 

@@ -25,9 +25,9 @@ builds:
       - >-
         -s -w
         -X github.com/caddyserver/caddy/v2.CustomVersion={{ .Version }}
-        -X github.com/tarasglek/reverse-bin.Version={{ .Version }}
-        -X github.com/tarasglek/reverse-bin.Commit={{ .Commit }}
-        -X github.com/tarasglek/reverse-bin.BuildDate={{ .Date }}
+        -X github.com/tarasglek/caddy-reverse-bin.Version={{ .Version }}
+        -X github.com/tarasglek/caddy-reverse-bin.Commit={{ .Commit }}
+        -X github.com/tarasglek/caddy-reverse-bin.BuildDate={{ .Date }}
 
 archives:
   - id: binaries
