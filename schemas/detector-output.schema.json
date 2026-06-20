@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tarasglek/caddy-reverse-bin/schemas/detector-output",
+  "properties": {
+    "executable": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "minItems": 1,
+      "description": "Backend command and arguments to launch on demand."
+    },
+    "working_directory": {
+      "type": "string",
+      "description": "Directory where the backend command runs."
+    },
+    "envs": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array",
+      "description": "Environment entries passed to the backend in KEY=value form."
+    },
+    "reverse_proxy_to": {
+      "type": "string",
+      "description": "Upstream address to proxy to, such as 127.0.0.1:8080 or unix//tmp/app.sock."
+    },
+    "health_method": {
+      "type": "string",
+      "description": "HTTP method used for readiness checks on non-Unix upstreams."
+    },
+    "health_path": {
+      "type": "string",
+      "description": "HTTP path used for readiness checks on non-Unix upstreams."
+    },
+    "health_status": {
+      "type": "integer",
+      "maximum": 599,
+      "minimum": 100,
+      "description": "Exact HTTP status code expected from readiness checks."
+    }
+  },
+  "additionalProperties": false,
+  "type": "object"
+}

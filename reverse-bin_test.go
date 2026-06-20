@@ -3,6 +3,7 @@ package reversebin
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -95,7 +96,7 @@ func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
 		HealthPath:       "/static-healthy",
 		HealthStatus:     204,
 	}
-	overrides := &proxyOverrides{
+	overrides := &DetectorOutput{
 		Executable:       &[]string{"dynamic", "arg2"},
 		WorkingDirectory: testStringPtr("/dynamic"),
 		Envs:             &[]string{"A=dynamic"},
@@ -121,6 +122,107 @@ func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
 	}
 	if cfg.HealthMethod != "HEAD" || cfg.HealthPath != "/dynamic-healthy" || cfg.HealthStatus != 401 {
 		t.Fatalf("expected health override HEAD /dynamic-healthy 401, got %s %s %d", cfg.HealthMethod, cfg.HealthPath, cfg.HealthStatus)
+	}
+}
+
+// TestParseDetectorOutputRejectsInvalidJSON verifies detector stdout must be exactly one known JSON object.
+func TestParseDetectorOutputRejectsInvalidJSON(t *testing.T) {
+	testCases := []struct {
+		name    string
+		input   string
+		wantErr string
+	}{
+		{
+			name:    "unknown field",
+			input:   `{"reverseProxyTo":"127.0.0.1:8080"}`,
+			wantErr: `unknown field "reverseProxyTo"`,
+		},
+		{
+			name:    "trailing JSON value",
+			input:   `{"reverse_proxy_to":"unix//tmp/app.sock"} {}`,
+			wantErr: "must contain exactly one JSON object",
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := parseDetectorOutput([]byte(tt.input))
+			if err == nil {
+				t.Fatalf("expected detector output error containing %q", tt.wantErr)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected detector output error containing %q, got %q", tt.wantErr, err.Error())
+			}
+		})
+	}
+}
+
+// TestValidateDetectorOutputRejectsInvalidFields verifies field-specific semantic errors for detector authors.
+func TestValidateDetectorOutputRejectsInvalidFields(t *testing.T) {
+	testCases := []struct {
+		name    string
+		output  DetectorOutput
+		wantErr string
+	}{
+		{
+			name:    "health status below HTTP range",
+			output:  DetectorOutput{HealthStatus: testIntPtr(99)},
+			wantErr: "health_status must be between 100 and 599",
+		},
+		{
+			name:    "blank health path",
+			output:  DetectorOutput{HealthPath: testStringPtr("   ")},
+			wantErr: "health_path must start with /",
+		},
+		{
+			name:    "empty executable argument",
+			output:  DetectorOutput{Executable: &[]string{"./server", ""}},
+			wantErr: "executable[1] must not be empty",
+		},
+		{
+			name:    "malformed env entry",
+			output:  DetectorOutput{Envs: &[]string{"LISTEN"}},
+			wantErr: "envs[0] must be in KEY=value form",
+		},
+	}
+
+	for _, tt := range testCases {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateDetectorOutput(tt.output)
+			if err == nil {
+				t.Fatalf("expected validation error containing %q", tt.wantErr)
+			}
+			if got := err.Error(); !strings.Contains(got, tt.wantErr) {
+				t.Fatalf("expected validation error containing %q, got %q", tt.wantErr, got)
+			}
+		})
+	}
+}
+
+// TestParseDetectorOutputAcceptsValidContract verifies all detector fields decode into the Go source-of-truth type.
+func TestParseDetectorOutputAcceptsValidContract(t *testing.T) {
+	input := `{
+		"executable": ["./server", "--listen", "unix//tmp/app.sock"],
+		"working_directory": "/srv/app",
+		"envs": ["SOCKET_PATH=/tmp/app.sock", "EMPTY="],
+		"reverse_proxy_to": "unix//tmp/app.sock",
+		"health_method": "GET",
+		"health_path": "/healthz",
+		"health_status": 204
+	}`
+
+	output, err := parseDetectorOutput([]byte(input))
+	if err != nil {
+		t.Fatalf("expected valid detector output, got error: %v", err)
+	}
+	if got := fmt.Sprint(*output.Executable); got != "[./server --listen unix//tmp/app.sock]" {
+		t.Fatalf("expected executable array to decode exactly, got %s", got)
+	}
+	if output.WorkingDirectory == nil || *output.WorkingDirectory != "/srv/app" {
+		t.Fatalf("expected working_directory /srv/app, got %#v", output.WorkingDirectory)
+	}
+	if output.HealthStatus == nil || *output.HealthStatus != 204 {
+		t.Fatalf("expected health_status 204, got %#v", output.HealthStatus)
 	}
 }
 

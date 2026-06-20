@@ -6,7 +6,7 @@ EXAMPLE_CADDY := ./tmp/caddy
 EXAMPLE_ECHO := $(EXAMPLE_DIR)/apps/go-echo/go-echo
 EXAMPLE_DETECTOR := $(EXAMPLE_DIR)/detector/example-detector
 
-.PHONY: all documentation lint ok cov tests test test-go test-smoke check static-check build release-dry-run clean example-build example-run example-smoke
+.PHONY: all documentation lint ok cov tests test test-go test-smoke check static-check build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
 
 all: ok documentation lint
 
@@ -31,7 +31,7 @@ test-go:
 
 test-smoke: example-smoke
 
-check: test-go test-smoke
+check: detector-schema-check test-go test-smoke
 
 static-check:
 	golint .
@@ -54,6 +54,16 @@ build:
 	go run github.com/caddyserver/xcaddy/cmd/xcaddy@latest build --output $(CADDY_BIN) --with github.com/tarasglek/caddy-reverse-bin=.
 	$(CADDY_BIN) list-modules | grep http.handlers.reverse-bin
 	$(CADDY_BIN) version
+
+detector-schema:
+	mkdir -p schemas
+	go run ./cmd/gen-detector-schema > schemas/detector-output.schema.json
+
+detector-schema-check:
+	@tmp=$$(mktemp); \
+	go run ./cmd/gen-detector-schema > $$tmp; \
+	diff -u schemas/detector-output.schema.json $$tmp; \
+	rm -f $$tmp
 
 $(EXAMPLE_CADDY):
 	mkdir -p $(dir $@)

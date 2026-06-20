@@ -22,7 +22,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -198,16 +197,6 @@ func signalProcessGroup(proc *os.Process, sig syscall.Signal) error {
 	return syscall.Kill(plan.pid, plan.signal)
 }
 
-type proxyOverrides struct {
-	Executable       *[]string `json:"executable"`
-	WorkingDirectory *string   `json:"working_directory"`
-	Envs             *[]string `json:"envs"`
-	ReverseProxyTo   *string   `json:"reverse_proxy_to"`
-	HealthMethod     *string   `json:"health_method"`
-	HealthPath       *string   `json:"health_path"`
-	HealthStatus     *int      `json:"health_status"`
-}
-
 type resolvedConfig struct {
 	Executable       []string
 	WorkingDirectory string
@@ -226,7 +215,7 @@ type runningBackend struct {
 	config  resolvedConfig
 }
 
-func (c *ReverseBin) resolveConfig(overrides *proxyOverrides) resolvedConfig {
+func (c *ReverseBin) resolveConfig(overrides *DetectorOutput) resolvedConfig {
 	cfg := resolvedConfig{
 		Executable:       c.Executable,
 		WorkingDirectory: c.WorkingDirectory,
@@ -356,7 +345,7 @@ func (c *ReverseBin) launchBackend(ctx context.Context, cfg resolvedConfig, reas
 }
 
 func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolvedConfig, error) {
-	overrides := new(proxyOverrides)
+	overrides := new(DetectorOutput)
 	if len(c.DynamicProxyDetector) > 0 {
 		args := strings.Split(key, " ")
 		if len(args) == 0 || args[0] == "" {
@@ -387,9 +376,11 @@ func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolved
 		if err != nil {
 			return resolvedConfig{}, fmt.Errorf("dynamic proxy detector failed: %v\nOutput: %s", err, outBuf.String())
 		}
-		if err := json.Unmarshal(outBuf.Bytes(), overrides); err != nil {
-			return resolvedConfig{}, fmt.Errorf("failed to unmarshal detector output: %v\nOutput: %s", err, outBuf.String())
+		parsedOverrides, err := parseDetectorOutput(outBuf.Bytes())
+		if err != nil {
+			return resolvedConfig{}, fmt.Errorf("%v\nOutput: %s", err, outBuf.String())
 		}
+		overrides = parsedOverrides
 	}
 
 	cfg := c.resolveConfig(overrides)

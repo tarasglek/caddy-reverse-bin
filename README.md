@@ -32,7 +32,7 @@ Common subdirectives:
 - `health_timeout_ms <ms>`: timeout for health checks.
 - `termination_grace_ms <ms>`: graceful termination timeout.
 - `termination_kill_wait_ms <ms>`: delay before force-killing a process after graceful termination fails.
-- `dynamic_proxy_detector <command> [args...]`: command that discovers launch/proxy settings dynamically.
+- `dynamic_proxy_detector <command> [args...]`: command that discovers launch/proxy settings dynamically; see the [sample detector docs](examples/reverse-proxy/detector/README.md).
 
 Unix socket upstreams use `reverse_proxy_to unix//path/to/app.sock`. For Unix sockets, `reverse-bin` treats the socket file becoming available as readiness, so `health_check` is optional. TCP/HTTP static upstreams require `health_check` so the handler can tell when the launched process is ready.
 
@@ -43,7 +43,7 @@ In the 2000s one could set up multi-user web servers with the Apache [UserDir](h
 This Caddy `reverse-bin` module is my attempt to combine that old-school dev UX with Unix-style process composition and modern reverse-proxy/load-balancer approach. I decided to extend Caddy because it is sufficiently configurable to cover a wide varity of hosting needs and is written in a fairly safe language. The caddy-reverse-bin module enables the following:
 
 * On-demand servers that scale down when idle: e.g. spawn `npm run dev` (or some equivalent) when traffic hits your app, then kill it after some idle timeout
-* Dynamic detector to decouple app-shape detection from web-server core; see [`examples/reverse-proxy/`](examples/reverse-proxy/) and its [example detector](examples/reverse-proxy/detector/main.go)
+* Dynamic detector to decouple app-shape detection from web-server core; see [`examples/reverse-proxy/`](examples/reverse-proxy/) and its [sample detector](examples/reverse-proxy/detector/README.md)
 * A process-spawning model that is great for delegating security to something like [landrun](https://github.com/zouuup/landrun) or VMs like [smolvm](https://github.com/smol-machines/smolvm)
 * Hosting on a shared SSH server for collaboration
 * SSH also enables CI/CD via the magic of `git config receive.denyCurrentBranch updateInstead`
