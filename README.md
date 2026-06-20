@@ -40,7 +40,7 @@ Unix socket upstreams use `reverse_proxy_to unix//path/to/app.sock`. For Unix so
 
 In the 2000s one could set up multi-user web servers with the Apache [UserDir](https://httpd.apache.org/docs/2.4/mod/mod_userdir.html) module, enable `cgi-bin` with Perl, or enable `mod_php`. There was no CI/CD; one would often just edit in production. There were plenty of security and performance problems with this, but the edit/deploy cycle was incredible and collaboration was immediate. You could just `mkdir` or copy an existing site and edit files with immediate results.
 
-This Caddy `reverse-bin` module is my minimalist attempt to combine that old-school dev UX with modern reverse-proxy/load-balancer learnings. It enables the following:
+This Caddy `reverse-bin` module is my attempt to combine that old-school dev UX with Unix-style process composition and modern reverse-proxy/load-balancer learnings. It enables the following:
 
 * On-demand servers that scale down when idle: e.g. spawn `npm run dev` (or some equivalent) when traffic hits your app, then kill it after some idle timeout
 * Dynamic detector hooks for choosing app launch/proxy settings at request time; see [`examples/reverse-proxy/`](examples/reverse-proxy/) and its [example detector](examples/reverse-proxy/detector/main.go)
