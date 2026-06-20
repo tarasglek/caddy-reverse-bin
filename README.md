@@ -60,12 +60,6 @@ Run the full local verification suite, including Go tests and the example HTTP s
 make check
 ```
 
-Run only the Go unit/integration tests:
-
-```bash
-make test
-```
-
 Build a local Caddy binary with this plugin:
 
 ```bash
@@ -74,6 +68,7 @@ make build
 ```
 
 ## Related projects
+
 - https://github.com/tarasglek/reverse-bin-hosting
 - https://www.smallweb.run/
 - https://github.com/sablierapp/sablier
