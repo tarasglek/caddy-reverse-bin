@@ -25,8 +25,8 @@ http://localhost:9080 {
 	}
 
 	# Dynamic configured apps: one reverse-bin route calls the detector for each
-	# app path. The detector emits JSON choosing either the static Caddy file
-	# server or the Go echo server subprocess and upstream.
+	# app path. The detector inspects examples/reverse-proxy/apps/<app> and emits
+	# JSON for either an index.html static app or an executable app binary.
 	handle_path /dynamic-detector/* {
 		reverse-bin {
 			dynamic_proxy_detector ./examples/reverse-proxy/detector/example-detector {path}
