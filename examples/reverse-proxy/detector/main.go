@@ -18,6 +18,10 @@ type detectorResult struct {
 }
 
 func main() {
+	// This detector is intentionally small: it maps the first request path
+	// segment to examples/reverse-proxy/apps/<app>, then detects only two app
+	// shapes: an index.html static directory or an executable named like the app.
+	// More capable runtime detection belongs in reverse-bin-hosting.
 	if len(os.Args) != 2 {
 		fatalf("usage: example-detector REQUEST_PATH")
 	}
@@ -27,41 +31,64 @@ func main() {
 		fatalf("get working directory: %v", err)
 	}
 
-	requestPath := strings.TrimPrefix(os.Args[1], "/")
-	parts := strings.Split(requestPath, "/")
-	if len(parts) == 0 || parts[0] == "" {
+	appName := firstPathSegment(os.Args[1])
+	if appName == "" {
 		fatalf("missing app name in path %q", os.Args[1])
 	}
+	appDir := filepath.Join(root, "examples", "reverse-proxy", "apps", appName)
+	if info, err := os.Stat(appDir); err != nil || !info.IsDir() {
+		fatalf("app directory missing: %s", appDir)
+	}
 
-	var result detectorResult
-	switch parts[0] {
-	case "static":
-		indexPath := filepath.Join(root, "examples/reverse-proxy/apps/static/index.html")
-		if _, err := os.Stat(indexPath); err != nil {
-			fatalf("static app missing index.html: %v", err)
-		}
-		result = detectorResult{
-			Executable:       []string{"./tmp/caddy", "file-server", "--listen", "127.0.0.1:19082", "--root", "./examples/reverse-proxy/apps"},
+	if fileExists(filepath.Join(appDir, "index.html")) {
+		// handle_path strips /dynamic-detector but leaves /<app>/... in the
+		// upstream request path, so serve the parent apps directory. That lets
+		// /dynamic-detector/static/ resolve to apps/static/index.html.
+		writeResult(detectorResult{
+			Executable:       []string{"./tmp/caddy", "file-server", "--listen", "127.0.0.1:19082", "--root", filepath.Dir(appDir)},
 			ReverseProxyTo:   "127.0.0.1:19082",
 			WorkingDirectory: root,
 			HealthMethod:     "GET",
-			HealthPath:       "/static/",
-		}
-	case "echo":
-		goEcho := filepath.Join(root, "examples/reverse-proxy/apps/go-echo/go-echo")
-		if _, err := os.Stat(goEcho); err != nil {
-			fatalf("go echo app binary missing: %v", err)
-		}
-		result = detectorResult{
-			Executable:       []string{goEcho},
-			ReverseProxyTo:   "unix//tmp/reverse-bin-dynamic-go-echo.sock",
-			WorkingDirectory: filepath.Dir(goEcho),
-			Envs:             []string{"SOCKET_PATH=/tmp/reverse-bin-dynamic-go-echo.sock"},
-		}
-	default:
-		fatalf("unknown app %q", parts[0])
+			HealthPath:       "/" + appName + "/",
+		})
+		return
 	}
 
+	binaryPath := filepath.Join(appDir, appName)
+	if isExecutable(binaryPath) {
+		// Executable apps get a deterministic per-app Unix socket so multiple
+		// detected apps can run independently without hardcoded route blocks.
+		writeResult(detectorResult{
+			Executable:       []string{binaryPath},
+			ReverseProxyTo:   fmt.Sprintf("unix//tmp/reverse-bin-dynamic-%s.sock", appName),
+			WorkingDirectory: appDir,
+			Envs:             []string{fmt.Sprintf("SOCKET_PATH=/tmp/reverse-bin-dynamic-%s.sock", appName)},
+		})
+		return
+	}
+
+	fatalf("unsupported app %q: expected index.html or executable %s", appName, binaryPath)
+}
+
+func firstPathSegment(path string) string {
+	path = strings.Trim(path, "/")
+	if path == "" {
+		return ""
+	}
+	return strings.Split(path, "/")[0]
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func isExecutable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0
+}
+
+func writeResult(result detectorResult) {
 	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 		fatalf("encode detector result: %v", err)
 	}

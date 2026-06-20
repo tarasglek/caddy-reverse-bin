@@ -27,7 +27,7 @@ These routes use static Caddyfile configuration. Each `reverse-bin` block direct
 
 These routes use one `reverse-bin` block with `dynamic_proxy_detector`. The detector is a small Go program built by `run.sh`; it inspects the requested path and emits reverse-bin JSON config.
 
-- `/dynamic-detector/static/` detects the static app and returns config to spawn `./tmp/caddy file-server`.
-- `/dynamic-detector/echo/` detects the Go echo app and returns config to spawn `apps/go-echo/go-echo`.
+- `/dynamic-detector/static/` detects `apps/static/index.html` and returns config to spawn `./tmp/caddy file-server`.
+- `/dynamic-detector/go-echo/` detects executable `apps/go-echo/go-echo` and returns config to spawn it.
 
 This detector is intentionally only a proof of concept. For more advanced app detection, see https://github.com/tarasglek/reverse-bin-hosting.

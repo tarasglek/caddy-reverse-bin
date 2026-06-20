@@ -56,8 +56,8 @@ func TestSmoke(t *testing.T) {
 	// HTTP request tests dynamic detector output for the static site app.
 	e.GET("/dynamic-detector/static/").Expect().Status(http.StatusOK).Body().Contains("<h1>reverse-bin static demo</h1>")
 
-	// HTTP request tests dynamic detector output for the Go echo app.
-	e.GET("/dynamic-detector/echo/").Expect().Status(http.StatusOK).JSON().Object().Value("backend").String().IsEqual("echo-backend")
+	// HTTP request tests dynamic detector output for the Go echo app binary.
+	e.GET("/dynamic-detector/go-echo/").Expect().Status(http.StatusOK).JSON().Object().Value("backend").String().IsEqual("echo-backend")
 }
 
 func repoRoot(t *testing.T) string {
