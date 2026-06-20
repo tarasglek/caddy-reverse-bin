@@ -1,11 +1,12 @@
 {
+	admin off
 	http_port 9080
 }
 
 http://localhost:9080 {
 	handle_path /static-detector/static/* {
 		reverse-bin {
-			exec ./tmp/caddy file-server --listen 127.0.0.1:19081 --root ./examples/reverse-proxy/apps/static-site
+			exec ./tmp/caddy file-server --listen 127.0.0.1:19081 --root ./examples/reverse-proxy/apps/static
 			reverse_proxy_to 127.0.0.1:19081
 			health_check GET /
 		}

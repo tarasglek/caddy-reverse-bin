@@ -1,6 +1,6 @@
 body.html
 index.html
-!/examples/reverse-proxy/apps/static-site/index.html
+!/examples/reverse-proxy/apps/static/index.html
 doc/mid*txt
 *.0
 *.1

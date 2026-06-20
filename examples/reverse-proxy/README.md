@@ -2,10 +2,16 @@
 
 This example shows two ways to use `reverse-bin` to spawn subprocess backends and proxy to them.
 
-Run it with:
+Build and run it with:
 
 ```bash
-./examples/reverse-proxy/run.sh
+make example-run
+```
+
+Smoke-test it with:
+
+```bash
+make example-smoke
 ```
 
 Then open `http://localhost:9080` routes below.
@@ -14,7 +20,7 @@ Then open `http://localhost:9080` routes below.
 
 These routes use static Caddyfile configuration. Each `reverse-bin` block directly declares the subprocess to spawn and the upstream to proxy to.
 
-- `/static-detector/static/` spawns `./tmp/caddy file-server` and serves `apps/static-site/index.html`.
+- `/static-detector/static/` spawns `./tmp/caddy file-server` and serves `apps/static/index.html`.
 - `/static-detector/echo/` spawns the compiled Go echo server at `apps/go-echo/go-echo` and proxies over a Unix socket.
 
 ## Dynamic detector routes

@@ -36,16 +36,16 @@ func main() {
 	var result detectorResult
 	switch parts[0] {
 	case "static":
-		indexPath := filepath.Join(root, "examples/reverse-proxy/apps/static-site/index.html")
+		indexPath := filepath.Join(root, "examples/reverse-proxy/apps/static/index.html")
 		if _, err := os.Stat(indexPath); err != nil {
 			fatalf("static app missing index.html: %v", err)
 		}
 		result = detectorResult{
-			Executable:       []string{"./tmp/caddy", "file-server", "--listen", "127.0.0.1:19082", "--root", "./examples/reverse-proxy/apps/static-site"},
+			Executable:       []string{"./tmp/caddy", "file-server", "--listen", "127.0.0.1:19082", "--root", "./examples/reverse-proxy/apps"},
 			ReverseProxyTo:   "127.0.0.1:19082",
 			WorkingDirectory: root,
 			HealthMethod:     "GET",
-			HealthPath:       "/",
+			HealthPath:       "/static/",
 		}
 	case "echo":
 		goEcho := filepath.Join(root, "examples/reverse-proxy/apps/go-echo/go-echo")
