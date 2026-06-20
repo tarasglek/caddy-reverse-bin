@@ -67,8 +67,5 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
-      - name: Run tests
-        run: make test
-
-      - name: Run example smoke test
-        run: make example-smoke
+      - name: Run full test suite
+        run: make check
