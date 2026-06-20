@@ -63,7 +63,7 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
       - name: Run golangci-lint on .
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           # Build golangci-lint with the configured Go toolchain to avoid
           # version skew with module go version.
