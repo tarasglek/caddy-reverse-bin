@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -183,6 +184,22 @@ func processKillPlan(goos string, pid int, sig syscall.Signal) killPlan {
 	return killPlan{pid: -pid, signal: sig}
 }
 
+var sensitiveEnvKeyPattern = regexp.MustCompile(`(?i)(secret|token|password|passwd|pwd|key|private|credential|auth)`)
+
+func sanitizeArgsForLog(args []string) []string {
+	out := append([]string(nil), args...)
+	for i, arg := range out {
+		key, _, ok := strings.Cut(arg, "=")
+		if !ok {
+			continue
+		}
+		if sensitiveEnvKeyPattern.MatchString(key) {
+			out[i] = key + "=<redacted>"
+		}
+	}
+	return out
+}
+
 func signalProcessGroup(proc *os.Process, sig syscall.Signal) error {
 	if proc == nil {
 		return nil
@@ -300,7 +317,7 @@ func (c *ReverseBin) launchBackend(ctx context.Context, cfg resolvedConfig, reas
 		cancel()
 		c.logger.Error("failed to start proxy subprocess",
 			zap.String("executable", cmd.Path),
-			zap.Strings("args", cmd.Args),
+			zap.Strings("args", sanitizeArgsForLog(cmd.Args)),
 			zap.String("reason", reason),
 			zap.Error(err))
 		return nil, err
@@ -310,7 +327,7 @@ func (c *ReverseBin) launchBackend(ctx context.Context, cfg resolvedConfig, reas
 	c.logger.Info("started proxy subprocess",
 		zap.Int("pid", pid),
 		zap.String("executable", cmd.Path),
-		zap.Strings("args", cmd.Args),
+		zap.Strings("args", sanitizeArgsForLog(cmd.Args)),
 		zap.String("reason", reason))
 
 	logPipe := func(pipe io.ReadCloser, label string) {

@@ -55,6 +55,54 @@ func asConfig(c *ReverseBin) reverseBinConfig {
 	}
 }
 
+// TestSanitizeArgsForLogRedactsSensitiveAssignments verifies log args hide secret env assignment values.
+func TestSanitizeArgsForLogRedactsSensitiveAssignments(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "redacts private key env passed through landrun",
+			args: []string{"landrun", "--env", "JWT_PRIVATE_KEY_B64=abc123"},
+			want: []string{"landrun", "--env", "JWT_PRIVATE_KEY_B64=<redacted>"},
+		},
+		{
+			name: "redacts password private key env",
+			args: []string{"--env", "USER1_PASSWORD_PRIVKEY=AGE-SECRET-KEY-xxx"},
+			want: []string{"--env", "USER1_PASSWORD_PRIVKEY=<redacted>"},
+		},
+		{
+			name: "redacts empty sensitive value",
+			args: []string{"AUTH_TOKEN="},
+			want: []string{"AUTH_TOKEN=<redacted>"},
+		},
+		{
+			name: "keeps non-sensitive env assignment",
+			args: []string{"--env", "DENO_DIR=data/.cache/deno", "--env", "PATH=/usr/bin:/bin"},
+			want: []string{"--env", "DENO_DIR=data/.cache/deno", "--env", "PATH=/usr/bin:/bin"},
+		},
+		{
+			name: "keeps non-assignment args",
+			args: []string{"landrun", "--env", "deno", "serve"},
+			want: []string{"landrun", "--env", "deno", "serve"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			orig := append([]string(nil), tt.args...)
+			got := sanitizeArgsForLog(tt.args)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("sanitizeArgsForLog() = %#v, want %#v", got, tt.want)
+			}
+			if !reflect.DeepEqual(tt.args, orig) {
+				t.Fatalf("sanitizeArgsForLog mutated input: got %#v, want %#v", tt.args, orig)
+			}
+		})
+	}
+}
+
 // TestProcessKillPlanUnix verifies Unix process groups are targeted by negative PID.
 func TestProcessKillPlanUnix(t *testing.T) {
 	plan := processKillPlan("linux", 1234, syscall.SIGTERM)
