@@ -1,5 +1,8 @@
 version: 2
 
+# Release note: caddy-reverse-bin v* tags trigger GoReleaser. If
+# caddy-reverse-bin go.mod needs a new detectorschema version, tag
+# detectorschema/vX.Y.Z first. See CONTRIBUTING.md for release process.
 project_name: caddy-reverse-bin
 
 before:
