@@ -103,13 +103,6 @@ func requirePaths(t *testing.T, checks ...pathCheck) {
 	}
 }
 
-func requireCommand(t *testing.T, name string) {
-	t.Helper()
-	if _, err := exec.LookPath(name); err != nil {
-		t.Skipf("skipping integration test: required command %q not found in PATH", name)
-	}
-}
-
 type fixtures struct {
 	GoEchoBin string
 	AppDir    string
