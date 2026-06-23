@@ -561,6 +561,16 @@ func TestReverseBin_UnmarshalCaddyfile(t *testing.T) {
 	}
 }
 
+// TestHealthWantFormatsConfiguredExpectation verifies diagnostics use exact or default status text.
+func TestHealthWantFormatsConfiguredExpectation(t *testing.T) {
+	if got := healthWant(0); got != "2xx/3xx" {
+		t.Fatalf("default health expectation = %q, want %q", got, "2xx/3xx")
+	}
+	if got := healthWant(http.StatusUnauthorized); got != "401" {
+		t.Fatalf("explicit health expectation = %q, want %q", got, "401")
+	}
+}
+
 // TestProbeHealthAcceptsExplicitStatus verifies auth-protected endpoints can be healthy.
 func TestProbeHealthAcceptsExplicitStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -573,15 +583,15 @@ func TestProbeHealthAcceptsExplicitStatus(t *testing.T) {
 	defer server.Close()
 
 	rb := &ReverseBin{logger: zaptest.NewLogger(t)}
-	ok, err := rb.probeHealth(context.Background(), resolvedConfig{
+	ok, result := rb.probeHealth(context.Background(), resolvedConfig{
 		ReverseProxyTo: server.URL,
 		HealthMethod:   http.MethodGet,
 		HealthPath:     "/v2/",
 		HealthStatus:   http.StatusUnauthorized,
 	}, nil)
 
-	if err != nil {
-		t.Fatalf("probeHealth returned error: %v", err)
+	if result.err != nil {
+		t.Fatalf("probeHealth returned error: %v", result.err)
 	}
 	if !ok {
 		t.Fatalf("expected explicit 401 health status to be accepted")
@@ -600,18 +610,50 @@ func TestProbeHealthRejectsUnexpectedExplicitStatus(t *testing.T) {
 	defer server.Close()
 
 	rb := &ReverseBin{logger: zaptest.NewLogger(t)}
-	ok, err := rb.probeHealth(context.Background(), resolvedConfig{
+	ok, result := rb.probeHealth(context.Background(), resolvedConfig{
 		ReverseProxyTo: server.URL,
 		HealthMethod:   http.MethodGet,
 		HealthPath:     "/v2/",
 		HealthStatus:   http.StatusUnauthorized,
 	}, nil)
 
-	if err != nil {
-		t.Fatalf("probeHealth returned error: %v", err)
+	if result.err != nil {
+		t.Fatalf("probeHealth returned error: %v", result.err)
 	}
 	if ok {
 		t.Fatalf("expected 200 response to be rejected when explicit health status is 401")
+	}
+}
+
+// TestProbeHealthReportsUnexpectedDefaultStatus verifies diagnostics keep the last failing status.
+func TestProbeHealthReportsUnexpectedDefaultStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This HTTP request tests the default 2xx/3xx health check against a failing app route.
+		if r.Method != http.MethodHead || r.URL.Path != "/" {
+			t.Fatalf("unexpected health request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	rb := &ReverseBin{logger: zaptest.NewLogger(t)}
+	ok, result := rb.probeHealth(context.Background(), resolvedConfig{
+		ReverseProxyTo: server.URL,
+		HealthMethod:   http.MethodHead,
+		HealthPath:     "/",
+	}, nil)
+
+	if result.err != nil {
+		t.Fatalf("probeHealth returned error: %v", result.err)
+	}
+	if ok {
+		t.Fatalf("expected 500 response to be rejected by default health status range")
+	}
+	if result.status != http.StatusInternalServerError {
+		t.Fatalf("last health status = %d, want %d", result.status, http.StatusInternalServerError)
+	}
+	if result.want != "2xx/3xx" {
+		t.Fatalf("health expectation = %q, want %q", result.want, "2xx/3xx")
 	}
 }
 

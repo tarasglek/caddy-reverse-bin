@@ -36,6 +36,18 @@ Common subdirectives:
 
 Unix socket upstreams use `reverse_proxy_to unix//path/to/app.sock`. For Unix sockets, `reverse-bin` treats the socket file becoming available as readiness, so `health_check` is optional. TCP/HTTP static upstreams require `health_check` so the handler can tell when the launched process is ready.
 
+## Health checks
+
+Health checks are used to ensure the launched app has finished starting before Caddy proxies traffic to it. By default, `health_check` accepts any `2xx` or `3xx` response. Use an explicit status for auth-protected routes, for example `health_check GET /v2/ 401`. Apps that require auth should expose a public `/health` endpoint or configure the expected redirect/status.
+
+For reverse-bin-hosting, configure the probe with environment variables:
+
+```sh
+REVERSE_BIN_HEALTH_METHOD=GET
+REVERSE_BIN_HEALTH_PATH=/
+REVERSE_BIN_HEALTH_STATUS=302
+```
+
 ## Motivation
 
 In the 2000s one could set up multi-user web servers with the Apache [UserDir](https://httpd.apache.org/docs/2.4/mod/mod_userdir.html) module, enable `cgi-bin` with Perl, or enable `mod_php`. There was no CI/CD; one would often just edit in production. There were plenty of security and performance problems with this, but the edit/deploy cycle was incredible and collaboration was immediate. You could just `mkdir` or copy an existing site and edit files with immediate results.

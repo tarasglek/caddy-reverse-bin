@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -47,7 +48,23 @@ const (
 	defaultHealthTimeoutMS       = 15000
 	defaultTerminationGraceMS    = 5000
 	defaultTerminationKillWaitMS = 1000
+	healthCheckDocsURL           = "https://github.com/tarasglek/caddy-reverse-bin#health-checks"
 )
+
+type healthProbeResult struct {
+	method string
+	path   string
+	status int
+	err    error
+	want   string
+}
+
+func healthWant(status int) string {
+	if status != 0 {
+		return strconv.Itoa(status)
+	}
+	return "2xx/3xx"
+}
 
 func (c *ReverseBin) healthTimeout() time.Duration {
 	return time.Duration(c.HealthTimeoutMS) * time.Millisecond
@@ -416,12 +433,18 @@ func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolved
 	return cfg, nil
 }
 
-func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig, sourceReq *http.Request) (bool, error) {
+func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig, sourceReq *http.Request) (bool, healthProbeResult) {
+	result := healthProbeResult{
+		method: cfg.HealthMethod,
+		path:   cfg.HealthPath,
+		want:   healthWant(cfg.HealthStatus),
+	}
 	if cfg.HealthMethod == "" {
 		if !isUnixUpstream(cfg.ReverseProxyTo) {
-			return false, fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
+			result.err = fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
+			return false, result
 		}
-		return isUnixSocketHealthy(strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")), nil
+		return isUnixSocketHealthy(strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")), result
 	}
 
 	scheme := "http"
@@ -458,19 +481,22 @@ func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig, source
 
 	req, err := http.NewRequestWithContext(ctx, cfg.HealthMethod, checkURL, nil)
 	if err != nil {
-		return false, err
+		result.err = err
+		return false, result
 	}
 	setForwardedHealthHeaders(req, sourceReq)
 	resp, err := client.Do(req)
 	if err != nil {
-		return false, err
+		result.err = err
+		return false, result
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
+	result.status = resp.StatusCode
 	if cfg.HealthStatus != 0 {
-		return resp.StatusCode == cfg.HealthStatus, nil
+		return resp.StatusCode == cfg.HealthStatus, result
 	}
-	return resp.StatusCode >= 200 && resp.StatusCode < 400, nil
+	return resp.StatusCode >= 200 && resp.StatusCode < 400, result
 }
 
 func setForwardedHealthHeaders(healthReq *http.Request, sourceReq *http.Request) {
@@ -506,6 +532,7 @@ func setForwardedHealthHeaders(healthReq *http.Request, sourceReq *http.Request)
 }
 
 func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg resolvedConfig, sourceReq *http.Request) error {
+	var last healthProbeResult
 	tickerInterval := 200 * time.Millisecond
 	if isUnixUpstream(cfg.ReverseProxyTo) && cfg.HealthMethod == "" {
 		tickerInterval = 50 * time.Millisecond
@@ -520,6 +547,14 @@ func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg re
 		}
 		select {
 		case <-ctx.Done():
+			c.logger.Warn("health timeout",
+				zap.String("method", last.method),
+				zap.String("path", last.path),
+				zap.Int("last_status", last.status),
+				zap.String("want", last.want),
+				zap.String("docs", healthCheckDocsURL),
+				zap.Error(last.err),
+			)
 			return ctx.Err()
 		case err := <-done:
 			if rb != nil {
@@ -527,8 +562,9 @@ func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg re
 			}
 			return fmt.Errorf("reverse proxy process exited during health check: %v", err)
 		case <-ticker.C:
-			healthy, err := c.probeHealth(ctx, cfg, sourceReq)
-			if err != nil {
+			healthy, result := c.probeHealth(ctx, cfg, sourceReq)
+			if !healthy {
+				last = result
 				continue
 			}
 			if healthy {
