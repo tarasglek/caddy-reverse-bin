@@ -1,0 +1,29 @@
+{
+	admin off
+	auto_https off
+	order cgi before respond
+}
+
+http:// {
+	bind unix//{$HOME}/reverse-bin.sock
+
+	handle /health {
+		respond "ok" 200
+	}
+
+	@receivePackPath path */git-receive-pack
+	handle @receivePackPath {
+		respond "read-only" 403
+	}
+
+	@receivePackQuery query service=git-receive-pack
+	handle @receivePackQuery {
+		respond "read-only" 403
+	}
+
+	handle {
+		cgi * /usr/lib/git-core/git-http-backend {
+			env GIT_PROJECT_ROOT={env.GIT_PROJECT_ROOT}
+		}
+	}
+}
