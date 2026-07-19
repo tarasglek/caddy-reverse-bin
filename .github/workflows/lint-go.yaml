@@ -72,3 +72,4 @@ jobs:
           skip-cache: true
           # Directory containing go.mod file
           working-directory: "."
+          args: --timeout=5m
