@@ -22,11 +22,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Validate release notes
+        run: ./scripts/check-release-notes.sh "release-notes/$GITHUB_REF_NAME.md"
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7.2.2
         with:
           distribution: goreleaser
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=release-notes/${{ github.ref_name }}.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

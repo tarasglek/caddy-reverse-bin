@@ -46,7 +46,21 @@ git push origin detectorschema/vX.Y.Z
 
 Then update `caddy-reverse-bin` `go.mod` to require that `detectorschema` version. Do not leave a local `replace` for `detectorschema` in a release commit.
 
-`caddy-reverse-bin` releases use normal `v*` tags. Pushing the tag runs GoReleaser via `.github/workflows/release.yml`:
+`caddy-reverse-bin` releases use normal `v*` tags. Before tagging `vX.Y.Z`, add `release-notes/vX.Y.Z.md` with this structure:
+
+- `# Caddy Reverse Bin vX.Y.Z`
+- `## Highlights` with at least one bullet
+- `## Breaking changes` with text such as `None.` when there are no breaking changes
+- `## Full list of changes` with at least one bullet
+
+Validate the authored notes and release workflow locally:
+
+```bash
+./scripts/check-release-notes.sh release-notes/vX.Y.Z.md
+./scripts/check-release-gate.sh
+```
+
+Pushing the tag runs `.github/workflows/release.yml`, which validates the matching file before GoReleaser publishes it as the GitHub release body:
 
 ```bash
 git tag -a vX.Y.Z -m "vX.Y.Z"

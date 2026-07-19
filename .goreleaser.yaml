@@ -48,6 +48,3 @@ release:
   github:
     owner: tarasglek
     name: caddy-reverse-bin
-
-changelog:
-  use: github-native

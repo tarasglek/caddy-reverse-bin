@@ -6,7 +6,7 @@ EXAMPLE_CADDY := ./tmp/caddy
 EXAMPLE_ECHO := $(EXAMPLE_DIR)/apps/go-echo/go-echo
 EXAMPLE_DETECTOR := $(EXAMPLE_DIR)/detector/example-detector
 
-.PHONY: all documentation lint ok cov tests test test-go test-smoke check static-check build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
+.PHONY: all documentation lint ok cov tests test test-go test-smoke test-release check static-check build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
 
 all: ok documentation lint
 
@@ -31,7 +31,11 @@ test-go:
 
 test-smoke: example-smoke
 
-check: detector-schema-check test-go test-smoke
+test-release:
+	./scripts/test-release-notes.sh
+	./scripts/check-release-gate.sh
+
+check: detector-schema-check test-go test-smoke test-release
 
 static-check:
 	golint .
