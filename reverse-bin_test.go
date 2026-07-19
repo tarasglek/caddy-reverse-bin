@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -654,6 +655,122 @@ func TestProbeHealthReportsUnexpectedDefaultStatus(t *testing.T) {
 	}
 	if result.want != "2xx/3xx" {
 		t.Fatalf("health expectation = %q, want %q", result.want, "2xx/3xx")
+	}
+}
+
+func TestRemoveUnixSocket(t *testing.T) {
+	t.Run("removes Unix socket path", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "app.sock")
+		if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := removeUnixSocket("unix/" + path); err != nil {
+			t.Fatalf("removeUnixSocket: %v", err)
+		}
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("socket path still exists or stat failed unexpectedly: %v", err)
+		}
+	})
+
+	t.Run("ignores missing Unix socket", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "missing.sock")
+		if err := removeUnixSocket("unix/" + path); err != nil {
+			t.Fatalf("removeUnixSocket missing path: %v", err)
+		}
+	})
+
+	t.Run("ignores non-Unix upstream", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "tcp-marker")
+		if err := os.WriteFile(path, []byte("keep"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := removeUnixSocket(path); err != nil {
+			t.Fatalf("removeUnixSocket non-Unix: %v", err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("non-Unix path was removed: %v", err)
+		}
+	})
+}
+
+func TestEnsureManagedUnixSocketDir(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "static-apps")
+	socketPath := filepath.Join(root, "app-deadbeef", "reverse-bin.sock")
+	if err := ensureManagedUnixSocketDir("unix/"+socketPath, root); err != nil {
+		t.Fatalf("ensureManagedUnixSocketDir: %v", err)
+	}
+	info, err := os.Stat(filepath.Dir(socketPath))
+	if err != nil {
+		t.Fatalf("managed socket directory not created: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o700 {
+		t.Fatalf("managed socket directory mode = %o, want 700", got)
+	}
+
+	outsidePath := filepath.Join(root+"-outside", "app.sock")
+	if err := ensureManagedUnixSocketDir("unix/"+outsidePath, root); err != nil {
+		t.Fatalf("ensureManagedUnixSocketDir outside root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(outsidePath)); !os.IsNotExist(err) {
+		t.Fatalf("outside directory created or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestResolveRequestConfigRemovesPreExistingUnixSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "stale.sock")
+	if err := os.WriteFile(path, []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &ReverseBin{Executable: []string{"true"}, ReverseProxyTo: "unix/" + path}
+	if _, err := c.resolveRequestConfig(httptest.NewRequest(http.MethodGet, "http://example.test", nil), ""); err != nil {
+		t.Fatalf("resolveRequestConfig: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("pre-existing socket remains or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestStopBackendRemovesUnixSocketAfterProcessExit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.sock")
+	if err := os.WriteFile(path, []byte("socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	done <- nil
+	process, err := os.FindProcess(99999999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &ReverseBin{logger: zaptest.NewLogger(t)}
+	rb := &runningBackend{process: process, done: done, config: resolvedConfig{ReverseProxyTo: "unix/" + path}}
+	if err := c.stopBackend(rb, "test", time.Second); err != nil {
+		t.Fatalf("stopBackend: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("socket remains after stopBackend or stat failed unexpectedly: %v", err)
+	}
+}
+
+func TestStopBackendPreservesUnixSocketWhenProcessDoesNotExit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app.sock")
+	if err := os.WriteFile(path, []byte("socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	process, err := os.FindProcess(99999999)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &ReverseBin{logger: zaptest.NewLogger(t), TerminationKillWaitMS: 1}
+	rb := &runningBackend{
+		process: process,
+		done:    make(chan error),
+		config:  resolvedConfig{ReverseProxyTo: "unix/" + path},
+	}
+	if err := c.stopBackend(rb, "test timeout", 0); !errors.Is(err, errBackendStopTimeout) {
+		t.Fatalf("stopBackend error = %v, want errBackendStopTimeout", err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("socket removed before process exit: %v", err)
 	}
 }
 

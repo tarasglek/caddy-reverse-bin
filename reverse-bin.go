@@ -22,6 +22,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -29,6 +30,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -49,6 +51,7 @@ const (
 	defaultTerminationGraceMS    = 5000
 	defaultTerminationKillWaitMS = 1000
 	healthCheckDocsURL           = "https://github.com/tarasglek/caddy-reverse-bin#health-checks"
+	managedStaticSocketRoot      = "/run/reverse-bin/static-apps"
 )
 
 type healthProbeResult struct {
@@ -156,6 +159,40 @@ func (c *ReverseBin) getUpstreamFromSupervisor(r *http.Request, ps *processState
 	}
 }
 
+func unixSocketPath(addr string) (string, bool) {
+	if !isUnixUpstream(addr) {
+		return "", false
+	}
+	return strings.TrimPrefix(addr, "unix/"), true
+}
+
+func removeUnixSocket(addr string) error {
+	socketPath, ok := unixSocketPath(addr)
+	if !ok {
+		return nil
+	}
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove unix socket %s: %w", socketPath, err)
+	}
+	return nil
+}
+
+func ensureManagedUnixSocketDir(addr, root string) error {
+	socketPath, ok := unixSocketPath(addr)
+	if !ok {
+		return nil
+	}
+	root = filepath.Clean(root)
+	socketPath = filepath.Clean(socketPath)
+	if !strings.HasPrefix(socketPath, root+string(filepath.Separator)) {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+		return fmt.Errorf("failed to create managed unix socket directory for %s: %w", socketPath, err)
+	}
+	return nil
+}
+
 func resolveDialAddress(toAddr string) (string, error) {
 	if isUnixUpstream(toAddr) {
 		socketPath := strings.TrimPrefix(toAddr, "unix/")
@@ -201,7 +238,10 @@ func processKillPlan(goos string, pid int, sig syscall.Signal) killPlan {
 	return killPlan{pid: -pid, signal: sig}
 }
 
-var sensitiveEnvKeyPattern = regexp.MustCompile(`(?i)(secret|token|password|passwd|pwd|key|private|credential|auth)`)
+var (
+	sensitiveEnvKeyPattern = regexp.MustCompile(`(?i)(secret|token|password|passwd|pwd|key|private|credential|auth)`)
+	errBackendStopTimeout  = errors.New("backend process did not stop")
+)
 
 func sanitizeArgsForLog(args []string) []string {
 	out := append([]string(nil), args...)
@@ -424,11 +464,11 @@ func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolved
 	if !isUnixUpstream(cfg.ReverseProxyTo) && !healthConfigured(cfg.HealthMethod, cfg.HealthPath) {
 		return resolvedConfig{}, fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
 	}
-	if isUnixUpstream(cfg.ReverseProxyTo) {
-		socketPath := strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")
-		if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-			return resolvedConfig{}, fmt.Errorf("failed to remove pre-existing unix socket %s: %w", socketPath, err)
-		}
+	if err := ensureManagedUnixSocketDir(cfg.ReverseProxyTo, managedStaticSocketRoot); err != nil {
+		return resolvedConfig{}, err
+	}
+	if err := removeUnixSocket(cfg.ReverseProxyTo); err != nil {
+		return resolvedConfig{}, err
 	}
 	return cfg, nil
 }
@@ -578,7 +618,12 @@ func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg re
 }
 
 func (c *ReverseBin) stopBackend(rb *runningBackend, reason string, grace time.Duration) error {
-	if rb == nil || rb.process == nil {
+	if rb == nil {
+		return nil
+	}
+	cleanupSocket := func() { _ = removeUnixSocket(rb.config.ReverseProxyTo) }
+	if rb.process == nil {
+		cleanupSocket()
 		return nil
 	}
 	c.logger.Info("terminating proxy subprocess",
@@ -596,6 +641,7 @@ func (c *ReverseBin) stopBackend(rb *runningBackend, reason string, grace time.D
 
 	select {
 	case err := <-rb.done:
+		cleanupSocket()
 		return err
 	case <-timer.C:
 		c.logger.Warn("proxy subprocess did not exit before grace timeout; killing",
@@ -604,9 +650,10 @@ func (c *ReverseBin) stopBackend(rb *runningBackend, reason string, grace time.D
 		_ = signalProcessGroup(rb.process, syscall.SIGKILL)
 		select {
 		case err := <-rb.done:
+			cleanupSocket()
 			return err
 		case <-time.After(c.terminationKillWait()):
-			return fmt.Errorf("timeout waiting for process %d after SIGKILL", rb.process.Pid)
+			return fmt.Errorf("%w: timeout waiting for process %d after SIGKILL", errBackendStopTimeout, rb.process.Pid)
 		}
 	}
 }
@@ -703,6 +750,7 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 	var idleTimer *time.Timer
 	var idleC <-chan time.Time
 	activeRequests := int64(0)
+	backendNeedsStop := false
 	idleTimeout := time.Duration(c.IdleTimeoutMS) * time.Millisecond
 
 	startIdleTimer := func() {
@@ -718,7 +766,12 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 	shutdown := func(reason string) error {
 		stopTimer(&idleTimer, &idleC)
 		err := c.stopBackend(backend, reason, c.terminationGrace())
-		backend = nil
+		if errors.Is(err, errBackendStopTimeout) {
+			backendNeedsStop = true
+		} else {
+			backend = nil
+			backendNeedsStop = false
+		}
 		return err
 	}
 
@@ -729,6 +782,16 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 
 			if backend != nil && backendExited(backend) {
 				backend = nil
+				backendNeedsStop = false
+			}
+			if backend != nil && backendNeedsStop {
+				stopErr := c.stopBackend(backend, "retry failed stop", c.terminationGrace())
+				if errors.Is(stopErr, errBackendStopTimeout) {
+					req.reply <- supervisorResult{err: stopErr}
+					continue
+				}
+				backend = nil
+				backendNeedsStop = false
 			}
 			if backend != nil && isUnixUpstream(backend.config.ReverseProxyTo) {
 				socketPath := strings.TrimPrefix(backend.config.ReverseProxyTo, "unix/")
@@ -737,9 +800,14 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 						zap.String("key", ps.key),
 						zap.Int("pid", backend.process.Pid),
 						zap.String("socket", socketPath))
-					_ = c.stopBackend(backend, "unix socket unavailable", c.terminationGrace())
+					stopErr := c.stopBackend(backend, "unix socket unavailable", c.terminationGrace())
+					if errors.Is(stopErr, errBackendStopTimeout) {
+						backendNeedsStop = true
+						req.reply <- supervisorResult{err: stopErr}
+						continue
+					}
+					_ = removeUnixSocket(backend.config.ReverseProxyTo)
 					backend = nil
-					_ = os.Remove(socketPath)
 				}
 			}
 
@@ -756,7 +824,12 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 				}
 				cancel()
 				if err != nil {
-					_ = c.stopBackend(rb, "health failed", c.terminationGrace())
+					stopErr := c.stopBackend(rb, "health failed", c.terminationGrace())
+					if errors.Is(stopErr, errBackendStopTimeout) {
+						backend = rb
+						backendNeedsStop = true
+						err = errors.Join(err, stopErr)
+					}
 					req.reply <- supervisorResult{err: err}
 					continue
 				}
@@ -792,8 +865,13 @@ func (c *ReverseBin) runSupervisor(ps *processState) {
 
 		case <-idleC:
 			c.logger.Info("idle timer fired, terminating process", zap.String("key", ps.key))
-			_ = c.stopBackend(backend, "idle timeout", c.terminationGrace())
-			backend = nil
+			stopErr := c.stopBackend(backend, "idle timeout", c.terminationGrace())
+			if errors.Is(stopErr, errBackendStopTimeout) {
+				backendNeedsStop = true
+			} else {
+				backend = nil
+				backendNeedsStop = false
+			}
 			idleTimer = nil
 			idleC = nil
 
