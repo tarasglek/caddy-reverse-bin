@@ -4,6 +4,7 @@
 }
 
 http://localhost:9080 {
+	bind 127.0.0.1
 	# Static configured app: reverse-bin always spawns a child Caddy file server
 	# and proxies this route to its fixed TCP upstream.
 	handle_path /static-detector/static/* {

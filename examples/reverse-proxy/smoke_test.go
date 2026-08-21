@@ -3,6 +3,7 @@ package reverseproxyexample_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
@@ -14,6 +15,43 @@ import (
 
 	"github.com/gavv/httpexpect/v2"
 )
+
+// TestCaddyfileBindsPort9080ToIPv4Loopback verifies the example is not exposed on non-loopback interfaces.
+func TestCaddyfileBindsPort9080ToIPv4Loopback(t *testing.T) {
+	repoRoot := repoRoot(t)
+	caddyPath := filepath.Join(repoRoot, "tmp", "caddy")
+	if _, err := os.Stat(caddyPath); err != nil {
+		t.Fatalf("required example binary is missing; run make example-build first: %s: %v", caddyPath, err)
+	}
+
+	cmd := exec.Command(caddyPath, "adapt", "--adapter", "caddyfile", "--config", filepath.Join(repoRoot, "examples", "reverse-proxy", "Caddyfile"))
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("adapt example Caddyfile: %v", err)
+	}
+
+	var config struct {
+		Apps struct {
+			HTTP struct {
+				Servers map[string]struct {
+					Listen []string `json:"listen"`
+				} `json:"servers"`
+			} `json:"http"`
+		} `json:"apps"`
+	}
+	if err := json.Unmarshal(output, &config); err != nil {
+		t.Fatalf("decode adapted Caddyfile: %v", err)
+	}
+
+	if len(config.Apps.HTTP.Servers) != 1 {
+		t.Fatalf("adapted server count = %d, want 1", len(config.Apps.HTTP.Servers))
+	}
+	for name, server := range config.Apps.HTTP.Servers {
+		if len(server.Listen) != 1 || server.Listen[0] != "127.0.0.1:9080" {
+			t.Fatalf("server %s listeners = %q, want exactly [127.0.0.1:9080]", name, server.Listen)
+		}
+	}
+}
 
 func TestSmoke(t *testing.T) {
 	if testing.Short() {
