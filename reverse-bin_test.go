@@ -874,6 +874,29 @@ func TestReverseBin_GetProcessKey(t *testing.T) {
 	}
 }
 
+func TestReverseBin_GetProcessKeyFollowsExpandedArgs(t *testing.T) {
+	c := &ReverseBin{
+		DynamicProxyDetector: []string{"/bin/detect", "--public-url={app_url}", "{app_dir}"},
+		logger:               zaptest.NewLogger(t),
+	}
+	key := func(host, appDir, appURL string) string {
+		req := httptest.NewRequest(http.MethodGet, "http://"+host+"/", nil)
+		repl := caddy.NewReplacer()
+		repl.Set("app_dir", appDir)
+		repl.Set("app_url", appURL)
+		req = req.WithContext(context.WithValue(req.Context(), caddy.ReplacerCtxKey, repl))
+		return c.getProcessKey(req)
+	}
+
+	apex := key("example.test", "/apps/www", "https://example.test")
+	if www := key("www.example.test", "/apps/www", "https://example.test"); www != apex {
+		t.Fatalf("host aliases with identical args got keys %q and %q, want one shared key", apex, www)
+	}
+	if other := key("www.example.test", "/apps/www", "https://www.example.test"); other == apex {
+		t.Fatalf("different expanded args share key %q", other)
+	}
+}
+
 func TestReverseBin_ProvisionValidation(t *testing.T) {
 	tests := []struct {
 		name    string
