@@ -32,7 +32,7 @@ Common subdirectives:
 - `health_timeout_ms <ms>`: timeout for health checks.
 - `termination_grace_ms <ms>`: graceful termination timeout.
 - `termination_kill_wait_ms <ms>`: delay before force-killing a process after graceful termination fails.
-- `dynamic_proxy_detector <command> [args...]`: command that discovers launch/proxy settings dynamically; see the [sample detector docs](examples/reverse-proxy/detector/README.md).
+- `dynamic_proxy_detector <command> [args...]`: command that discovers launch/proxy settings dynamically; see the [sample detector docs](examples/reverse-proxy/detector/README.md). Placeholders in its arguments are expanded per request, and the expanded arguments also key the backend process: requests that expand to the same arguments share one process. Map host aliases to identical values, or each alias starts its own backend.
 
 Unix socket upstreams use `reverse_proxy_to unix//path/to/app.sock`. For Unix sockets, `reverse-bin` treats the socket file becoming available as readiness, so `health_check` is optional. TCP/HTTP static upstreams require `health_check` so the handler can tell when the launched process is ready.
 
