@@ -2,6 +2,8 @@ module github.com/tarasglek/caddy-reverse-bin
 
 go 1.26.10
 
+toolchain go1.27.3
+
 require (
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/invopop/jsonschema v0.14.0
