@@ -126,14 +126,6 @@ func TestProcessKillPlanWindows(t *testing.T) {
 	}
 }
 
-func testStringPtr(s string) *string {
-	return &s
-}
-
-func testIntPtr(i int) *int {
-	return &i
-}
-
 // TestResolvedConfigUsesDetectorOverrides verifies dynamic detector output overrides static config.
 func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
 	rb := &ReverseBin{
@@ -147,12 +139,12 @@ func TestResolvedConfigUsesDetectorOverrides(t *testing.T) {
 	}
 	overrides := &DetectorOutput{
 		Executable:       &[]string{"dynamic", "arg2"},
-		WorkingDirectory: testStringPtr("/dynamic"),
+		WorkingDirectory: new("/dynamic"),
 		Envs:             &[]string{"A=dynamic"},
-		ReverseProxyTo:   testStringPtr("unix//dynamic.sock"),
-		HealthMethod:     testStringPtr("HEAD"),
-		HealthPath:       testStringPtr("/dynamic-healthy"),
-		HealthStatus:     testIntPtr(401),
+		ReverseProxyTo:   new("unix//dynamic.sock"),
+		HealthMethod:     new("HEAD"),
+		HealthPath:       new("/dynamic-healthy"),
+		HealthStatus:     new(401),
 	}
 
 	cfg := rb.resolveConfig(overrides)
@@ -215,12 +207,12 @@ func TestValidateDetectorOutputRejectsInvalidFields(t *testing.T) {
 	}{
 		{
 			name:    "health status below HTTP range",
-			output:  DetectorOutput{HealthStatus: testIntPtr(99)},
+			output:  DetectorOutput{HealthStatus: new(99)},
 			wantErr: "health_status must be between 100 and 599",
 		},
 		{
 			name:    "blank health path",
-			output:  DetectorOutput{HealthPath: testStringPtr("   ")},
+			output:  DetectorOutput{HealthPath: new("   ")},
 			wantErr: "health_path must start with /",
 		},
 		{

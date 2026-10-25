@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -207,10 +208,6 @@ func assertGetResponse(t *testing.T, client *http.Client, requestURI string, exp
 	return resp, body
 }
 
-func ptr(s string) *string {
-	return &s
-}
-
 func processExists(pid int) bool {
 	if pid <= 0 {
 		return false
@@ -234,9 +231,7 @@ func createReverseProxySetup(t *testing.T, handleBlock string, values map[string
 	}
 
 	vars := map[string]string{}
-	for k, v := range values {
-		vars[k] = v
-	}
+	maps.Copy(vars, values)
 	resolvedHandle := renderTemplate(handleBlock, vars)
 
 	caddyfilePath := filepath.Join(t.TempDir(), "Caddyfile")
@@ -473,8 +468,8 @@ func TestHealthCheck(t *testing.T) {
 		healthDirective string
 		expectedMethod  *string
 	}{
-		{name: "GET", healthDirective: "health_check GET /health", expectedMethod: ptr("GET")},
-		{name: "HEAD", healthDirective: "health_check HEAD /health", expectedMethod: ptr("HEAD")},
+		{name: "GET", healthDirective: "health_check GET /health", expectedMethod: new("GET")},
+		{name: "HEAD", healthDirective: "health_check HEAD /health", expectedMethod: new("HEAD")},
 		{name: "OMITTED", healthDirective: "", expectedMethod: nil},
 	}
 
