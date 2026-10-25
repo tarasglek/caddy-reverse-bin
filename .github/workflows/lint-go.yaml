@@ -58,10 +58,6 @@ jobs:
             ${{ runner.os }}-go-
 
 
-      - name: Run "govulncheck"
-        working-directory: "."
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-
       - name: Run golangci-lint on .
         uses: golangci/golangci-lint-action@v6
         with:

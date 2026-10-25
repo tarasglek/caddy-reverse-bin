@@ -25,6 +25,12 @@ jobs:
       - name: Validate release notes
         run: ./scripts/check-release-notes.sh "release-notes/$GITHUB_REF_NAME.md"
 
+      - name: Check for reachable vulnerabilities
+        run: make vulncheck
+
+      - name: Check dependencies are at latest versions
+        run: make deps-latest
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v7.2.2
         with:

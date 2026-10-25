@@ -1,0 +1,40 @@
+---
+# Replaces Dependabot: report only reachable vulnerabilities and fail when
+# any dependency is behind latest. release.yml repeats both before publishing.
+name: Dependencies
+
+on:  # yamllint disable-line rule:truthy
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@v6.4.0
+        with:
+          go-version-file: go.mod
+
+      - name: Check for reachable vulnerabilities
+        run: make vulncheck
+
+      - name: Check dependencies are at latest versions
+        if: ${{ !cancelled() }}
+        run: make deps-latest

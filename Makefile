@@ -2,11 +2,12 @@ NPROC ?= $(shell getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || s
 GO_TEST_FLAGS ?= -p $(NPROC)
 CADDY_BIN ?= ./caddy
 EXAMPLE_DIR := ./examples/reverse-proxy
+GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@latest
 EXAMPLE_CADDY := ./tmp/caddy
 EXAMPLE_ECHO := $(EXAMPLE_DIR)/apps/go-echo/go-echo
 EXAMPLE_DETECTOR := $(EXAMPLE_DIR)/detector/example-detector
 
-.PHONY: all documentation lint ok cov tests test test-go test-smoke test-release check static-check build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
+.PHONY: all documentation lint ok cov tests test test-go test-smoke test-release check vulncheck deps-latest static-check build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
 
 all: ok documentation lint
 
@@ -36,6 +37,15 @@ test-release:
 	./scripts/check-release-gate.sh
 
 check: detector-schema-check test-go test-smoke test-release
+
+# Fails only on vulnerabilities reachable from our code.
+vulncheck:
+	$(GOVULNCHECK) ./...
+	cd ./detectorschema && $(GOVULNCHECK) ./...
+	cd $(EXAMPLE_DIR) && $(GOVULNCHECK) ./...
+
+deps-latest:
+	./scripts/check-deps-latest.sh
 
 static-check:
 	golint .
