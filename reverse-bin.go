@@ -725,7 +725,7 @@ func backendExited(rb *runningBackend) bool {
 		return true
 	}
 	select {
-	case <-rb.done:
+	case <-rb.done: //nolint:errcheck // rb.done carries the exit error, already logged by the waiter
 		return true
 	default:
 		return false

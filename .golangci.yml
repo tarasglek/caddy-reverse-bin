@@ -1,0 +1,12 @@
+# golangci-lint v2 dropped v1's default exclusions and folded stylecheck and
+# quickfix into staticcheck; keep v1's behavior.
+version: "2"
+run:
+  timeout: 5m
+linters:
+  settings:
+    staticcheck:
+      checks: ["all", "-ST*", "-QF*"]
+  exclusions:
+    presets:
+      - std-error-handling

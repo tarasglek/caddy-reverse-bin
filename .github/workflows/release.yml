@@ -13,26 +13,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v6.4.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
       - name: Validate release notes
-        run: ./scripts/check-release-notes.sh "release-notes/$GITHUB_REF_NAME.md"
+        run: make release-notes TAG="$GITHUB_REF_NAME"
 
-      - name: Check for reachable vulnerabilities
-        run: make vulncheck
-
-      - name: Check dependencies are at latest versions
-        run: make deps-latest
+      - name: Check dependencies are latest and code is modernized
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: make deps-check
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v7.2.2
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
           version: "~> v2"

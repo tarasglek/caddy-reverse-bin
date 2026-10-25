@@ -3,11 +3,16 @@ GO_TEST_FLAGS ?= -p $(NPROC)
 CADDY_BIN ?= ./caddy
 EXAMPLE_DIR := ./examples/reverse-proxy
 GOVULNCHECK ?= go run golang.org/x/vuln/cmd/govulncheck@latest
+PINACT ?= go run github.com/suzuki-shunsuke/pinact/v5/cmd/pinact@latest
+NOTES_MAX_WORDS ?= 100
 EXAMPLE_CADDY := ./tmp/caddy
 EXAMPLE_ECHO := $(EXAMPLE_DIR)/apps/go-echo/go-echo
 EXAMPLE_DETECTOR := $(EXAMPLE_DIR)/detector/example-detector
 
-.PHONY: all documentation lint ok cov tests test test-go test-smoke test-release check vulncheck deps-latest static-check build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
+# Fixers rewrite the same files; never run targets in parallel.
+.NOTPARALLEL:
+
+.PHONY: all documentation lint ok cov tests test test-go test-smoke check deps-check deps-latest modernize vulncheck release-notes static-check build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
 
 all: ok documentation lint
 
@@ -32,11 +37,7 @@ test-go:
 
 test-smoke: example-smoke
 
-test-release:
-	./scripts/test-release-notes.sh
-	./scripts/check-release-gate.sh
-
-check: detector-schema-check test-go test-smoke test-release
+check: detector-schema-check test-go test-smoke
 
 # Fails only on vulnerabilities reachable from our code.
 vulncheck:
@@ -44,8 +45,31 @@ vulncheck:
 	cd ./detectorschema && $(GOVULNCHECK) ./...
 	cd $(EXAMPLE_DIR) && $(GOVULNCHECK) ./...
 
+# deps-latest and modernize rewrite files; deps-check fails when they did.
+# Run it locally and commit the result.
 deps-latest:
-	./scripts/check-deps-latest.sh
+	go get -u -t ./... && go get toolchain@latest && go mod tidy
+	cd ./detectorschema && go get -u -t ./... && go mod tidy
+	cd $(EXAMPLE_DIR) && go get -u -t ./... && go mod tidy
+	$(PINACT) run -u
+
+modernize:
+	go fix ./...
+	# detectorschema keeps go 1.24 for its importers, so go fix only applies
+	# modernizers up to that language version there.
+	cd ./detectorschema && go fix ./...
+	cd $(EXAMPLE_DIR) && go fix ./...
+
+deps-check: deps-latest modernize vulncheck
+	@if [ -n "$$(git status --porcelain)" ]; then git status --short; git diff; \
+	echo "error: fixers changed files; commit them" >&2; exit 1; fi
+
+# Usage: make release-notes TAG=vX.Y.Z
+release-notes:
+	@test -n "$(TAG)" || { echo "usage: make release-notes TAG=vX.Y.Z" >&2; exit 1; }
+	@f=release-notes/$(TAG).md; [ -s "$$f" ] || { echo "error: $$f missing" >&2; exit 1; }; \
+	n=$$(wc -w < "$$f"); [ "$$n" -le $(NOTES_MAX_WORDS) ] || { \
+	echo "error: $$f: $$n words > $(NOTES_MAX_WORDS). Rewrite caveman: fragments, no filler. Keep what changed, breaking, GO/CVE IDs." >&2; exit 1; }
 
 static-check:
 	golint .
