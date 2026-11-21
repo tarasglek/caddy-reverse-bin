@@ -1,883 +1,443 @@
-/*
- * Copyright (c) 2017 Kurt Jung (Gmail: kurt.w.jung)
- * Copyright (c) 2020 Andreas Schneider
- * Copyright (c) 2025 Taras Glek
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
 package reversebin
 
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"io/fs"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
-	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 	"go.uber.org/zap"
 )
 
-const (
-	defaultIdleTimeoutMS         = 300000
-	defaultHealthTimeoutMS       = 15000
-	defaultTerminationGraceMS    = 5000
-	defaultTerminationKillWaitMS = 1000
-	healthCheckDocsURL           = "https://github.com/tarasglek/caddy-reverse-bin#health-checks"
-	managedStaticSocketRoot      = "/run/reverse-bin/static-apps"
-)
-
-type healthProbeResult struct {
-	method string
-	path   string
-	status int
-	err    error
-	want   string
+// supervisor owns one app. Only its goroutine starts or stops the app, so the
+// app's lifecycle state is one local variable in run: nil or running.
+type supervisor struct {
+	c        *ReverseBin
+	key      string
+	app      App      // expanded static config
+	detector []string // expanded detector command
+	refs     int      // requests holding this app; guarded by c.mu
+	asks     chan ask
+	released chan struct{} // refs dropped to zero
 }
 
-func healthWant(status int) string {
-	if status != 0 {
-		return strconv.Itoa(status)
-	}
-	return "2xx/3xx"
+type ask struct {
+	recheck bool   // the proxy is retrying: the address may have failed
+	host    string // the request's Host, which the health probe sends too
+	reply   chan<- answer
 }
 
-func (c *ReverseBin) healthTimeout() time.Duration {
-	return time.Duration(c.HealthTimeoutMS) * time.Millisecond
+type answer struct {
+	dial string
+	err  error
 }
 
-func (c *ReverseBin) terminationGrace() time.Duration {
-	return time.Duration(c.TerminationGraceMS) * time.Millisecond
-}
-
-func (c *ReverseBin) terminationKillWait() time.Duration {
-	return time.Duration(c.TerminationKillWaitMS) * time.Millisecond
-}
-
-// ServeHTTP implements caddyhttp.MiddlewareHandler; it handles the HTTP request
-// manages idle process killing
-func (c *ReverseBin) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	c.logger.Debug("ServeHTTP", zap.String("uri", r.RequestURI))
-	key := c.getProcessKey(r)
-	ps := c.getOrCreateProcessState(key)
-
-	if err := c.sendSupervisorCommand(ps, supervisorRequestStarted, "request started"); err != nil {
-		return err
-	}
-	defer func() { _ = c.sendSupervisorCommand(ps, supervisorRequestDone, "request done") }()
-
-	if c.reverseProxy == nil {
-		return fmt.Errorf("reverse proxy not initialized")
-	}
-
-	return c.reverseProxy.ServeHTTP(w, r, next)
-}
-
-func (c *ReverseBin) getProcessKey(r *http.Request) string {
-	if len(c.DynamicProxyDetector) == 0 {
-		return ""
-	}
-	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
-	var sb strings.Builder
-	for i, arg := range c.DynamicProxyDetector {
-		if i > 0 {
-			sb.WriteByte(' ')
-		}
-		sb.WriteString(repl.ReplaceAll(arg, ""))
-	}
-	return sb.String()
-}
-
-// GetUpstreams implements reverseproxy.UpstreamSource which allows dynamic selection of backend process
-// ensures process is running before returning the upstream address to the proxy.
-// Note: In Caddy's reverse_proxy, GetUpstreams is called before ServeHTTP. For the very first
-// request that triggers a process start, the request tracking must be initialized here
-// to ensure the idle timer starts correctly after the first request completes.
-func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
-	c.logger.Debug("GetUpstreams", zap.String("uri", r.RequestURI))
-	key := c.getProcessKey(r)
-	ps := c.getOrCreateProcessState(key)
-
-	toAddr, err := c.getUpstreamFromSupervisor(r, ps)
-	if err != nil {
-		return nil, err
-	}
-
-	dialAddr, err := resolveDialAddress(toAddr)
-	if err != nil {
-		return nil, err
-	}
-
-	c.logger.Debug("selected upstream", zap.String("dial", dialAddr))
-	return []*reverseproxy.Upstream{{Dial: dialAddr}}, nil
-}
-
-func (c *ReverseBin) getUpstreamFromSupervisor(r *http.Request, ps *processState) (string, error) {
-	reply := make(chan supervisorResult, 1)
+// upstream returns the address of the running app, starting it if needed.
+// The caller must hold the supervisor, so run is alive to answer. Once the ask
+// is taken the reply is awaited even if ctx ends: at most a stop, a start and
+// a stop, after which the goroutine returns.
+func (s *supervisor) upstream(ctx context.Context, recheck bool, host string) (string, error) {
+	reply := make(chan answer, 1)
 	select {
-	case ps.requests <- supervisorRequest{request: r, reply: reply}:
-	case <-r.Context().Done():
-		return "", r.Context().Err()
-	case <-c.done():
-		return "", c.doneErr()
+	case s.asks <- ask{recheck, host, reply}:
+	case <-ctx.Done():
+		return "", context.Cause(ctx)
+	case <-s.c.ctx.Done():
+		return "", context.Cause(s.c.ctx)
 	}
-
-	select {
-	case result := <-reply:
-		return result.upstream, result.err
-	case <-r.Context().Done():
-		return "", r.Context().Err()
-	case <-c.done():
-		return "", c.doneErr()
-	}
+	a := <-reply
+	return a.dial, a.err
 }
 
-func unixSocketPath(addr string) (string, bool) {
-	if !isUnixUpstream(addr) {
-		return "", false
-	}
-	return strings.TrimPrefix(addr, "unix/"), true
-}
-
-func removeUnixSocket(addr string) error {
-	socketPath, ok := unixSocketPath(addr)
-	if !ok {
-		return nil
-	}
-	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove unix socket %s: %w", socketPath, err)
-	}
-	return nil
-}
-
-func ensureManagedUnixSocketDir(addr, root string) error {
-	socketPath, ok := unixSocketPath(addr)
-	if !ok {
-		return nil
-	}
-	root = filepath.Clean(root)
-	socketPath = filepath.Clean(socketPath)
-	if !strings.HasPrefix(socketPath, root+string(filepath.Separator)) {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
-		return fmt.Errorf("failed to create managed unix socket directory for %s: %w", socketPath, err)
-	}
-	return nil
-}
-
-func resolveDialAddress(toAddr string) (string, error) {
-	if isUnixUpstream(toAddr) {
-		socketPath := strings.TrimPrefix(toAddr, "unix/")
-		if !isUnixSocketHealthy(socketPath) {
-			return "", fmt.Errorf("unix socket not healthy: %s", socketPath)
-		}
-		return toAddr, nil
-	}
-
-	if strings.HasPrefix(toAddr, ":") {
-		toAddr = "127.0.0.1" + toAddr
-	}
-	if !strings.HasPrefix(toAddr, "http://") && !strings.HasPrefix(toAddr, "https://") {
-		toAddr = "http://" + toAddr
-	}
-	target, err := url.Parse(toAddr)
-	if err != nil {
-		return "", fmt.Errorf("invalid reverse_proxy_to address: %v", err)
-	}
-	if target.Host == "" {
-		return "", fmt.Errorf("invalid reverse_proxy_to address: missing host")
-	}
-	return target.Host, nil
-}
-
-func isUnixSocketHealthy(socketPath string) bool {
-	info, err := os.Stat(socketPath)
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeSocket != 0
-}
-
-type killPlan struct {
-	pid    int
-	signal syscall.Signal
-}
-
-func processKillPlan(goos string, pid int, sig syscall.Signal) killPlan {
-	if goos == "windows" {
-		return killPlan{pid: pid, signal: sig}
-	}
-	return killPlan{pid: -pid, signal: sig}
-}
-
-var (
-	sensitiveEnvKeyPattern = regexp.MustCompile(`(?i)(secret|token|password|passwd|pwd|key|private|credential|auth)`)
-	errBackendStopTimeout  = errors.New("backend process did not stop")
-)
-
-func sanitizeArgsForLog(args []string) []string {
-	out := append([]string(nil), args...)
-	for i, arg := range out {
-		key, _, ok := strings.Cut(arg, "=")
-		if !ok {
-			continue
-		}
-		if sensitiveEnvKeyPattern.MatchString(key) {
-			out[i] = key + "=<redacted>"
-		}
-	}
-	return out
-}
-
-func signalProcessGroup(proc *os.Process, sig syscall.Signal) error {
-	if proc == nil {
-		return nil
-	}
-	if runtime.GOOS == "windows" {
-		if sig == syscall.SIGKILL {
-			return proc.Kill()
-		}
-		return proc.Signal(sig)
-	}
-	plan := processKillPlan(runtime.GOOS, proc.Pid, sig)
-	return syscall.Kill(plan.pid, plan.signal)
-}
-
-type resolvedConfig struct {
-	Executable       []string
-	WorkingDirectory string
-	Envs             []string
-	ReverseProxyTo   string
-	HealthMethod     string
-	HealthPath       string
-	HealthStatus     int
-}
-
-type runningBackend struct {
-	cmd     *exec.Cmd
-	process *os.Process
-	done    chan error
-	cancel  context.CancelFunc
-	config  resolvedConfig
-}
-
-func (c *ReverseBin) resolveConfig(overrides *DetectorOutput) resolvedConfig {
-	cfg := resolvedConfig{
-		Executable:       c.Executable,
-		WorkingDirectory: c.WorkingDirectory,
-		Envs:             c.Envs,
-		ReverseProxyTo:   c.ReverseProxyTo,
-		HealthMethod:     c.HealthMethod,
-		HealthPath:       c.HealthPath,
-		HealthStatus:     c.HealthStatus,
-	}
-	if overrides == nil {
-		return cfg
-	}
-	if overrides.Executable != nil && len(*overrides.Executable) > 0 {
-		cfg.Executable = *overrides.Executable
-	}
-	if overrides.WorkingDirectory != nil {
-		cfg.WorkingDirectory = *overrides.WorkingDirectory
-	}
-	if overrides.Envs != nil {
-		cfg.Envs = *overrides.Envs
-	}
-	if overrides.ReverseProxyTo != nil {
-		cfg.ReverseProxyTo = *overrides.ReverseProxyTo
-	}
-	if overrides.HealthMethod != nil {
-		cfg.HealthMethod = *overrides.HealthMethod
-	}
-	if overrides.HealthPath != nil {
-		cfg.HealthPath = *overrides.HealthPath
-	}
-	if overrides.HealthStatus != nil {
-		cfg.HealthStatus = *overrides.HealthStatus
-	}
-	return cfg
-}
-
-func (c *ReverseBin) launchBackend(ctx context.Context, cfg resolvedConfig, reason string) (*runningBackend, error) {
-	if len(cfg.Executable) == 0 {
-		return nil, fmt.Errorf("exec (executable) is required")
-	}
-
-	backendCtx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(backendCtx, cfg.Executable[0], cfg.Executable[1:]...)
-	cmd.Cancel = func() error {
-		return signalProcessGroup(cmd.Process, syscall.SIGTERM)
-	}
-	cmd.WaitDelay = c.terminationGrace()
-	configureBackendProcAttrs(cmd)
-	cmd.Dir = cfg.WorkingDirectory
-	if cmd.Dir == "" {
-		cmd.Dir = "."
-	}
-
-	var cmdEnv []string
-	if c.PassAll {
-		cmdEnv = os.Environ()
-	} else {
-		for _, key := range c.PassEnvs {
-			if val, ok := os.LookupEnv(key); ok {
-				cmdEnv = append(cmdEnv, key+"="+val)
-			}
-		}
-	}
-	cmdEnv = append(cmdEnv, cfg.Envs...)
-	cmd.Env = cmdEnv
-
-	stdoutPipe, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(2)
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		c.logger.Error("failed to start proxy subprocess",
-			zap.String("executable", cmd.Path),
-			zap.Strings("args", sanitizeArgsForLog(cmd.Args)),
-			zap.String("reason", reason),
-			zap.Error(err))
-		return nil, err
-	}
-
-	pid := cmd.Process.Pid
-	c.logger.Info("started proxy subprocess",
-		zap.Int("pid", pid),
-		zap.String("executable", cmd.Path),
-		zap.Strings("args", sanitizeArgsForLog(cmd.Args)),
-		zap.String("reason", reason))
-
-	logPipe := func(pipe io.ReadCloser, label string) {
-		defer wg.Done()
-		scanner := bufio.NewScanner(pipe)
-		for scanner.Scan() {
-			c.logger.Info("", zap.Int("pid", pid), zap.String(label, scanner.Text()))
-		}
-	}
-
-	go logPipe(stdoutPipe, "stdout")
-	go logPipe(stderrPipe, "stderr")
-
-	done := make(chan error, 1)
-	go func() {
-		err := cmd.Wait()
-		wg.Wait()
-		c.logger.Info("proxy subprocess terminated",
-			zap.Int("pid", pid),
-			zap.String("reason", reason),
-			zap.Error(err))
-		done <- err
-	}()
-
-	return &runningBackend{
-		cmd:     cmd,
-		process: cmd.Process,
-		done:    done,
-		cancel:  cancel,
-		config:  cfg,
-	}, nil
-}
-
-func (c *ReverseBin) resolveRequestConfig(r *http.Request, key string) (resolvedConfig, error) {
-	overrides := new(DetectorOutput)
-	if len(c.DynamicProxyDetector) > 0 {
-		args := strings.Split(key, " ")
-		if len(args) == 0 || args[0] == "" {
-			return resolvedConfig{}, fmt.Errorf("dynamic proxy detector command is empty")
-		}
-
-		c.logger.Debug("running dynamic proxy detector",
-			zap.String("command", args[0]),
-			zap.Strings("args", args[1:]))
-
-		detCtx, detCancel := context.WithTimeout(r.Context(), c.healthTimeout())
-		defer detCancel()
-
-		detectorCmd := exec.CommandContext(detCtx, args[0], args[1:]...)
-		configureDetectorProcAttrs(detectorCmd)
-
-		var outBuf, errBuf bytes.Buffer
-		detectorCmd.Stdout = &outBuf
-		detectorCmd.Stderr = &errBuf
-
-		err := detectorCmd.Run()
-		if errBuf.Len() > 0 {
-			c.logger.Info("dynamic proxy detector stderr", zap.String("stderr", errBuf.String()))
-		}
-		if detCtx.Err() == context.DeadlineExceeded {
-			return resolvedConfig{}, fmt.Errorf("dynamic proxy detector timed out")
-		}
-		if err != nil {
-			return resolvedConfig{}, fmt.Errorf("dynamic proxy detector failed: %v\nOutput: %s", err, outBuf.String())
-		}
-		parsedOverrides, err := parseDetectorOutput(outBuf.Bytes())
-		if err != nil {
-			return resolvedConfig{}, fmt.Errorf("%v\nOutput: %s", err, outBuf.String())
-		}
-		overrides = parsedOverrides
-	}
-
-	cfg := c.resolveConfig(overrides)
-	if len(cfg.Executable) == 0 {
-		return resolvedConfig{}, fmt.Errorf("exec (executable) is required")
-	}
-	if !isUnixUpstream(cfg.ReverseProxyTo) && !healthConfigured(cfg.HealthMethod, cfg.HealthPath) {
-		return resolvedConfig{}, fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
-	}
-	if err := ensureManagedUnixSocketDir(cfg.ReverseProxyTo, managedStaticSocketRoot); err != nil {
-		return resolvedConfig{}, err
-	}
-	if err := removeUnixSocket(cfg.ReverseProxyTo); err != nil {
-		return resolvedConfig{}, err
-	}
-	return cfg, nil
-}
-
-func (c *ReverseBin) probeHealth(ctx context.Context, cfg resolvedConfig, sourceReq *http.Request) (bool, healthProbeResult) {
-	result := healthProbeResult{
-		method: cfg.HealthMethod,
-		path:   cfg.HealthPath,
-		want:   healthWant(cfg.HealthStatus),
-	}
-	if cfg.HealthMethod == "" {
-		if !isUnixUpstream(cfg.ReverseProxyTo) {
-			result.err = fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
-			return false, result
-		}
-		return isUnixSocketHealthy(strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")), result
-	}
-
-	scheme := "http"
-	if strings.HasPrefix(cfg.ReverseProxyTo, "https://") {
-		scheme = "https"
-	}
-
-	target := cfg.ReverseProxyTo
-	if strings.HasPrefix(target, ":") {
-		target = "127.0.0.1" + target
-	}
-	target = strings.TrimPrefix(target, "http://")
-	target = strings.TrimPrefix(target, "https://")
-
-	var checkURL string
-	client := &http.Client{
-		Timeout: 500 * time.Millisecond,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	if isUnixUpstream(cfg.ReverseProxyTo) {
-		socketPath := strings.TrimPrefix(cfg.ReverseProxyTo, "unix/")
-		checkURL = fmt.Sprintf("%s://localhost%s", scheme, cfg.HealthPath)
-		client.Transport = &http.Transport{
-			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-				var d net.Dialer
-				return d.DialContext(ctx, "unix", socketPath)
-			},
-		}
-	} else {
-		checkURL = fmt.Sprintf("%s://%s%s", scheme, target, cfg.HealthPath)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, cfg.HealthMethod, checkURL, nil)
-	if err != nil {
-		result.err = err
-		return false, result
-	}
-	setForwardedHealthHeaders(req, sourceReq)
-	resp, err := client.Do(req)
-	if err != nil {
-		result.err = err
-		return false, result
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	result.status = resp.StatusCode
-	if cfg.HealthStatus != 0 {
-		return resp.StatusCode == cfg.HealthStatus, result
-	}
-	return resp.StatusCode >= 200 && resp.StatusCode < 400, result
-}
-
-func setForwardedHealthHeaders(healthReq *http.Request, sourceReq *http.Request) {
-	if healthReq == nil || sourceReq == nil {
-		return
-	}
-
-	if sourceReq.Host != "" {
-		healthReq.Header.Set("X-Forwarded-Host", sourceReq.Host)
-	}
-
-	proto := sourceReq.Header.Get("X-Forwarded-Proto")
-	if proto == "" {
-		proto = "http"
-		if sourceReq.TLS != nil {
-			proto = "https"
-		}
-	}
-	healthReq.Header.Set("X-Forwarded-Proto", proto)
-
-	if sourceReq.RemoteAddr == "" {
-		return
-	}
-	clientIP, _, err := net.SplitHostPort(sourceReq.RemoteAddr)
-	if err != nil {
-		clientIP = sourceReq.RemoteAddr
-	}
-	if existing := sourceReq.Header.Get("X-Forwarded-For"); existing != "" {
-		healthReq.Header.Set("X-Forwarded-For", existing+", "+clientIP)
-	} else {
-		healthReq.Header.Set("X-Forwarded-For", clientIP)
-	}
-}
-
-func (c *ReverseBin) waitHealthy(ctx context.Context, rb *runningBackend, cfg resolvedConfig, sourceReq *http.Request) error {
-	var last healthProbeResult
-	tickerInterval := 200 * time.Millisecond
-	if isUnixUpstream(cfg.ReverseProxyTo) && cfg.HealthMethod == "" {
-		tickerInterval = 50 * time.Millisecond
-	}
-	ticker := time.NewTicker(tickerInterval)
-	defer ticker.Stop()
-
+func (s *supervisor) run() {
+	c, idleTimeout := s.c, time.Duration(s.c.IdleTimeoutMS)*time.Millisecond
+	var app *app // nil: stopped
+	idle := time.NewTimer(idleTimeout)
+	idle.Stop() // armed only by a release, so it never fires for an old one
+	defer idle.Stop()
 	for {
-		var done <-chan error
-		if rb != nil {
-			done = rb.done
+		var exited <-chan struct{}
+		if app != nil {
+			exited = app.exited
 		}
 		select {
-		case <-ctx.Done():
-			c.logger.Warn("health timeout",
-				zap.String("method", last.method),
-				zap.String("path", last.path),
-				zap.Int("last_status", last.status),
-				zap.String("want", last.want),
-				zap.String("docs", healthCheckDocsURL),
-				zap.Error(last.err),
-			)
-			return ctx.Err()
-		case err := <-done:
-			if rb != nil {
-				rb.done <- err
-			}
-			return fmt.Errorf("reverse proxy process exited during health check: %v", err)
-		case <-ticker.C:
-			healthy, result := c.probeHealth(ctx, cfg, sourceReq)
-			if !healthy {
-				last = result
-				continue
-			}
-			if healthy {
-				if rb != nil && rb.process != nil {
-					c.logger.Info("reverse proxy process healthy", zap.Int("pid", rb.process.Pid), zap.String("address", cfg.ReverseProxyTo))
+		case ask := <-s.asks:
+			idle.Stop() // a request is here; Go >= 1.23 drops any stale fire
+			if ask.recheck && app != nil {
+				if conn, err := app.spec.connect(c.ctx); err == nil {
+					_ = conn.Close()
+				} else if notListening(err) { // not just slow, as under load
+					app.stop()
+					app = nil
 				}
-				return nil
 			}
-		}
-	}
-}
-
-func (c *ReverseBin) stopBackend(rb *runningBackend, reason string, grace time.Duration) error {
-	if rb == nil {
-		return nil
-	}
-	cleanupSocket := func() { _ = removeUnixSocket(rb.config.ReverseProxyTo) }
-	if rb.process == nil {
-		cleanupSocket()
-		return nil
-	}
-	c.logger.Info("terminating proxy subprocess",
-		zap.Int("pid", rb.process.Pid),
-		zap.String("reason", reason),
-		zap.Duration("grace", grace))
-
-	_ = signalProcessGroup(rb.process, syscall.SIGTERM)
-	if rb.cancel != nil {
-		rb.cancel()
-	}
-
-	timer := time.NewTimer(grace)
-	defer timer.Stop()
-
-	select {
-	case err := <-rb.done:
-		cleanupSocket()
-		return err
-	case <-timer.C:
-		c.logger.Warn("proxy subprocess did not exit before grace timeout; killing",
-			zap.Int("pid", rb.process.Pid),
-			zap.String("reason", reason))
-		_ = signalProcessGroup(rb.process, syscall.SIGKILL)
-		select {
-		case err := <-rb.done:
-			cleanupSocket()
-			return err
-		case <-time.After(c.terminationKillWait()):
-			return fmt.Errorf("%w: timeout waiting for process %d after SIGKILL", errBackendStopTimeout, rb.process.Pid)
-		}
-	}
-}
-
-type supervisorRequest struct {
-	request *http.Request
-	reply   chan supervisorResult
-}
-
-type supervisorResult struct {
-	upstream string
-	err      error
-}
-
-type supervisorCommandKind int
-
-const (
-	supervisorRequestStarted supervisorCommandKind = iota
-	supervisorRequestDone
-	supervisorStop
-	supervisorShutdown
-)
-
-type supervisorCommand struct {
-	kind   supervisorCommandKind
-	reason string
-	reply  chan error
-}
-
-func (c *ReverseBin) sendSupervisorCommand(ps *processState, kind supervisorCommandKind, reason string) error {
-	reply := make(chan error, 1)
-	cmd := supervisorCommand{kind: kind, reason: reason, reply: reply}
-	select {
-	case ps.commands <- cmd:
-	case <-c.done():
-		return c.doneErr()
-	}
-	select {
-	case err := <-reply:
-		return err
-	case <-c.done():
-		return c.doneErr()
-	}
-}
-
-func (c *ReverseBin) moduleContext() context.Context {
-	if c.ctx.Context == nil {
-		return context.Background()
-	}
-	return c.ctx
-}
-
-func (c *ReverseBin) done() <-chan struct{} {
-	if c.ctx.Context == nil {
-		return nil
-	}
-	return c.ctx.Done()
-}
-
-func (c *ReverseBin) doneErr() error {
-	if c.ctx.Context == nil || c.ctx.Err() == nil {
-		return context.Canceled
-	}
-	return c.ctx.Err()
-}
-
-func backendExited(rb *runningBackend) bool {
-	if rb == nil {
-		return true
-	}
-	select {
-	case <-rb.done: //nolint:errcheck // rb.done carries the exit error, already logged by the waiter
-		return true
-	default:
-		return false
-	}
-}
-
-func stopTimer(timer **time.Timer, idleC *<-chan time.Time) {
-	if *timer != nil {
-		if !(*timer).Stop() {
-			select {
-			case <-(*timer).C:
-			default:
+			var err error
+			if app == nil {
+				if app, err = s.start(ask.host); err != nil { // Caddy logs it
+					ask.reply <- answer{err: err}
+					break
+				}
 			}
-		}
-		*timer = nil
-	}
-	*idleC = nil
-}
-
-func (c *ReverseBin) runSupervisor(ps *processState) {
-	var backend *runningBackend
-	var idleTimer *time.Timer
-	var idleC <-chan time.Time
-	activeRequests := int64(0)
-	backendNeedsStop := false
-	idleTimeout := time.Duration(c.IdleTimeoutMS) * time.Millisecond
-
-	startIdleTimer := func() {
-		if backend == nil || activeRequests != 0 {
+			ask.reply <- answer{dial: app.spec.ReverseProxyTo}
+		case <-s.released:
+			if c.unheld(s, false) { // not a release that a newer request overtook
+				idle.Reset(idleTimeout)
+			}
+		case <-idle.C:
+			if app != nil && c.unheld(s, false) {
+				app.stop()
+				app = nil
+			}
+		case <-exited:
+			app = nil
+		case <-c.ctx.Done():
+			if app != nil {
+				app.stop()
+			}
 			return
 		}
-		stopTimer(&idleTimer, &idleC)
-		idleTimer = time.NewTimer(idleTimeout)
-		idleC = idleTimer.C
-		c.logger.Debug("starting idle timer", zap.String("key", ps.key), zap.Duration("duration", idleTimeout))
-	}
-
-	shutdown := func(reason string) error {
-		stopTimer(&idleTimer, &idleC)
-		err := c.stopBackend(backend, reason, c.terminationGrace())
-		if errors.Is(err, errBackendStopTimeout) {
-			backendNeedsStop = true
-		} else {
-			backend = nil
-			backendNeedsStop = false
+		if app == nil && c.unheld(s, true) {
+			return
 		}
-		return err
 	}
+}
 
+// appSpec is a validated App with its parsed address.
+type appSpec struct {
+	App
+	network, address string
+	ids              []string // identities of the app, for claim
+}
+
+func (spec appSpec) connect(ctx context.Context) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	return new(net.Dialer).DialContext(ctx, spec.network, spec.address)
+}
+
+// notListening reports whether a connect error means nobody listens at all,
+// as opposed to a slow or overloaded listener.
+func notListening(err error) bool {
+	return errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, fs.ErrNotExist)
+}
+
+func validate(a App) (appSpec, error) {
+	// Caddy's parser, because the proxy parses the same string to dial it.
+	na, err := caddy.ParseNetworkAddress(a.ReverseProxyTo)
+	switch {
+	case len(a.Executable) == 0:
+		return appSpec{}, fmt.Errorf("exec is empty")
+	case a.HealthPath != "" && a.HealthPath[0] != '/':
+		return appSpec{}, fmt.Errorf("health_path %q: want a path starting with /", a.HealthPath)
+	case a.HealthMethod != "" && a.HealthPath == "":
+		return appSpec{}, fmt.Errorf("health_method %q needs health_path", a.HealthMethod)
+	case a.HealthStatus < 0 || a.HealthStatus != 0 && (a.HealthPath == "" || a.HealthStatus > 5 && (a.HealthStatus < 100 || a.HealthStatus > 599)):
+		return appSpec{}, fmt.Errorf("health_status %d: want 1-5 or 100-599, with health_path", a.HealthStatus)
+	case err != nil || !(na.Network == "unix" && na.Host != "" ||
+		na.Network == "tcp" && na.PortRangeSize() == 1 && na.StartPort != 0):
+		return appSpec{}, fmt.Errorf("reverse_proxy_to %q: want unix/<path> or host:port", a.ReverseProxyTo)
+	}
+	spec := appSpec{a, na.Network, na.JoinHostPort(0), []string{"dial:" + na.Network + "/" + na.JoinHostPort(0)}}
+	if a.WorkingDirectory != "" { // the hosting detector picks a new port per detection: dial alone is not the app
+		dir, err := filepath.Abs(a.WorkingDirectory)
+		if err == nil {
+			dir, err = filepath.EvalSymlinks(dir)
+		}
+		if err != nil {
+			return appSpec{}, fmt.Errorf("dir: %w", err)
+		}
+		spec.ids = append(spec.ids, "dir:"+dir)
+	}
+	return spec, nil
+}
+
+// slot takes one of the module's start slots until free is called.
+func (c *ReverseBin) slot(ctx context.Context) (free func(), err error) {
+	select {
+	case c.starts <- struct{}{}:
+		return func() { <-c.starts }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("too many apps starting: %w", context.Cause(ctx))
+	}
+}
+
+// start launches the app and waits until it is ready; on error no process is
+// left. It is bound to the module, not the request: a client that goes away
+// does not abort a start others may be waiting for.
+func (s *supervisor) start(host string) (*app, error) {
+	c := s.c
+	ctx, cancel := context.WithTimeout(c.ctx, time.Duration(c.HealthTimeoutMS)*time.Millisecond)
+	defer cancel()
+	free, err := c.slot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	a := s.app
+	if len(s.detector) > 0 {
+		a, err = c.detect(ctx, s.detector)
+	}
+	free()
+	if err != nil {
+		return nil, err
+	}
+	spec, err := validate(a)
+	if err != nil {
+		return nil, err
+	}
+	// Without a slot: waiting for another copy must not starve other starts.
+	release, err := claim(ctx, spec.ids...)
+	if err != nil {
+		return nil, err
+	}
+	var app *app
+	defer func() {
+		if app == nil {
+			release() // no process exists; once one does, its reaper releases
+		}
+	}()
+	if free, err = c.slot(ctx); err != nil {
+		return nil, err
+	}
+	defer free()
+	// Whatever answers before launch is not our app: one outside this Caddy.
+	if conn, err := spec.connect(ctx); err == nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("%s already accepts connections before the app started", spec.ReverseProxyTo)
+	}
+	if app, err = c.launch(spec, release); err != nil {
+		return nil, err
+	}
+	if err := app.waitReady(ctx, host); err != nil {
+		app.stop()
+		return nil, err // app != nil: the claim stays until the group is gone
+	}
+	return app, nil
+}
+
+// claims makes "at most one copy of an app" hold across keys, blocks and
+// module instances (config reloads) in this process.
+var claims = struct {
+	sync.Mutex
+	held map[string]chan struct{} // identity -> closed on release
+}{held: map[string]chan struct{}{}}
+
+// claim reserves every id or none, waiting for current holders until ctx
+// ends. release frees them; it is idempotent.
+func claim(ctx context.Context, ids ...string) (release func(), err error) {
 	for {
+		claims.Lock()
+		var busy chan struct{}
+		var busyID string
+		for _, id := range ids {
+			if ch, ok := claims.held[id]; ok {
+				busy, busyID = ch, id
+			}
+		}
+		if busy == nil {
+			done := make(chan struct{})
+			for _, id := range ids {
+				claims.held[id] = done
+			}
+			claims.Unlock()
+			return sync.OnceFunc(func() {
+				claims.Lock()
+				for _, id := range ids {
+					delete(claims.held, id)
+				}
+				claims.Unlock()
+				close(done)
+			}), nil
+		}
+		claims.Unlock()
 		select {
-		case req := <-ps.requests:
-			stopTimer(&idleTimer, &idleC)
+		case <-busy:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("another copy of %s is still running: %w", busyID, context.Cause(ctx))
+		}
+	}
+}
 
-			if backend != nil && backendExited(backend) {
-				backend = nil
-				backendNeedsStop = false
-			}
-			if backend != nil && backendNeedsStop {
-				stopErr := c.stopBackend(backend, "retry failed stop", c.terminationGrace())
-				if errors.Is(stopErr, errBackendStopTimeout) {
-					req.reply <- supervisorResult{err: stopErr}
-					continue
-				}
-				backend = nil
-				backendNeedsStop = false
-			}
-			if backend != nil && isUnixUpstream(backend.config.ReverseProxyTo) {
-				socketPath := strings.TrimPrefix(backend.config.ReverseProxyTo, "unix/")
-				if !isUnixSocketHealthy(socketPath) {
-					c.logger.Warn("backend process alive but unix socket unavailable; restarting",
-						zap.String("key", ps.key),
-						zap.Int("pid", backend.process.Pid),
-						zap.String("socket", socketPath))
-					stopErr := c.stopBackend(backend, "unix socket unavailable", c.terminationGrace())
-					if errors.Is(stopErr, errBackendStopTimeout) {
-						backendNeedsStop = true
-						req.reply <- supervisorResult{err: stopErr}
-						continue
-					}
-					_ = removeUnixSocket(backend.config.ReverseProxyTo)
-					backend = nil
-				}
-			}
+// detect runs the detector, with Caddy's environment, and decodes its output.
+func (c *ReverseBin) detect(ctx context.Context, argv []string) (App, error) {
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = killWait
+	out, err := cmd.Output()
+	if ee, ok := err.(*exec.ExitError); ok { // Output captured stderr for us
+		return App{}, fmt.Errorf("detector: %w: %s", err, ee.Stderr)
+	} else if err != nil {
+		return App{}, fmt.Errorf("detector: %w", err)
+	}
+	var a App
+	d := json.NewDecoder(bytes.NewReader(out))
+	d.DisallowUnknownFields()
+	if err := d.Decode(&a); err != nil {
+		return App{}, fmt.Errorf("detector output: %w", err)
+	}
+	return a, nil
+}
 
-			if backend == nil {
-				cfg, err := c.resolveRequestConfig(req.request, ps.key)
-				if err != nil {
-					req.reply <- supervisorResult{err: err}
-					continue
-				}
-				startCtx, cancel := context.WithTimeout(req.request.Context(), c.healthTimeout())
-				rb, err := c.launchBackend(c.moduleContext(), cfg, "request")
-				if err == nil {
-					err = c.waitHealthy(startCtx, rb, cfg, req.request)
-				}
-				cancel()
-				if err != nil {
-					stopErr := c.stopBackend(rb, "health failed", c.terminationGrace())
-					if errors.Is(stopErr, errBackendStopTimeout) {
-						backend = rb
-						backendNeedsStop = true
-						err = errors.Join(err, stopErr)
-					}
-					req.reply <- supervisorResult{err: err}
-					continue
-				}
-				backend = rb
-			}
-			req.reply <- supervisorResult{upstream: backend.config.ReverseProxyTo}
+var errExited = errors.New("app exited before it was ready")
 
-		case cmd := <-ps.commands:
-			var err error
-			switch cmd.kind {
-			case supervisorRequestStarted:
-				activeRequests++
-				stopTimer(&idleTimer, &idleC)
-			case supervisorRequestDone:
-				if activeRequests > 0 {
-					activeRequests--
-				}
-				if activeRequests == 0 {
-					startIdleTimer()
-				}
-			case supervisorStop:
-				err = shutdown(cmd.reason)
-			case supervisorShutdown:
-				err = shutdown(cmd.reason)
-				if cmd.reply != nil {
-					cmd.reply <- err
-				}
+// app is a launched process group. It is running until exited is closed.
+type app struct {
+	spec   appSpec
+	pid    int
+	exited chan struct{} // closed once the whole process group is gone
+	logger *zap.Logger
+}
+
+// launch starts the app in its own process group with exactly spec.Envs.
+// The reaper calls release once the process group is gone.
+func (c *ReverseBin) launch(spec appSpec, release func()) (*app, error) {
+	cmd := exec.Command(spec.Executable[0], spec.Executable[1:]...)
+	cmd.Dir = spec.WorkingDirectory
+	cmd.Env = append([]string{}, spec.Envs...) // nil Env would inherit Caddy's
+	// Its own group, to signal it as a unit. No Pdeathsig: Cleanup stops apps
+	// on a normal shutdown; surviving a hard kill of Caddy is the launcher's
+	// job (systemd's cgroup, or setpriv --pdeathsig KILL -- unshare
+	// --kill-child), as the kernel ties Pdeathsig to the forking thread.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// The child gets the pipe itself, so Wait returns when the leader exits
+	// even if a descendant still holds the pipe.
+	r, w, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Stdout, cmd.Stderr = w, w
+	err = cmd.Start()
+	_ = w.Close()
+	if err != nil {
+		_ = r.Close()
+		return nil, err
+	}
+	a := &app{spec: spec, pid: cmd.Process.Pid, exited: make(chan struct{}),
+		logger: c.logger.With(zap.Int("pid", cmd.Process.Pid), zap.String("dial", spec.ReverseProxyTo))}
+	a.logger.Info("app started")
+	go func() { // bounded lines: a long line arrives in pieces instead of stalling the app
+		defer r.Close()
+		for lines := bufio.NewReaderSize(r, 64<<10); ; {
+			line, _, err := lines.ReadLine()
+			if err != nil {
 				return
 			}
-			if cmd.reply != nil {
-				cmd.reply <- err
-			}
+			a.logger.Info("app output", zap.ByteString("line", line))
+		}
+	}()
+	go func() {
+		err := cmd.Wait()
+		_ = syscall.Kill(-a.pid, syscall.SIGKILL) // the group dies with its leader
+		// Another copy may start only once no member is left. Zombies count;
+		// reap those reparented to us (Caddy as PID 1 or a subreaper). Only
+		// this group's: every other child has its own.
+		for !errors.Is(syscall.Kill(-a.pid, 0), syscall.ESRCH) {
+			_, _ = syscall.Wait4(-a.pid, nil, syscall.WNOHANG, nil)
+			time.Sleep(probeInterval)
+		}
+		a.logger.Info("app exited", zap.Error(err))
+		release()
+		close(a.exited)
+	}()
+	return a, nil
+}
 
-		case <-idleC:
-			c.logger.Info("idle timer fired, terminating process", zap.String("key", ps.key))
-			stopErr := c.stopBackend(backend, "idle timeout", c.terminationGrace())
-			if errors.Is(stopErr, errBackendStopTimeout) {
-				backendNeedsStop = true
-			} else {
-				backend = nil
-				backendNeedsStop = false
-			}
-			idleTimer = nil
-			idleC = nil
+// waitExit reports whether the app exits within d.
+func (a *app) waitExit(d time.Duration) bool {
+	select {
+	case <-a.exited:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
 
-		case <-c.done():
-			_ = shutdown("context done")
-			return
+// stop sends SIGTERM, then SIGKILL after stopGrace. A process that survives
+// SIGKILL for killWait is abandoned; nothing more can be done.
+func (a *app) stop() {
+	if a.waitExit(0) {
+		return
+	}
+	a.logger.Info("stopping app")
+	_ = syscall.Kill(-a.pid, syscall.SIGTERM)
+	if a.waitExit(stopGrace) {
+		return
+	}
+	_ = syscall.Kill(-a.pid, syscall.SIGKILL)
+	if !a.waitExit(killWait) {
+		a.logger.Error("app survived SIGKILL; abandoned")
+	}
+}
+
+// waitReady probes until the app is ready, exits, or ctx ends.
+func (a *app) waitReady(ctx context.Context, host string) error {
+	client := &http.Client{
+		Timeout: probeTimeout,
+		Transport: &http.Transport{DisableKeepAlives: true,
+			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return a.spec.connect(ctx) }},
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	var last error // newest probe failure not caused by ctx ending
+	for {
+		err := a.probe(ctx, client, host)
+		if err == nil && a.waitExit(0) {
+			err = errExited // whoever answered, it was not our app
+		}
+		if err == nil {
+			a.logger.Info("app ready")
+			return nil
+		}
+		if ctx.Err() == nil || last == nil {
+			last = err
+		}
+		select {
+		case <-a.exited:
+			return errExited
+		case <-ctx.Done():
+			return fmt.Errorf("app not ready: %w: %w", context.Cause(ctx), last)
+		case <-time.After(probeInterval):
 		}
 	}
+}
+
+// probe connects; with health_path it sends health_method (default HEAD) with
+// the waking request's Host, as real traffic will, and needs a response, with
+// a matching status if health_status is set.
+func (a *app) probe(ctx context.Context, client *http.Client, host string) error {
+	if a.spec.HealthPath == "" {
+		conn, err := a.spec.connect(ctx)
+		if err == nil {
+			err = conn.Close()
+		}
+		return err
+	}
+	method := cmp.Or(a.spec.HealthMethod, http.MethodHead)
+	req, err := http.NewRequestWithContext(ctx, method, "http://reverse-bin"+a.spec.HealthPath, nil)
+	if err != nil {
+		return err
+	}
+	req.Host = host
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	_ = resp.Body.Close() // the body is not read
+	if a.spec.HealthStatus != 0 && !caddyhttp.StatusCodeMatches(resp.StatusCode, a.spec.HealthStatus) {
+		return fmt.Errorf("%s %s: status %d, want %d", method, a.spec.HealthPath, resp.StatusCode, a.spec.HealthStatus)
+	}
+	return nil
 }

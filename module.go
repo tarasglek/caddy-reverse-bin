@@ -1,305 +1,231 @@
-/*
- * Copyright (c) 2020 Andreas Schneider
- *
- * Permission to use, copy, modify, and distribute this software for any
- * purpose with or without fee is hereby granted, provided that the above
- * copyright notice and this permission notice appear in all copies.
- *
- * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
- * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
- * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
- * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
- * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
- * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
- */
-
+// Package reversebin is a reverse_proxy upstream source that starts an app
+// on demand and stops it when idle. See README.md.
 package reversebin
 
 import (
+	"cmp"
+	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
-	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 	"go.uber.org/zap"
 )
 
-func init() {
-	caddy.RegisterModule(&ReverseBin{})
-	// RegisterHandlerDirective associates the "reverse-bin" directive in the Caddyfile
-	// with the parseCaddyfile function to create a reverse-bin handler instance.
-	httpcaddyfile.RegisterHandlerDirective("reverse-bin", parseCaddyfile)
-	// RegisterDirectiveOrder ensures the "reverse-bin" handler is executed before the
-	// "respond" handler in the HTTP middleware chain. This makes the "order"
-	// block in the Caddyfile redundant.
-	httpcaddyfile.RegisterDirectiveOrder("reverse-bin", httpcaddyfile.Before, "respond")
-}
+func init() { caddy.RegisterModule(new(ReverseBin)) }
 
-// ReverseBin supervises executable backends and proxies HTTP traffic to them.
-type ReverseBin struct {
-	// Name of executable script or binary and its arguments
-	Executable []string `json:"executable"`
-	// Working directory (default, current Caddy working directory)
-	WorkingDirectory string `json:"workingDirectory,omitempty"`
-	// Environment key value pairs (key=value) for this particular app
-	Envs []string `json:"envs,omitempty"`
-	// Environment keys to pass through for all apps
-	PassEnvs []string `json:"passEnvs,omitempty"`
-	// True to pass all environment variables to the executable
-	PassAll bool `json:"passAllEnvs,omitempty"`
+// stopGrace is the time from SIGTERM to SIGKILL: Docker's default. A
+// variable only so tests can shorten it.
+var stopGrace = 10 * time.Second
 
-	// Address to proxy to (for proxy mode)
-	ReverseProxyTo string `json:"reverse_proxy_to,omitempty"`
-	// Health check method (GET or HEAD)
-	HealthMethod string `json:"healthMethod,omitempty"`
-	// Health check path
-	HealthPath string `json:"healthPath,omitempty"`
-	// Exact health check status; zero accepts any 2xx/3xx response
-	HealthStatus int `json:"healthStatus,omitempty"`
-	// Binary and arguments to run to determine proxy parameters dynamically
-	DynamicProxyDetector []string `json:"dynamic_proxy_detector,omitempty"`
-	// Idle timeout in milliseconds before stopping backend process after last request
-	IdleTimeoutMS int `json:"idleTimeoutMs,omitempty"`
-	// Health timeout in milliseconds before startup fails
-	HealthTimeoutMS int `json:"healthTimeoutMs,omitempty"`
-	// Termination grace in milliseconds before SIGKILL
-	TerminationGraceMS int `json:"terminationGraceMs,omitempty"`
-	// Kill wait in milliseconds after SIGKILL before reporting failure
-	TerminationKillWaitMS int `json:"terminationKillWaitMs,omitempty"`
-
-	// Internal state for proxy mode
-	processes map[string]*processState
-	mu        sync.Mutex
-
-	reverseProxy *reverseproxy.Handler
-	ctx          caddy.Context
-
-	logger *zap.Logger
-}
-
-type processState struct {
-	key      string
-	requests chan supervisorRequest
-	commands chan supervisorCommand
-}
-
-func isUnixUpstream(addr string) bool {
-	return strings.HasPrefix(addr, "unix/")
-}
-
-func healthConfigured(method, path string) bool {
-	return strings.TrimSpace(method) != "" && strings.TrimSpace(path) != ""
-}
-
-func parsePositiveMilliseconds(d *caddyfile.Dispenser, name string) (int, error) {
-	if !d.NextArg() {
-		return 0, d.ArgErr()
-	}
-	v, err := strconv.Atoi(d.Val())
-	if err != nil || v <= 0 {
-		return 0, d.Errf("%s must be a positive integer", name)
-	}
-	return v, nil
-}
-
-// Interface guards
-var (
-	_ caddyhttp.MiddlewareHandler = (*ReverseBin)(nil)
-	_ caddyfile.Unmarshaler       = (*ReverseBin)(nil)
-	_ caddy.Provisioner           = (*ReverseBin)(nil)
-	_ caddy.CleanerUpper          = (*ReverseBin)(nil)
+const (
+	killWait            = time.Second // SIGKILL to giving up
+	probeInterval       = 100 * time.Millisecond
+	probeTimeout        = 5 * time.Second // a first response can be slow
+	maxConcurrentStarts = 8               // bounds forks when many new hosts arrive at once
 )
 
-func (c *ReverseBin) CaddyModule() caddy.ModuleInfo {
+// App is what gets run. Static config and detector output are both exactly
+// this, with the field names detectors already print.
+type App struct {
+	Executable       []string `json:"executable,omitempty"`
+	WorkingDirectory string   `json:"working_directory,omitempty"`
+	Envs             []string `json:"envs,omitempty"` // KEY=value: the app's entire environment
+	ReverseProxyTo   string   `json:"reverse_proxy_to,omitempty"`
+	// Optional readiness request: HealthMethod (default HEAD) of HealthPath
+	// must get a response, with a status matching HealthStatus if set (a
+	// code, or a class such as 2 for 2xx).
+	HealthMethod string `json:"health_method,omitempty"`
+	HealthPath   string `json:"health_path,omitempty"`
+	HealthStatus int    `json:"health_status,omitempty"`
+}
+
+// ReverseBin returns the address of the app a request needs, starting it if
+// needed. Strings may hold placeholders; each distinct expansion is one app.
+type ReverseBin struct {
+	App
+	DynamicProxyDetector []string `json:"dynamic_proxy_detector,omitempty"` // prints an App as JSON
+	IdleTimeoutMS        int      `json:"idleTimeoutMs,omitempty"`
+	HealthTimeoutMS      int      `json:"healthTimeoutMs,omitempty"` // detector, launch and readiness
+
+	ctx         caddy.Context
+	leaseKey    string // request var holding this instance's lease
+	logger      *zap.Logger
+	starts      chan struct{} // semaphore
+	mu          sync.Mutex
+	supervisors map[string]*supervisor // by key; guarded by mu
+	wg          sync.WaitGroup         // supervisor goroutines
+}
+
+func (*ReverseBin) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.reverse-bin",
-		New: func() caddy.Module { return &ReverseBin{} },
+		ID:  "http.reverse_proxy.upstreams.reverse-bin",
+		New: func() caddy.Module { return new(ReverseBin) },
 	}
 }
 
-// UnmarshalCaddyfile implements caddyfile.Unmarshaler; it parses the
-// reverse-bin directive and its subdirectives from the Caddyfile.
+// UnmarshalCaddyfile implements caddyfile.Unmarshaler.
 func (c *ReverseBin) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	// Consume 'em all. Matchers should be used to differentiate multiple instantiations.
-	// If they are not used, we simply combine them first-to-last.
-	for d.Next() {
-		d.RemainingArgs() // consume matcher if present
-		for d.NextBlock(0) {
-			switch d.Val() {
-			case "exec":
-				c.Executable = d.RemainingArgs()
-				if len(c.Executable) < 1 {
-					return d.Err("an executable needs to be specified")
-				}
-			case "dir":
-				if !d.Args(&c.WorkingDirectory) {
-					return d.ArgErr()
-				}
-			case "env":
-				c.Envs = d.RemainingArgs()
-				if len(c.Envs) == 0 {
-					return d.ArgErr()
-				}
-			case "pass_env":
-				c.PassEnvs = d.RemainingArgs()
-				if len(c.PassEnvs) == 0 {
-					return d.ArgErr()
-				}
-			case "pass_all_env":
-				c.PassAll = true
-			case "reverse_proxy_to":
-				if !d.Args(&c.ReverseProxyTo) {
-					return d.ArgErr()
-				}
-			case "health_check":
-				args := d.RemainingArgs()
-				if len(args) != 2 && len(args) != 3 {
-					return d.ArgErr()
-				}
-				c.HealthMethod = strings.ToUpper(args[0])
-				c.HealthPath = args[1]
-				if len(args) == 3 {
-					status, err := strconv.Atoi(args[2])
-					if err != nil || status < 100 || status > 599 {
-						return d.Errf("health_check status must be an integer from 100 through 599")
-					}
-					c.HealthStatus = status
-				}
-			case "dynamic_proxy_detector":
-				c.DynamicProxyDetector = d.RemainingArgs()
-				if len(c.DynamicProxyDetector) == 0 {
-					return d.ArgErr()
-				}
-			case "idle_timeout_ms":
-				v, err := parsePositiveMilliseconds(d, "idle_timeout_ms")
-				if err != nil {
-					return err
-				}
-				c.IdleTimeoutMS = v
-			case "health_timeout_ms":
-				v, err := parsePositiveMilliseconds(d, "health_timeout_ms")
-				if err != nil {
-					return err
-				}
-				c.HealthTimeoutMS = v
-			case "termination_grace_ms":
-				v, err := parsePositiveMilliseconds(d, "termination_grace_ms")
-				if err != nil {
-					return err
-				}
-				c.TerminationGraceMS = v
-			case "termination_kill_wait_ms":
-				v, err := parsePositiveMilliseconds(d, "termination_kill_wait_ms")
-				if err != nil {
-					return err
-				}
-				c.TerminationKillWaitMS = v
-			default:
-				return d.Errf("unknown subdirective: %q", d.Val())
+	d.Next() // module name
+	for d.NextBlock(0) {
+		name, args := d.Val(), d.RemainingArgs()
+		var err error
+		switch n := len(args); {
+		case name == "exec" && n > 0:
+			c.Executable = args
+		case name == "dynamic_proxy_detector" && n > 0:
+			c.DynamicProxyDetector = args
+		case name == "dir" && n == 1:
+			c.WorkingDirectory = args[0]
+		case name == "reverse_proxy_to" && n == 1:
+			c.ReverseProxyTo = args[0]
+		case name == "env" && n > 0:
+			c.Envs = args
+		case name == "health_check" && (n == 2 || n == 3):
+			c.HealthMethod, c.HealthPath = args[0], args[1]
+			if n == 3 {
+				c.HealthStatus, err = strconv.Atoi(strings.TrimSuffix(args[2], "xx")) // 200 or 2xx
 			}
+		case name == "idle_timeout_ms" && n == 1:
+			c.IdleTimeoutMS, err = strconv.Atoi(args[0])
+		case name == "health_timeout_ms" && n == 1:
+			c.HealthTimeoutMS, err = strconv.Atoi(args[0])
+		default:
+			return d.Errf("unknown subdirective or wrong number of arguments: %s %q", name, args)
+		}
+		if err != nil {
+			return d.Errf("%s: %v", name, err)
 		}
 	}
 	return nil
 }
 
-// Provision implements caddy.Provisioner; it sets up the module's
-// internal state and provisions the underlying reverse proxy handler.
+// Provision implements caddy.Provisioner.
 func (c *ReverseBin) Provision(ctx caddy.Context) error {
-	c.ctx = ctx
-	c.logger = ctx.Logger(c)
-	c.processes = make(map[string]*processState)
-
-	c.logger.Info("reverse-bin module provisioned",
-		zap.String("version", Version),
-		zap.String("commit", Commit),
-		zap.String("build_date", BuildDate))
-
-	if len(c.DynamicProxyDetector) == 0 {
-		if len(c.Executable) == 0 {
-			return fmt.Errorf("exec (executable) is required when dynamic_proxy_detector is not set")
-		}
-
-		if c.ReverseProxyTo == "" {
-			return fmt.Errorf("reverse_proxy_to is required when dynamic_proxy_detector is not set")
-		}
+	c.ctx, c.logger = ctx, ctx.Logger()
+	c.starts, c.supervisors = make(chan struct{}, maxConcurrentStarts), map[string]*supervisor{}
+	c.leaseKey = fmt.Sprintf("reverse-bin.lease.%p", c)
+	c.IdleTimeoutMS = cmp.Or(c.IdleTimeoutMS, 300000)
+	c.HealthTimeoutMS = cmp.Or(c.HealthTimeoutMS, 15000)
+	if c.IdleTimeoutMS < 0 || c.HealthTimeoutMS < 0 {
+		return errors.New("reverse-bin: idle_timeout_ms and health_timeout_ms must not be negative")
 	}
-
-	if c.HealthMethod != "" {
-		c.HealthMethod = strings.ToUpper(c.HealthMethod)
+	static := len(c.Executable) > 0 || c.WorkingDirectory != "" || len(c.Envs) > 0 || c.ReverseProxyTo != "" ||
+		c.HealthPath != "" || c.HealthMethod != "" || c.HealthStatus != 0
+	if len(c.DynamicProxyDetector) > 0 && static {
+		return errors.New("reverse-bin: dynamic_proxy_detector excludes the app fields (exec, dir, env, reverse_proxy_to, health_check)")
 	}
-	if c.IdleTimeoutMS <= 0 {
-		c.IdleTimeoutMS = defaultIdleTimeoutMS
+	if len(c.DynamicProxyDetector) == 0 && (len(c.Executable) == 0 || c.ReverseProxyTo == "") {
+		return errors.New("reverse-bin: need exec and reverse_proxy_to, or dynamic_proxy_detector")
 	}
-	if c.HealthTimeoutMS <= 0 {
-		c.HealthTimeoutMS = defaultHealthTimeoutMS
-	}
-	if c.TerminationGraceMS <= 0 {
-		c.TerminationGraceMS = defaultTerminationGraceMS
-	}
-	if c.TerminationKillWaitMS <= 0 {
-		c.TerminationKillWaitMS = defaultTerminationKillWaitMS
-	}
-
-	if !isUnixUpstream(c.ReverseProxyTo) && c.ReverseProxyTo != "" && !healthConfigured(c.HealthMethod, c.HealthPath) {
-		return fmt.Errorf("health_check is required for non-unix reverse_proxy_to targets")
-	}
-
-	rp := &reverseproxy.Handler{
-		DynamicUpstreams: c,
-	}
-	if err := rp.Provision(ctx); err != nil {
-		return fmt.Errorf("failed to provision reverse proxy: %v", err)
-	}
-	c.reverseProxy = rp
-
 	return nil
 }
 
-// Cleanup implements caddy.CleanerUpper; it ensures that any running
-// backend process is terminated when the module is unloaded.
-func (c *ReverseBin) getOrCreateProcessState(key string) *processState {
+// Cleanup implements caddy.CleanerUpper. Caddy has cancelled ctx, which makes
+// every supervisor stop its app; Cleanup returns once they are gone.
+func (c *ReverseBin) Cleanup() error {
+	c.mu.Lock()   // a hold that saw ctx live adds to wg under mu; let it finish
+	c.mu.Unlock() //nolint:staticcheck // SA2001: the empty critical section is a barrier
+	c.wg.Wait()
+	return nil
+}
+
+// lease is a request's claim on its app, kept in the request's vars so that
+// the proxy's retry reuses it.
+type lease struct {
+	s   *supervisor
+	err error // a failed start; a retry must not run it again
+}
+
+// GetUpstreams implements reverseproxy.UpstreamSource. The request holds its
+// app until the request context ends, which keeps the app from idling. Caddy
+// calls again to retry; the app is then rechecked.
+func (c *ReverseBin) GetUpstreams(r *http.Request) ([]*reverseproxy.Upstream, error) {
+	l, retry := caddyhttp.GetVar(r.Context(), c.leaseKey).(*lease)
+	if !retry {
+		s, err := c.hold(r)
+		if err != nil {
+			return nil, err
+		}
+		context.AfterFunc(r.Context(), func() { c.release(s) })
+		l = &lease{s: s}
+		caddyhttp.SetVar(r.Context(), c.leaseKey, l)
+	}
+	if l.err != nil {
+		return nil, l.err
+	}
+	var dial string
+	if dial, l.err = l.s.upstream(r.Context(), retry, r.Host); l.err != nil {
+		return nil, l.err
+	}
+	return []*reverseproxy.Upstream{{Dial: dial}}, nil
+}
+
+// hold expands the config for r and counts r against the supervisor of the
+// resulting app, creating it if needed, until release.
+func (c *ReverseBin) hold(r *http.Request) (*supervisor, error) {
+	repl := r.Context().Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+	var err error
+	expand := func(in ...string) (out []string) {
+		for _, s := range in {
+			// A known placeholder that expands to empty fails; unknown ones,
+			// such as a shell's ${PORT}, stay as written.
+			v, e := repl.ReplaceOrErr(s, true, false)
+			out, err = append(out, v), errors.Join(err, e)
+		}
+		return out
+	}
+	app := App{Executable: expand(c.Executable...), WorkingDirectory: expand(c.WorkingDirectory)[0],
+		Envs: expand(c.Envs...), ReverseProxyTo: expand(c.ReverseProxyTo)[0],
+		HealthMethod: expand(c.HealthMethod)[0], HealthPath: expand(c.HealthPath)[0], HealthStatus: c.HealthStatus}
+	detector := expand(c.DynamicProxyDetector...)
+	if err != nil {
+		return nil, err
+	}
+	key := fmt.Sprintf("%q%q%q%q%q%q%d%q", app.Executable, app.WorkingDirectory, app.Envs, app.ReverseProxyTo,
+		app.HealthMethod, app.HealthPath, app.HealthStatus, detector)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ps, ok := c.processes[key]
-	if !ok {
-		c.logger.Debug("creating new process state", zap.String("key", key))
-		ps = &processState{
-			key:      key,
-			requests: make(chan supervisorRequest),
-			commands: make(chan supervisorCommand),
-		}
-		c.processes[key] = ps
-		go c.runSupervisor(ps)
+	if err := c.ctx.Err(); err != nil {
+		return nil, err
 	}
-	return ps
+	s := c.supervisors[key]
+	if s == nil {
+		s = &supervisor{c: c, key: key, app: app, detector: detector,
+			asks: make(chan ask), released: make(chan struct{}, 1)}
+		c.supervisors[key] = s
+		c.wg.Go(s.run)
+	}
+	s.refs++
+	return s, nil
 }
 
-func (c *ReverseBin) Cleanup() error {
+func (c *ReverseBin) release(s *supervisor) {
 	c.mu.Lock()
-	states := make([]*processState, 0, len(c.processes))
-	for _, ps := range c.processes {
-		states = append(states, ps)
-	}
-	c.mu.Unlock()
-
-	var firstErr error
-	for _, ps := range states {
-		if err := c.sendSupervisorCommand(ps, supervisorShutdown, "cleanup"); err != nil && firstErr == nil {
-			firstErr = err
+	defer c.mu.Unlock()
+	if s.refs--; s.refs == 0 {
+		select { // the buffer holds one; more would say nothing new
+		case s.released <- struct{}{}:
+		default:
 		}
 	}
-	return firstErr
 }
 
-// parseCaddyfile unmarshals tokens from h into a new Middleware.
-func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-	c := new(ReverseBin)
-	err := c.UnmarshalCaddyfile(h.Dispenser)
-	return c, err
+// unheld reports whether no request holds s. With retire it also forgets s,
+// whose goroutine must then return.
+func (c *ReverseBin) unheld(s *supervisor, retire bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s.refs == 0 && retire {
+		delete(c.supervisors, s.key)
+	}
+	return s.refs == 0
 }
