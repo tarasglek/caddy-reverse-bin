@@ -10,10 +10,6 @@ on:  # yamllint disable-line rule:truthy
       - "go.mod"
       - "go.sum"
       - "Makefile"
-      - "examples/reverse-proxy/detector/README.md"
-      - "schemas/detector-output.schema.json"
-      - "examples/reverse-proxy/Caddyfile"
-      - "examples/reverse-proxy/**/*.html"
       - ".github/workflows/test-go.yaml"
   pull_request:
     branches: [main, master]
@@ -22,10 +18,6 @@ on:  # yamllint disable-line rule:truthy
       - "go.mod"
       - "go.sum"
       - "Makefile"
-      - "examples/reverse-proxy/detector/README.md"
-      - "schemas/detector-output.schema.json"
-      - "examples/reverse-proxy/Caddyfile"
-      - "examples/reverse-proxy/**/*.html"
       - ".github/workflows/test-go.yaml"
 
 
