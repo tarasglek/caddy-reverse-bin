@@ -57,7 +57,7 @@ release-notes:
 
 build:
 	go run github.com/caddyserver/xcaddy/cmd/xcaddy@latest build --output $(CADDY_BIN) --with github.com/tarasglek/caddy-reverse-bin=.
-	$(CADDY_BIN) list-modules | grep http.handlers.reverse-bin
+	$(CADDY_BIN) list-modules | grep http.reverse_proxy.upstreams.reverse-bin
 	$(CADDY_BIN) version
 
 detector-schema:

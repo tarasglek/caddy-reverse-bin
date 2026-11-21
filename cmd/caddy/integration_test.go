@@ -1,1014 +1,247 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
+	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
-	"maps"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
-	caddycmd "github.com/caddyserver/caddy/v2/cmd"
-	_ "github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/caddyserver/caddy/v2/caddyconfig"
+	"github.com/quic-go/quic-go/http3"
+
+	"github.com/tarasglek/caddy-reverse-bin/internal/testapp"
 )
 
-// getRepoRoot returns the repository root directory.
-func getRepoRoot() string {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("unable to determine current file path")
-	}
-	// We're in cmd/caddy/, repo root is ../../
-	return filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
+func TestMain(m *testing.M) {
+	testapp.Main()
+	os.Exit(m.Run())
 }
 
-func requireIntegration(t *testing.T) {
+// serve runs Caddy with one HTTPS site whose body is site and returns its
+// URL. The certificate is made here so it exists before the first request.
+func serve(t *testing.T, site string) string {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-}
-
-// GetFreePort asks the kernel for a free open port that is ready to use.
-func GetFreePort() (port int, err error) {
-	var a *net.TCPAddr
-	if a, err = net.ResolveTCPAddr("tcp", "localhost:0"); err == nil {
-		var l *net.TCPListener
-		if l, err = net.ListenTCP("tcp", a); err == nil {
-			defer l.Close()
-			return l.Addr().(*net.TCPAddr).Port, nil
-		}
-	}
-	return
-}
-
-// createSocketPath creates a unique temp socket path.
-func createSocketPath(t *testing.T) string {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix sockets not supported on Windows")
-	}
-	f, err := os.CreateTemp("", "reverse-bin-*.sock")
+	// Caddy listens on TCP and, for HTTP/3, UDP: the port must be free for both.
+	udp, err := net.ListenPacket("udp", ":0")
 	if err != nil {
-		t.Fatalf("failed to create temp file for socket path: %s", err)
+		t.Fatal(err)
 	}
-	socketPath := f.Name()
-	f.Close()
-	_ = os.Remove(socketPath)
-	t.Cleanup(func() {
-		_ = os.Remove(socketPath)
-	})
-	return socketPath
+	port := udp.LocalAddr().(*net.UDPAddr).Port
+	tcp, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = udp.Close(), tcp.Close()
+	cfg := fmt.Sprintf(`{
+		admin off
+		storage file_system %s
+		auto_https off
+	}
+	https://localhost:%d {
+		tls %s
+		%s
+	}`, t.TempDir(), port, certFiles(t), strings.ReplaceAll(site, "{tmp}", t.TempDir()))
+	adapted, _, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(cfg), nil)
+	if err == nil {
+		err = caddy.Load(adapted, true)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = caddy.Stop() })
+	return fmt.Sprintf("https://localhost:%d", port)
 }
 
-func createExecutableScript(t *testing.T, dir, name, content string) string {
+// certFiles writes a self-signed certificate for localhost and returns
+// "<cert> <key>".
+func certFiles(t *testing.T) string {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, err := x509.CreateCertificate(rand.Reader, &x509.Certificate{SerialNumber: big.NewInt(1),
+		DNSNames: []string{"localhost"}, NotAfter: time.Now().Add(time.Hour)}, &x509.Certificate{SerialNumber: big.NewInt(1)}, &key.PublicKey, key)
+	keyDER, _ := x509.MarshalECPrivateKey(key)
+	dir := t.TempDir()
+	cert, keyFile := filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
+	if err == nil {
+		err = errors.Join(os.WriteFile(cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600),
+			os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cert + " " + keyFile
+}
+
+func transport(proto string) http.RoundTripper {
+	insecure := &tls.Config{InsecureSkipVerify: true} // transports modify it
+	if proto == "HTTP/3.0" {
+		return &http3.Transport{TLSClientConfig: insecure}
+	}
+	tr := &http.Transport{TLSClientConfig: insecure, Protocols: new(http.Protocols)}
+	tr.Protocols.SetHTTP1(proto == "HTTP/1.1")
+	tr.Protocols.SetHTTP2(proto == "HTTP/2.0")
+	return tr
+}
+
+// get sends GET url with header X-App: app over proto (default HTTP/1.1)
+// and returns the status and body.
+func get(t *testing.T, url, app string, proto ...string) (int, string) {
+	proto = append(proto, "HTTP/1.1")
 	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
-		t.Fatalf("failed to write script %s: %v", path, err)
-	}
-	return path
-}
-
-type pathCheck struct {
-	Label         string
-	Path          string
-	MustBeDir     bool
-	MustBeRegular bool
-}
-
-func requirePaths(t *testing.T, checks ...pathCheck) {
-	t.Helper()
-	for _, c := range checks {
-		info, err := os.Stat(c.Path)
-		if err != nil {
-			t.Fatalf("required %s missing/unreadable at %s: %v", c.Label, c.Path, err)
-		}
-		if c.MustBeDir && !info.IsDir() {
-			t.Fatalf("required %s is not a directory: %s", c.Label, c.Path)
-		}
-		if c.MustBeRegular && !info.Mode().IsRegular() {
-			t.Fatalf("required %s is not a regular file: %s", c.Label, c.Path)
-		}
-	}
-}
-
-type fixtures struct {
-	GoEchoBin string
-	AppDir    string
-}
-
-var (
-	goEchoBuildOnce sync.Once
-	goEchoBuildPath string
-	goEchoBuildErr  error
-)
-
-func mustFixtures(t *testing.T) fixtures {
-	t.Helper()
-	repoRoot := getRepoRoot()
-	appDir := filepath.Join(repoRoot, "examples/reverse-proxy/apps/go-echo")
-	mainGo := filepath.Join(appDir, "main.go")
-	requirePaths(t,
-		pathCheck{Label: "go echo app", Path: mainGo, MustBeRegular: true},
-		pathCheck{Label: "dynamic app dir", Path: appDir, MustBeDir: true},
-	)
-
-	goEchoBuildOnce.Do(func() {
-		binDir, err := os.MkdirTemp("", "reverse-bin-go-echo-*")
-		if err != nil {
-			goEchoBuildErr = fmt.Errorf("failed to create go echo build dir: %w", err)
-			return
-		}
-		goEchoBuildPath = filepath.Join(binDir, "go-echo")
-		if runtime.GOOS == "windows" {
-			goEchoBuildPath += ".exe"
-		}
-		cmd := exec.Command("go", "build", "-o", goEchoBuildPath, ".")
-		cmd.Dir = appDir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			goEchoBuildErr = fmt.Errorf("failed to build go echo app: %w\n%s", err, string(out))
-		}
-	})
-	if goEchoBuildErr != nil {
-		t.Fatal(goEchoBuildErr)
-	}
-	return fixtures{GoEchoBin: goEchoBuildPath, AppDir: appDir}
-}
-
-func renderTemplate(input string, values map[string]string) string {
-	replacements := make([]string, 0, len(values)*2)
-	for k, v := range values {
-		replacements = append(replacements, "{{"+k+"}}", v)
-	}
-	return strings.NewReplacer(replacements...).Replace(input)
-}
-
-func createTestingTransport() *http.Transport {
-	dialer := net.Dialer{Timeout: 5 * time.Second, KeepAlive: 5 * time.Second}
-	dialContext := func(ctx context.Context, network, addr string) (net.Conn, error) {
-		parts := strings.Split(addr, ":")
-		destAddr := fmt.Sprintf("127.0.0.1:%s", parts[len(parts)-1])
-		return dialer.DialContext(ctx, network, destAddr)
-	}
-	return &http.Transport{DialContext: dialContext}
-}
-
-func newTestHTTPClient() *http.Client {
-	return &http.Client{
-		Transport: createTestingTransport(),
-		Timeout:   10 * time.Second,
-	}
-}
-
-func assertGetResponse(t *testing.T, client *http.Client, requestURI string, expectedStatusCode int, expectedBodyContains string, invariant string) (*http.Response, string) {
-	t.Helper()
-
-	var (
-		resp *http.Response
-		err  error
-	)
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		resp, err = client.Get(requestURI)
-		if err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%s: failed to call server: %v", invariant, err)
-		}
-		time.Sleep(50 * time.Millisecond)
+	req, _ := http.NewRequest("GET", url, nil)
+	req.Header.Set("X-App", app)
+	resp, err := (&http.Client{Transport: transport(proto[0]), Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("%s: unable to read response body: %v", invariant, err)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.Proto != proto[0] {
+		t.Fatalf("response over %s, want %s", resp.Proto, proto[0])
 	}
-	body := string(bodyBytes)
-
-	if resp.StatusCode != expectedStatusCode {
-		t.Fatalf("%s: requesting %q expected status %d but got %d (body: %s)", invariant, requestURI, expectedStatusCode, resp.StatusCode, body)
-	}
-	if expectedBodyContains != "" && !strings.Contains(body, expectedBodyContains) {
-		t.Fatalf("%s: requesting %q expected body to contain %q but got %q", invariant, requestURI, expectedBodyContains, body)
-	}
-	return resp, body
+	return resp.StatusCode, string(body)
 }
 
-func processExists(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	return syscall.Kill(pid, 0) == nil
-}
-
-type reverseProxySetup struct {
-	Port int
-}
-
-func createReverseProxySetup(t *testing.T, handleBlock string, values map[string]string) (*reverseProxySetup, func()) {
-	t.Helper()
-
-	port, err := GetFreePort()
-	if err != nil {
-		t.Fatalf("failed to get free port: %v", err)
-	}
-
-	vars := map[string]string{}
-	maps.Copy(vars, values)
-	resolvedHandle := renderTemplate(handleBlock, vars)
-
-	caddyfilePath := filepath.Join(t.TempDir(), "Caddyfile")
-	fixture := `
-{
-	admin off
-	http_port {{HTTP_PORT}}
-}
-
-http://localhost:{{HTTP_PORT}} {
-	{{HANDLE_BLOCK}}
-}
-`
-	rendered := renderTemplate(fixture, map[string]string{
-		"HTTP_PORT":    fmt.Sprintf("%d", port),
-		"HANDLE_BLOCK": resolvedHandle,
-	})
-	if err := os.WriteFile(caddyfilePath, []byte(rendered), 0o600); err != nil {
-		t.Fatalf("failed to write temp Caddyfile: %v", err)
-	}
-
-	prevArgs := os.Args
-	os.Args = []string{"caddy", "run", "--config", caddyfilePath, "--adapter", "caddyfile"}
-	go caddycmd.Main()
-
-	dispose := func() {
-		os.Args = prevArgs
-		_ = caddy.Stop()
-	}
-
-	return &reverseProxySetup{Port: port}, dispose
-}
-
-func createBasicReverseProxySetup(t *testing.T, f fixtures) (*reverseProxySetup, func()) {
-	t.Helper()
-
-	tmpDir := t.TempDir()
-	handleBlock := `handle /test/path* {
-		reverse-bin {
-			exec {{GO_ECHO}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-			env SOCKET_PATH={{APP_SOCKET}}
+// static is a reverse_proxy block running the test app on a unix socket
+// named by the X-App header; the second %s adds env entries.
+const static = `reverse_proxy {
+		dynamic reverse-bin {
+			exec %s
+			reverse_proxy_to unix/{tmp}/{http.request.header.X-App}.sock
+			env TEST_APP_DIAL=unix/{tmp}/{http.request.header.X-App}.sock %s
+			%s
 		}
+		lb_retries 1
 	}`
 
-	return createReverseProxySetup(t, handleBlock, map[string]string{
-		"GO_ECHO":    f.GoEchoBin,
-		"APP_SOCKET": filepath.Join(tmpDir, "app.sock"),
-	})
-}
-
-// TestBasicReverseProxy is a static-control integration test.
-// Strategy: configure reverse-bin with explicit exec + reverse_proxy_to, then
-// verify one request succeeds through the Unix-socket backend.
-func TestBasicReverseProxy(t *testing.T) {
-	requireIntegration(t)
-
-	setup, dispose := createBasicReverseProxySetup(t, mustFixtures(t))
-	defer dispose()
-
-	// Static baseline: request is routed to reverse-bin static upstream and
-	// should include echoed request path from backend response.
-	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/test/path", setup.Port), 200, "echo-backend", "basic reverse proxy must route request to echo backend")
-}
-
-// TestProcessCrashAndRestart verifies reverse-bin restarts a crashed backend process.
-// Strategy:
-//  1. First request via Caddy reaches shared Unix-socket echo backend and returns backend PID.
-//  2. Call shared backend directly over Unix socket at /crash to force process exit.
-//  3. Second request via Caddy succeeds and returns a different PID (restarted process).
-func TestProcessCrashAndRestart(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	socketPath := createSocketPath(t)
-	setup, dispose := createReverseProxySetup(t, `handle /test/* {
-		reverse-bin {
-			exec {{GO_ECHO}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-			env SOCKET_PATH={{APP_SOCKET}}
+// TestAppIdlesAfterResponse verifies a request releases its app when Caddy
+// is done with it, over each HTTP version: the app idles out after the
+// response. This rests on the request context ending after the handler
+// returns, which reverse-bin assumes.
+func TestAppIdlesAfterResponse(t *testing.T) {
+	hold, dead := testapp.HoldListener(t)
+	base := serve(t, fmt.Sprintf(static, os.Args[0], "TEST_APP_HOLD="+hold, "idle_timeout_ms 100"))
+	for _, proto := range []string{"HTTP/1.1", "HTTP/2.0", "HTTP/3.0"} {
+		// GET /pid over proto starts the app, which connects to hold.
+		if status, _ := get(t, base+"/pid", "a", proto); status != 200 {
+			t.Fatalf("%s: status %d, want 200", proto, status)
 		}
-	}`, map[string]string{
-		"GO_ECHO":    f.GoEchoBin,
-		"APP_SOCKET": socketPath,
-	})
-	defer dispose()
-
-	parsePID := func(t *testing.T, body string) int {
-		t.Helper()
-		var payload struct {
-			PID int `json:"pid"`
+		if err := dead(10 * time.Second); !errors.Is(err, io.EOF) {
+			t.Fatalf("%s: app holder read = %v, want EOF from an idle stop", proto, err)
 		}
-		if err := json.Unmarshal([]byte(body), &payload); err != nil {
-			t.Fatalf("failed to parse JSON response %q: %v", body, err)
-		}
-		if payload.PID <= 0 {
-			t.Fatalf("response does not contain valid pid: %q", body)
-		}
-		return payload.PID
-	}
-
-	client := newTestHTTPClient()
-
-	// First request via Caddy proves backend starts and serves traffic.
-	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/first", setup.Port), 200, "\"pid\":", "first request must return backend pid before crash")
-	pid1 := parsePID(t, body1)
-
-	// Direct Unix-socket request to /crash intentionally terminates backend process.
-	directTransport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", socketPath)
-		},
-	}
-	directClient := &http.Client{Transport: directTransport, Timeout: 5 * time.Second}
-	resp, err := directClient.Get("http://unix/crash")
-	if err == nil && resp != nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}
-
-	// Wait until crashed process PID is gone.
-	deadline := time.Now().Add(2 * time.Second)
-	for {
-		err := syscall.Kill(pid1, 0)
-		if err != nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("backend pid %d did not exit after /crash within timeout", pid1)
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
-
-	// Second request via Caddy must succeed and come from a new backend PID.
-	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/second", setup.Port), 200, "\"pid\":", "second request must succeed with restarted backend pid")
-	pid2 := parsePID(t, body2)
-	if pid1 == pid2 {
-		t.Fatalf("expected backend restart with different pid, got same pid=%d (first=%q second=%q)", pid1, body1, body2)
 	}
 }
 
-// TestDynamicDiscovery is a dynamic-discovery integration test.
-// Strategy:
-//  1. Route only /dynamic/* to reverse-bin with dynamic_proxy_detector.
-//  2. Add a separate static /path route that returns a fixed body.
-//  3. Assert /dynamic/path is served by discovered backend, while /path is
-//     served by static route. This proves matcher scoping + discovery/proxy flow.
-func TestDynamicDiscovery(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	socketPath := createSocketPath(t)
-	detector := createExecutableScript(t, t.TempDir(), "detector-static.py", `#!/usr/bin/env python3
-import json
-import sys
-from pathlib import Path
-
-go_echo = Path(sys.argv[1]).resolve()
-socket_path = Path(sys.argv[2]).resolve()
-result = {
-    "executable": [str(go_echo)],
-    "reverse_proxy_to": f"unix/{socket_path}",
-    "working_directory": str(go_echo.parent),
-    "envs": [f"SOCKET_PATH={socket_path}"],
-}
-print(json.dumps(result))
-`)
-
-	setup, dispose := createReverseProxySetup(t, `# Only /dynamic/* routes use dynamic discovery.
-	handle /dynamic/* {
-		reverse-bin {
-			dynamic_proxy_detector {{DETECTOR}} {{GO_ECHO}} {{SOCKET_PATH}}
+// TestDetector verifies a detector's App is run, and that a failing detector
+// answers 503 at once.
+func TestDetector(t *testing.T) {
+	dial := "unix/" + filepath.Join(t.TempDir(), "app.sock")
+	out := filepath.Join(t.TempDir(), "app.json")
+	app := fmt.Sprintf(`{"executable":[%q],"reverse_proxy_to":%q,"envs":["TEST_APP_DIAL=%s"]}`, os.Args[0], dial, dial)
+	if err := os.WriteFile(out, []byte(app), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := serve(t, `handle /pid {
+		reverse_proxy {
+			dynamic reverse-bin {
+				dynamic_proxy_detector cat `+out+`
+			}
 		}
 	}
-	# Explicit non-dynamic route for matcher verification.
-	handle /path {
-		respond "non-dynamic"
-	}`, map[string]string{
-		"DETECTOR":    detector,
-		"GO_ECHO":     f.GoEchoBin,
-		"SOCKET_PATH": socketPath,
-	})
-	defer dispose()
-
-	client := newTestHTTPClient()
-
-	// Positive path: /dynamic/* must go through dynamic discovery to the
-	// discovered echo backend, identified by explicit marker in body.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/path", setup.Port), 200, "echo-backend", "dynamic route must be served by discovered backend")
-
-	// Control path: /path must NOT hit dynamic discovery; it should match the
-	// explicit static handler and return the known marker body.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/path", setup.Port), 200, "non-dynamic", "non-dynamic route must match static handler")
-}
-
-// TestDynamicDiscovery_DetectorFailure validates failure handling when the
-// dynamic detector exits non-zero for a dynamic route.
-func TestDynamicDiscovery_DetectorFailure(t *testing.T) {
-	requireIntegration(t)
-
-	failDetector := createExecutableScript(t, t.TempDir(), "detector-fail.py", `#!/usr/bin/env python3
-import sys
-print("detector failed on purpose", file=sys.stderr)
-sys.exit(2)
-`)
-
-	setup, dispose := createReverseProxySetup(t, `handle /dynamic/* {
-		reverse-bin {
-			dynamic_proxy_detector {{DETECTOR}} {path}
+	reverse_proxy {
+		dynamic reverse-bin {
+			dynamic_proxy_detector false
 		}
+		lb_retries 1
+	}`)
+	// GET /pid: served by the detected app.
+	if status, pid := get(t, base+"/pid", ""); status != 200 || pid == "" {
+		t.Fatalf("detected app: %d %q, want 200 with a pid", status, pid)
 	}
-	handle /ok {
-		respond "ok"
-	}`, map[string]string{"DETECTOR": failDetector})
-	defer dispose()
-
-	client := newTestHTTPClient()
-
-	// Control request: non-dynamic route should remain healthy and return static body.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ok", setup.Port), 200, "ok", "control route must remain healthy when detector fails")
-
-	// Dynamic request: failing detector must surface as service unavailable.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/dynamic/fail", setup.Port), 503, "", "dynamic route must return 503 when detector exits non-zero")
-}
-
-// TestHealthCheck verifies Unix health behavior for GET, HEAD, and omitted health_check.
-func TestHealthCheck(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	testCases := []struct {
-		name            string
-		healthDirective string
-		expectedMethod  *string
-	}{
-		{name: "GET", healthDirective: "health_check GET /health", expectedMethod: new("GET")},
-		{name: "HEAD", healthDirective: "health_check HEAD /health", expectedMethod: new("HEAD")},
-		{name: "OMITTED", healthDirective: "", expectedMethod: nil},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			socketPath := createSocketPath(t)
-
-			setup, dispose := createReverseProxySetup(t, `handle_path /ready/* {
-			reverse-bin {
-				exec {{GO_ECHO}}
-				reverse_proxy_to unix/{{APP_SOCKET}}
-				env SOCKET_PATH={{APP_SOCKET}}
-				{{HEALTH_DIRECTIVE}}
-			}
-		}`, map[string]string{
-				"GO_ECHO":          f.GoEchoBin,
-				"APP_SOCKET":       socketPath,
-				"HEALTH_DIRECTIVE": tc.healthDirective,
-			})
-			defer dispose()
-
-			client := newTestHTTPClient()
-
-			// Request through Caddy to prove proxying works with the configured health mode.
-			_, pingBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/ping", setup.Port), 200, "", "ready endpoint must proxy request to backend")
-			var pingPayload struct {
-				Backend string `json:"backend"`
-				Path    string `json:"path"`
-			}
-			if err := json.Unmarshal([]byte(pingBody), &pingPayload); err != nil {
-				t.Fatalf("failed to parse /ready/ping JSON %q: %v", pingBody, err)
-			}
-			if pingPayload.Backend != "echo-backend" || pingPayload.Path != "/ping" {
-				t.Fatalf("unexpected /ready/ping payload: %s", pingBody)
-			}
-
-			// Request backend debug endpoint to verify whether /health was probed and by which method.
-			_, healthBody := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/ready/health-last", setup.Port), 200, "", "health-last endpoint must return health probe metadata")
-			if !strings.Contains(healthBody, "last_health_method") {
-				t.Fatalf("/ready/health-last response must include last_health_method (body=%s)", healthBody)
-			}
-			var healthPayload struct {
-				LastHealthMethod *string `json:"last_health_method"`
-			}
-			if err := json.Unmarshal([]byte(healthBody), &healthPayload); err != nil {
-				t.Fatalf("failed to parse /ready/health-last JSON %q: %v", healthBody, err)
-			}
-			if tc.expectedMethod == nil {
-				if healthPayload.LastHealthMethod != nil {
-					t.Fatalf("expected null last_health_method when health_check is omitted, got %v (body=%s)", *healthPayload.LastHealthMethod, healthBody)
-				}
-			} else {
-				if healthPayload.LastHealthMethod == nil || *healthPayload.LastHealthMethod != *tc.expectedMethod {
-					t.Fatalf("expected health method %q, got %v (body=%s)", *tc.expectedMethod, healthPayload.LastHealthMethod, healthBody)
-				}
-			}
-		})
+	// GET /fail: the detector exits 1, so the request fails with 503.
+	start := time.Now()
+	if status, _ := get(t, base+"/fail", ""); status != 503 || time.Since(start) > 2*time.Second {
+		t.Fatalf("failing detector: %d after %v, want 503 at once", status, time.Since(start))
 	}
 }
 
-// TestHealthFailureTimeout validates that health polling timeout surfaces as 503.
-// Strategy: start a long-running process that never binds reverse_proxy_to, so health
-// cannot succeed and reverse-bin must fail request with service unavailable.
-func TestHealthCheckAcceptsExplicitUnauthorizedStatus(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
+// TestAppPerKeyAndRetry verifies each distinct placeholder expansion is its
+// own app, a repeated one reuses it, and with lb_retries 1 a request arriving
+// as the app exits is served by a new app.
+func TestAppPerKeyAndRetry(t *testing.T) {
+	base := serve(t, fmt.Sprintf(static, os.Args[0], "", ""))
+	// GET /pid with X-App a, b: two apps. GET /exit with a: same app, which exits.
+	_, a := get(t, base+"/pid", "a")
+	_, b := get(t, base+"/pid", "b")
+	_, again := get(t, base+"/exit", "a")
+	if a == "" || a == b || a != again {
+		t.Fatalf("pids a=%q b=%q a=%q, want two apps with a reused", a, b, again)
+	}
+	// GET /pid with a right away: a new app answers.
+	if status, next := get(t, base+"/pid", "a"); status != 200 || next == a {
+		t.Fatalf("after exit: %d pid %q, want 200 from a new app (was %q)", status, next, a)
+	}
+}
 
-	port, err := GetFreePort()
+// TestStopLeavesNoApp verifies stopping Caddy stops and reaps every app.
+func TestStopLeavesNoApp(t *testing.T) {
+	base := serve(t, fmt.Sprintf(static, os.Args[0], "", ""))
+	// GET /pid: starts the app.
+	_, pid := get(t, base+"/pid", "a")
+	var n int
+	if _, err := fmt.Sscan(pid, &n); err != nil {
+		t.Fatal(err)
+	}
+	if err := caddy.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	if syscall.Kill(n, 0) == nil {
+		t.Fatalf("app %d still exists after Caddy stopped", n)
+	}
+}
+
+// TestWebSocketHoldsTheApp verifies an upgraded connection counts as a
+// request for its whole life: the app does not idle while it is open, and
+// idles out once it closes.
+func TestWebSocketHoldsTheApp(t *testing.T) {
+	hold, dead := testapp.HoldListener(t)
+	base := serve(t, fmt.Sprintf(static, os.Args[0], "TEST_APP_HOLD="+hold, "idle_timeout_ms 100"))
+	conn, err := tls.Dial("tcp", strings.TrimPrefix(base, "https://"), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}})
 	if err != nil {
-		t.Fatalf("failed to allocate backend port: %v", err)
+		t.Fatal(err)
 	}
-
-	setup, dispose := createReverseProxySetup(t, `handle /registry/* {
-		reverse-bin {
-			exec {{GO_ECHO}}
-			env REVERSE_BIN_HOST=127.0.0.1 REVERSE_BIN_PORT={{BACKEND_PORT}} HEALTH_STATUS=401
-			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
-			health_check GET /health 401
-		}
-	}`, map[string]string{
-		"GO_ECHO":      f.GoEchoBin,
-		"BACKEND_PORT": fmt.Sprintf("%d", port),
-	})
-	defer dispose()
-
-	client := newTestHTTPClient()
-	// HTTP request verifies reverse-bin accepts an explicit 401 health status before proxying normal traffic.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/registry/ok", setup.Port), 200, "echo-backend", "explicit 401 health status must allow backend startup and proxying")
-}
-
-func TestHealthCheckAcceptsRedirectWithoutFollowing(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	port, err := GetFreePort()
-	if err != nil {
-		t.Fatalf("failed to allocate backend port: %v", err)
+	// GET /ws with Upgrade: the proxy tunnels it to the app, which echoes.
+	fmt.Fprint(conn, "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nX-App: a\r\n\r\n")
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, nil)
+	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade: %v %v, want 101", resp, err)
 	}
-
-	setup, dispose := createReverseProxySetup(t, `handle /redirect-health/* {
-		reverse-bin {
-			exec {{GO_ECHO}}
-			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
-			env REVERSE_BIN_HOST=127.0.0.1 REVERSE_BIN_PORT={{BACKEND_PORT}} HEALTH_STATUS=302
-			health_check GET /health
-		}
-	}`, map[string]string{
-		"GO_ECHO":      f.GoEchoBin,
-		"BACKEND_PORT": fmt.Sprintf("%d", port),
-	})
-	defer dispose()
-
-	// HTTP request verifies health treats the backend's 302 as healthy instead of following its Location.
-	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/redirect-health/ok", setup.Port), 200, "echo-backend", "health probe must accept 3xx response without following redirect")
-}
-
-func TestHealthCheckSetsForwardedHeaders(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	port, err := GetFreePort()
-	if err != nil {
-		t.Fatalf("failed to allocate backend port: %v", err)
+	echo := make([]byte, 4)
+	fmt.Fprint(conn, "ping")
+	if _, err := io.ReadFull(br, echo); err != nil || string(echo) != "ping" {
+		t.Fatalf("echo = %q, %v; want ping", echo, err)
 	}
-
-	setup, dispose := createReverseProxySetup(t, `handle /fwd/* {
-		reverse-bin {
-			exec {{GO_ECHO}}
-			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
-			env REVERSE_BIN_HOST=127.0.0.1 REVERSE_BIN_PORT={{BACKEND_PORT}} REQUIRE_FORWARDED_HEALTH=1
-			health_check GET /health
-		}
-	}`, map[string]string{
-		"GO_ECHO":      f.GoEchoBin,
-		"BACKEND_PORT": fmt.Sprintf("%d", port),
-	})
-	defer dispose()
-
-	// HTTP request triggers backend startup; the health probe must receive
-	// X-Forwarded-Host and X-Forwarded-Proto before proxying can start.
-	_, _ = assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/fwd/ok", setup.Port), 200, "echo-backend", "health probe must include forwarded host/proto headers from triggering request")
-}
-
-func TestHealthFailureTimeout(t *testing.T) {
-	requireIntegration(t)
-
-	port, err := GetFreePort()
-	if err != nil {
-		t.Fatalf("failed to get free backend port: %v", err)
+	if err := dead(10 * 100 * time.Millisecond); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("app holder read = %v while the WebSocket is open, want it alive", err)
 	}
-
-	sleeper := createExecutableScript(t, t.TempDir(), "sleep-forever.sh", `#!/usr/bin/env sh
-sleep 30
-`)
-
-	setup, dispose := createReverseProxySetup(t, `handle /fail/* {
-		reverse-bin {
-			exec {{SLEEPER}}
-			reverse_proxy_to 127.0.0.1:{{BACKEND_PORT}}
-			health_check GET /health
-		}
-	}`, map[string]string{
-		"SLEEPER":      sleeper,
-		"BACKEND_PORT": fmt.Sprintf("%d", port),
-	})
-	defer dispose()
-
-	client := &http.Client{Transport: createTestingTransport(), Timeout: 20 * time.Second}
-	// Request a proxied route to trigger backend startup + health polling.
-	// Invariant: backend never binds the configured upstream, so health times out and reverse-bin must return 503.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/fail/test", setup.Port), 503, "", "request must fail with 503 when health polling times out")
-}
-
-// TestLifecycleIdleTimeout verifies a backend process is terminated after configured idle_timeout_ms.
-func TestLifecycleIdleTimeout(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	socketPath := createSocketPath(t)
-	setup, dispose := createReverseProxySetup(t, `handle /test/* {
-		reverse-bin {
-			exec {{GO_ECHO}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-			env SOCKET_PATH={{APP_SOCKET}}
-			idle_timeout_ms 100
-		}
-	}`, map[string]string{
-		"GO_ECHO":    f.GoEchoBin,
-		"APP_SOCKET": socketPath,
-	})
-	defer dispose()
-
-	parsePID := func(t *testing.T, body string) int {
-		t.Helper()
-		var payload struct {
-			PID int `json:"pid"`
-		}
-		if err := json.Unmarshal([]byte(body), &payload); err != nil {
-			t.Fatalf("failed to parse JSON response %q: %v", body, err)
-		}
-		if payload.PID <= 0 {
-			t.Fatalf("response does not contain valid pid: %q", body)
-		}
-		return payload.PID
-	}
-
-	client := newTestHTTPClient()
-
-	// First request starts backend process and returns its PID.
-	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/first", setup.Port), 200, "", "first idle-timeout request must start backend and return pid")
-	pid1 := parsePID(t, body1)
-
-	// Wait without traffic so idle timeout can fire naturally.
-	time.Sleep(250 * time.Millisecond)
-
-	// Next request should be served by a newly spawned process.
-	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/test/second", setup.Port), 200, "", "second idle-timeout request must succeed after respawn")
-	pid2 := parsePID(t, body2)
-	if pid2 == pid1 {
-		t.Fatalf("expected new pid after idle timeout; got same pid=%d (first=%s second=%s)", pid1, body1, body2)
-	}
-}
-
-// TestMultipleApps verifies two independent reverse-bin handlers can run side-by-side
-// with separate Unix sockets and processes.
-// TestHealthImmediateExitFailsFast verifies startup failure is reported from process exit instead of health timeout.
-func TestHealthImmediateExitFailsFast(t *testing.T) {
-	requireIntegration(t)
-
-	exiter := createExecutableScript(t, t.TempDir(), "exit-42.sh", `#!/usr/bin/env sh
-exit 42
-`)
-	socketPath := createSocketPath(t)
-	setup, dispose := createReverseProxySetup(t, `handle /failfast/* {
-		reverse-bin {
-			exec {{EXITER}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-		}
-	}`, map[string]string{
-		"EXITER":     exiter,
-		"APP_SOCKET": socketPath,
-	})
-	defer dispose()
-
-	client := newTestHTTPClient()
-	started := time.Now()
-	// HTTP request exercises startup path where backend exits before health can pass.
-	_, _ = assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/failfast/test", setup.Port), 503, "", "immediate backend exit must return 503")
-	elapsed := time.Since(started)
-	if elapsed >= 2*time.Second {
-		t.Fatalf("expected immediate backend exit to fail fast under 2s, took %s", elapsed)
-	}
-}
-
-// TestLifecycleIdleTimeoutKillsChildProcessGroup verifies idle cleanup terminates child processes.
-func TestLifecycleIdleTimeoutKillsChildProcessGroup(t *testing.T) {
-	requireIntegration(t)
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups differ on Windows")
-	}
-
-	socketPath := createSocketPath(t)
-	backend := createExecutableScript(t, t.TempDir(), "parent-child.py", `#!/usr/bin/env python3
-import http.server, json, os, signal, socket, subprocess, sys
-
-socket_path = os.environ["SOCKET_PATH"]
-if os.path.exists(socket_path):
-    os.remove(socket_path)
-child = subprocess.Popen(["sleep", "30"])
-
-class UnixHTTPServer(http.server.HTTPServer):
-    address_family = socket.AF_UNIX
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def address_string(self):
-        return "unix"
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps({"parent": os.getpid(), "child": child.pid}).encode())
-
-server = UnixHTTPServer(socket_path, Handler)
-def stop(signum, frame):
-    server.server_close()
-    sys.exit(0)
-signal.signal(signal.SIGTERM, stop)
-server.serve_forever()
-`)
-	setup, dispose := createReverseProxySetup(t, `handle /child/* {
-		reverse-bin {
-			exec {{BACKEND}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-			env SOCKET_PATH={{APP_SOCKET}}
-			idle_timeout_ms 100
-		}
-	}`, map[string]string{
-		"BACKEND":    backend,
-		"APP_SOCKET": socketPath,
-	})
-	defer dispose()
-
-	// HTTP request exercises backend startup and returns parent/child PIDs for idle cleanup assertion.
-	_, body := assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/child/pids", setup.Port), 200, "child", "child cleanup request must return spawned child pid")
-	var payload struct {
-		Parent int `json:"parent"`
-		Child  int `json:"child"`
-	}
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		t.Fatalf("expected JSON parent/child pid payload, got %q: %v", body, err)
-	}
-	if payload.Parent <= 0 || payload.Child <= 0 || payload.Parent == payload.Child {
-		t.Fatalf("expected distinct positive parent/child pids, got parent=%d child=%d", payload.Parent, payload.Child)
-	}
-
-	time.Sleep(500 * time.Millisecond)
-	if processExists(payload.Child) {
-		t.Fatalf("expected child pid %d to be gone after idle timeout process-group stop", payload.Child)
-	}
-}
-
-// TestCleanupStopsBackendProcessGroup verifies module cleanup terminates running backend descendants.
-func TestCleanupStopsBackendProcessGroup(t *testing.T) {
-	requireIntegration(t)
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups differ on Windows")
-	}
-
-	socketPath := createSocketPath(t)
-	backend := createExecutableScript(t, t.TempDir(), "cleanup-parent-child.py", `#!/usr/bin/env python3
-import http.server, json, os, signal, socket, subprocess, sys
-
-socket_path = os.environ["SOCKET_PATH"]
-if os.path.exists(socket_path):
-    os.remove(socket_path)
-child = subprocess.Popen(["sleep", "30"])
-
-class UnixHTTPServer(http.server.HTTPServer):
-    address_family = socket.AF_UNIX
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def address_string(self):
-        return "unix"
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps({"parent": os.getpid(), "child": child.pid}).encode())
-
-server = UnixHTTPServer(socket_path, Handler)
-def stop(signum, frame):
-    server.server_close()
-    sys.exit(0)
-signal.signal(signal.SIGTERM, stop)
-server.serve_forever()
-`)
-	setup, dispose := createReverseProxySetup(t, `handle /cleanup/* {
-		reverse-bin {
-			exec {{BACKEND}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-			env SOCKET_PATH={{APP_SOCKET}}
-		}
-	}`, map[string]string{
-		"BACKEND":    backend,
-		"APP_SOCKET": socketPath,
-	})
-
-	// HTTP request exercises backend startup and returns child PID for cleanup assertion.
-	_, body := assertGetResponse(t, newTestHTTPClient(), fmt.Sprintf("http://localhost:%d/cleanup/pids", setup.Port), 200, "child", "cleanup request must return spawned child pid")
-	var payload struct {
-		Child int `json:"child"`
-	}
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		t.Fatalf("expected JSON child pid payload, got %q: %v", body, err)
-	}
-	if payload.Child <= 0 {
-		t.Fatalf("expected positive child pid, got %d", payload.Child)
-	}
-
-	dispose()
-	time.Sleep(500 * time.Millisecond)
-	if processExists(payload.Child) {
-		t.Fatalf("expected child pid %d to be gone after cleanup process-group stop", payload.Child)
-	}
-}
-
-// TestUnixSocketMissingRestartsWithoutLeakingOldProcess verifies unhealthy alive backend is stopped before replacement.
-func TestUnixSocketMissingRestartsWithoutLeakingOldProcess(t *testing.T) {
-	requireIntegration(t)
-	if runtime.GOOS == "windows" {
-		t.Skip("Unix sockets not supported on Windows")
-	}
-
-	socketPath := createSocketPath(t)
-	backend := createExecutableScript(t, t.TempDir(), "removable-socket.py", `#!/usr/bin/env python3
-import http.server, json, os, socket
-
-socket_path = os.environ["SOCKET_PATH"]
-if os.path.exists(socket_path):
-    os.remove(socket_path)
-
-class UnixHTTPServer(http.server.HTTPServer):
-    address_family = socket.AF_UNIX
-
-class Handler(http.server.BaseHTTPRequestHandler):
-    def address_string(self):
-        return "unix"
-    def _send(self, payload):
-        self.send_response(200)
-        self.send_header("content-type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(payload).encode())
-    def do_GET(self):
-        if self.path == "/remove-socket-and-stay-alive":
-            if os.path.exists(socket_path):
-                os.remove(socket_path)
-            self._send({"removed": True, "pid": os.getpid()})
-            return
-        self._send({"pid": os.getpid()})
-
-server = UnixHTTPServer(socket_path, Handler)
-server.serve_forever()
-`)
-	setup, dispose := createReverseProxySetup(t, `handle /missing-socket/* {
-		reverse-bin {
-			exec {{BACKEND}}
-			reverse_proxy_to unix/{{APP_SOCKET}}
-			env SOCKET_PATH={{APP_SOCKET}}
-		}
-	}`, map[string]string{
-		"BACKEND":    backend,
-		"APP_SOCKET": socketPath,
-	})
-	defer dispose()
-
-	parsePID := func(t *testing.T, body string) int {
-		t.Helper()
-		var payload struct {
-			PID int `json:"pid"`
-		}
-		if err := json.Unmarshal([]byte(body), &payload); err != nil {
-			t.Fatalf("expected JSON pid payload, got %q: %v", body, err)
-		}
-		if payload.PID <= 0 {
-			t.Fatalf("expected positive pid in payload, got %q", body)
-		}
-		return payload.PID
-	}
-
-	client := newTestHTTPClient()
-	// HTTP request exercises initial backend startup and returns original PID.
-	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/missing-socket/first", setup.Port), 200, "pid", "initial missing-socket request must return backend pid")
-	pid1 := parsePID(t, body1)
-
-	directTransport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", socketPath)
-		},
-	}
-	directClient := &http.Client{Transport: directTransport, Timeout: 5 * time.Second}
-	// Direct Unix-socket request simulates backend losing its listening socket while process remains alive.
-	resp, err := directClient.Get("http://unix/remove-socket-and-stay-alive")
-	if err != nil {
-		t.Fatalf("expected direct unix request to remove socket, got error: %v", err)
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-
-	// HTTP request exercises supervisor restart after detecting missing Unix socket.
-	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/missing-socket/second", setup.Port), 200, "pid", "missing-socket request must restart backend")
-	pid2 := parsePID(t, body2)
-	if pid1 == pid2 {
-		t.Fatalf("expected restarted backend pid to differ after missing socket, got same pid=%d", pid1)
-	}
-	time.Sleep(500 * time.Millisecond)
-	if processExists(pid1) {
-		t.Fatalf("expected old backend pid %d to be gone after missing socket restart", pid1)
-	}
-}
-
-func TestMultipleApps(t *testing.T) {
-	requireIntegration(t)
-	f := mustFixtures(t)
-
-	socket1 := createSocketPath(t)
-	socket2 := createSocketPath(t)
-
-	setup, dispose := createReverseProxySetup(t, `handle_path /app1/* {
-		reverse-bin {
-			exec {{GO_ECHO}}
-			reverse_proxy_to unix/{{APP_SOCKET_1}}
-			env SOCKET_PATH={{APP_SOCKET_1}}
-		}
-	}
-	handle_path /app2/* {
-		reverse-bin {
-			exec {{GO_ECHO}}
-			reverse_proxy_to unix/{{APP_SOCKET_2}}
-			env SOCKET_PATH={{APP_SOCKET_2}}
-		}
-	}`, map[string]string{
-		"GO_ECHO":      f.GoEchoBin,
-		"APP_SOCKET_1": socket1,
-		"APP_SOCKET_2": socket2,
-	})
-	defer dispose()
-
-	parse := func(t *testing.T, body string) (pid int, path string, backend string) {
-		t.Helper()
-		var payload struct {
-			PID     int    `json:"pid"`
-			Path    string `json:"path"`
-			Backend string `json:"backend"`
-		}
-		if err := json.Unmarshal([]byte(body), &payload); err != nil {
-			t.Fatalf("failed to parse response JSON %q: %v", body, err)
-		}
-		if payload.PID <= 0 {
-			t.Fatalf("invalid pid in payload: %s", body)
-		}
-		return payload.PID, payload.Path, payload.Backend
-	}
-
-	client := newTestHTTPClient()
-
-	_, body1 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/app1/test", setup.Port), 200, "", "app1 route must be served by its backend")
-	pid1, path1, backend1 := parse(t, body1)
-	if backend1 != "echo-backend" || path1 != "/test" {
-		t.Fatalf("unexpected app1 payload: %s", body1)
-	}
-
-	_, body2 := assertGetResponse(t, client, fmt.Sprintf("http://localhost:%d/app2/test", setup.Port), 200, "", "app2 route must be served by its backend")
-	pid2, path2, backend2 := parse(t, body2)
-	if backend2 != "echo-backend" || path2 != "/test" {
-		t.Fatalf("unexpected app2 payload: %s", body2)
-	}
-
-	if pid1 == pid2 {
-		t.Fatalf("expected distinct backend processes for app1/app2, got same pid=%d (app1=%s app2=%s)", pid1, body1, body2)
+	_ = conn.Close()
+	if err := dead(10 * time.Second); !errors.Is(err, io.EOF) {
+		t.Fatalf("app holder read = %v after the WebSocket closed, want EOF from an idle stop", err)
 	}
 }
