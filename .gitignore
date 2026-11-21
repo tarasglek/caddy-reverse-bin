@@ -1,6 +1,5 @@
 body.html
 index.html
-!/examples/reverse-proxy/apps/static/index.html
 *.0
 *.1
 *.2
@@ -44,8 +43,6 @@ _testmain.go
 .aider*
 tmp/
 
-# App data directories (caches, etc.)
-examples/reverse-proxy/apps/*/data/
 
 # Python bytecode caches
 __pycache__/
@@ -53,8 +50,6 @@ __pycache__/
 
 # Local build artifacts
 /caddy
-examples/reverse-proxy/apps/go-echo/go-echo
-examples/reverse-proxy/detector/example-detector
 *.deb
 *.buildinfo
 *.changes

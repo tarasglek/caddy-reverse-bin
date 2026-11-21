@@ -1,8 +1,6 @@
 version: 2
 
-# Release note: caddy-reverse-bin v* tags trigger GoReleaser. If
-# caddy-reverse-bin go.mod needs a new detectorschema version, tag
-# detectorschema/vX.Y.Z first. See CONTRIBUTING.md for release process.
+# caddy-reverse-bin v* tags trigger GoReleaser. See CONTRIBUTING.md.
 project_name: caddy-reverse-bin
 
 before:
@@ -28,9 +26,6 @@ builds:
       - >-
         -s -w
         -X github.com/caddyserver/caddy/v2.CustomVersion={{ .Version }}
-        -X github.com/tarasglek/caddy-reverse-bin.Version={{ .Version }}
-        -X github.com/tarasglek/caddy-reverse-bin.Commit={{ .Commit }}
-        -X github.com/tarasglek/caddy-reverse-bin.BuildDate={{ .Date }}
 
 archives:
   - id: binaries
