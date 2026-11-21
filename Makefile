@@ -12,23 +12,7 @@ EXAMPLE_DETECTOR := $(EXAMPLE_DIR)/detector/example-detector
 # Fixers rewrite the same files; never run targets in parallel.
 .NOTPARALLEL:
 
-.PHONY: all documentation lint ok cov tests test test-go test-smoke check deps-check deps-latest modernize vulncheck release-notes static-check build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
-
-all: ok documentation lint
-
-documentation: doc/index.html doc.go README.md
-
-lint: ok/index.html
-
-ok:
-	mkdir -p ok
-
-ok/%.html: doc/%.html | ok
-	tidy -quiet -output /dev/null $<
-	touch $@
-
-cov: all
-	go test $(GO_TEST_FLAGS) -v -coverprofile=coverage ./... && go tool cover -html=coverage -o=coverage.html
+.PHONY: tests test test-go test-smoke check deps-check deps-latest modernize vulncheck release-notes build detector-schema detector-schema-check release-dry-run clean example-build example-run example-smoke
 
 tests test: test-go
 
@@ -71,23 +55,6 @@ release-notes:
 	n=$$(wc -w < "$$f"); [ "$$n" -le $(NOTES_MAX_WORDS) ] || { \
 	echo "error: $$f: $$n words > $(NOTES_MAX_WORDS). Rewrite caveman: fragments, no filler. Keep what changed, breaking, GO/CVE IDs." >&2; exit 1; }
 
-static-check:
-	golint .
-	go vet -all .
-	gofmt -s -l .
-	goreportcard-cli -v
-
-README.md: doc/document.md
-	pandoc --read=markdown --write=gfm < $< > $@
-
-doc/index.html: doc/document.md doc/html.txt doc/caddy.xml
-	pandoc --read=markdown --write=html --template=doc/html.txt \
-		--metadata pagetitle="reverse-bin for Caddy" --syntax-definition=doc/caddy.xml < $< > $@
-
-doc.go: doc/document.md doc/go.awk
-	pandoc --read=markdown --write=plain $< | awk --assign=package_name=reversebin --file=doc/go.awk > $@
-	gofmt -s -w $@
-
 build:
 	go run github.com/caddyserver/xcaddy/cmd/xcaddy@latest build --output $(CADDY_BIN) --with github.com/tarasglek/caddy-reverse-bin=.
 	$(CADDY_BIN) list-modules | grep http.handlers.reverse-bin
@@ -126,4 +93,4 @@ release-dry-run:
 
 clean:
 	rm -rf ./tmp
-	rm -f coverage coverage.html ok/* doc/index.html $(CADDY_BIN) $(EXAMPLE_ECHO) $(EXAMPLE_DETECTOR)
+	rm -f $(CADDY_BIN) $(EXAMPLE_ECHO) $(EXAMPLE_DETECTOR)
