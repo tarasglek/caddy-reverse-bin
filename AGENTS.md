@@ -1,25 +1,16 @@
-# Agent Guidelines for caddy-reverse-bin
+# Agent rules
 
-## Testing Policy
+## Tests
 
-- Tests must be concise 
-- Every test should have a comment of intent of test
-- When making http requests ensure comment on what http request is testing
-- When making http requests, asserts should be super specific and anti-fragile
-- Make test invariants clear
-- Retry loops are forbidden in tests
+- Concise. Each test has a comment stating its intent, and each HTTP request a comment stating what it tests.
+- Assertions are specific and anti-fragile; invariants are explicit.
+- No retry loops or sleeps that mask flakes; find and document the root cause.
 
-## Commit Policy
+## Commits
 
-Always commit your work after completing every edit task.
-- Default behavior: create a local commit automatically unless the user explicitly says not to commit.
-- Use a concise Conventional Commits-style message.
-- Commit locally only (do not push unless explicitly asked).
+- Commit after every edit task unless told not to: local only, Conventional Commits message.
 
-## Quality Rules
+## Quality
 
-- Do not add hacks to make tests pass.
-- Do not modify production code unless the change fixes a real bug or implements requested behavior.
-- Do not weaken or bypass assertions just to get green tests.
-- Do not add retry loops/time-based flake masking in tests unless explicitly requested; prefer fixing root causes.
-- If a test is flaky, investigate and document root cause instead of papering over it.
+- No hacks to make tests pass; never weaken or bypass assertions.
+- Change production code only to fix a real bug or implement requested behaviour.

@@ -1,89 +1,86 @@
 # caddy-reverse-bin
 
-`caddy-reverse-bin` is a modern CGI-bin for reverse proxies: drop in an executable, let Caddy spawn it on demand, and proxy requests to it.
-
-This repository contains the Caddy plugin, its development Caddy binary entrypoint, and plugin tests.
-
-A Debian/systemd hosting setup derived from this lives in https://github.com/tarasglek/reverse-bin-hosting.
-
-## Caddyfile usage
+A modern CGI-bin for Caddy: `reverse-bin` is a `reverse_proxy` upstream source that starts an app on the first request, proxies to it, and stops it when idle.
 
 ```caddyfile
-:8080 {
-	reverse-bin {
-		exec ./app
-		dir /path/to/app
-		reverse_proxy_to 127.0.0.1:9000
-		health_check GET /health
+example.com {
+	reverse_proxy {
+		dynamic reverse-bin {
+			exec ./app --socket /run/app/app.sock
+			env PATH={env.PATH}
+			reverse_proxy_to unix//run/app/app.sock
+			health_check GET /health
+		}
+		lb_retries 1
 	}
 }
 ```
 
-Common subdirectives:
+Everything outside `dynamic reverse-bin { … }` is plain [`reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy). Reuse a block with a snippet.
 
-- `exec <command> [args...]`: command to launch on demand.
-- `dir <path>`: working directory for the command.
-- `env KEY=value...`: environment variables for the command.
-- `pass_env KEY...`: pass selected parent environment variables.
-- `pass_all_env`: pass the full parent environment.
-- `reverse_proxy_to <upstream>`: static upstream address, such as `127.0.0.1:9000` or `unix//tmp/app.sock`.
-- `health_check <METHOD> <PATH> [STATUS]`: health probe before proxying. Without `STATUS`, any `2xx` or `3xx` response is accepted.
-- `idle_timeout_ms <ms>`: stop the child process after it has been idle for this long.
-- `health_timeout_ms <ms>`: timeout for health checks.
-- `termination_grace_ms <ms>`: graceful termination timeout.
-- `termination_kill_wait_ms <ms>`: delay before force-killing a process after graceful termination fails.
-- `dynamic_proxy_detector <command> [args...]`: command that discovers launch/proxy settings dynamically; see the [sample detector docs](examples/reverse-proxy/detector/README.md). Placeholders in its arguments are expanded per request, and the expanded arguments also key the backend process: requests that expand to the same arguments share one process. Map host aliases to identical values, or each alias starts its own backend.
+| Subdirective | Meaning |
+|---|---|
+| `exec <cmd> [args…]` | App to start. |
+| `dir <path>` | Working directory; default: Caddy's. |
+| `env KEY=value…` | The app's **entire** environment; pass one of Caddy's with `env PATH={env.PATH}`. |
+| `reverse_proxy_to <address>` | Where the app listens: `unix/<path>` (relative to Caddy's working directory, not `dir`) or `host:port`. |
+| `health_check <METHOD> <PATH> [STATUS]` | Optional. The app is ready once `METHOD PATH`, with the waking request's `Host`, gets any HTTP response (an app behind auth answering 401 is up), or with `STATUS` (`200` or `2xx`) a matching one, for apps that answer 503 while warming up. Without it, ready means accepting a connection. Redirects are not followed. The waking client chooses the `Host`, so with `STATUS` an app that rejects unknown hosts needs a site that only accepts its own. |
+| `dynamic_proxy_detector <cmd> [args…]` | Instead of the five above: a command that prints them as JSON. |
+| `idle_timeout_ms <ms>` | Stop the app this long after its last request; default 300000. |
+| `health_timeout_ms <ms>` | Deadline for detector, launch and readiness together; default 15000. |
 
-Unix socket upstreams use `reverse_proxy_to unix//path/to/app.sock`. For Unix sockets, `reverse-bin` treats the socket file becoming available as readiness, so `health_check` is optional. TCP/HTTP static upstreams require `health_check` so the handler can tell when the launched process is ready.
+**Placeholders.** Every value may hold placeholders, expanded per request; each distinct expansion is its own app, so `reverse_proxy_to unix//run/{http.request.host.labels.2}.sock` runs one app per subdomain. A known placeholder that expands to empty fails the request; unknown ones, such as a shell's `${PORT}`, are left as written. Values become argv elements and paths, never shell text, but path, query and header placeholders can contain `/` and `..`: prefer host labels (Caddy lower-cases them; `{host}` it does not), and let a detector validate anything else.
 
-## Health checks
+**Detector.** Runs with Caddy's environment at each start and prints one JSON object; unknown fields are an error. `health_status` is a number: `200`, or `2` for `2xx`.
 
-Health checks are used to ensure the launched app has finished starting before Caddy proxies traffic to it. By default, `health_check` accepts any `2xx` or `3xx` response. Use an explicit status for auth-protected routes, for example `health_check GET /v2/ 401`. Apps that require auth should expose a public `/health` endpoint or configure the expected redirect/status.
-
-For reverse-bin-hosting, configure the probe with environment variables:
-
-```sh
-REVERSE_BIN_HEALTH_METHOD=GET
-REVERSE_BIN_HEALTH_PATH=/
-REVERSE_BIN_HEALTH_STATUS=302
+```json
+{"executable": ["./server"], "working_directory": "/srv/app", "envs": ["PORT=8001"], "reverse_proxy_to": "127.0.0.1:8001",
+ "health_method": "GET", "health_path": "/", "health_status": 0}
 ```
+
+**Retries.** With `lb_retries 1` Caddy retries a request whose connection failed, at once: the app is rechecked and restarted if it has exited or stopped listening. Caddy retries dial failures for any method and later failures for `GET` only, so a `GET` that crashed the app is sent twice. A failed start is not repeated for the same request.
+
+**One copy.** At most one app runs per `dir` and per `reverse_proxy_to` in a Caddy process, across sites and config reloads; a second start waits up to `health_timeout_ms` for the first copy's process group to be gone, then fails with 503. Map host aliases to the same values so they share one app. A config reload stops every app; the next request starts it again.
+
+## App contract
+
+Any server that runs in the foreground, listens where a flag or variable says, and stops on SIGTERM (the Docker contract) works:
+
+- Listen on `reverse_proxy_to`. A start fails if something already answers there. reverse-bin touches no files: a unix socket's directory must exist, and the app (or its launch command) must remove a stale socket. The hosting detector does both.
+- Exiting means "stop me"; the next request starts it again.
+- SIGTERM means stop; SIGKILL follows after 10s. Signals go to the whole process group.
+- reverse-bin stops apps when Caddy shuts down normally. If Caddy is killed hard, apps survive unless something else ends them. Under systemd the unit's cgroup kill does (the hosting package relies on this). Elsewhere, on Linux, wrap `exec` in `setpriv --pdeathsig KILL -- unshare --pid --fork --kill-child --`: the KILL takes the app's whole pid namespace down. Weigh the cost: the kernel sends that signal when the Caddy *thread* that started the app exits (golang/go#27505), which can kill a healthy app mid-write, so neither reverse-bin nor the hosting detector sets it. OpenBSD has no equivalent.
+- At most 8 starts run at once.
 
 ## Motivation
 
 In the 2000s one could set up multi-user web servers with the Apache [UserDir](https://httpd.apache.org/docs/2.4/mod/mod_userdir.html) module, enable `cgi-bin` with Perl, or enable `mod_php`. There was no CI/CD; one would often just edit in production. There were plenty of security and performance problems with this, but the edit/deploy cycle was incredible and collaboration was immediate. You could just `mkdir` or copy an existing site and edit files with immediate results.
 
-This Caddy `reverse-bin` module is my attempt to combine that old-school dev UX with Unix-style process composition and modern reverse-proxy/load-balancer approach. I decided to extend Caddy because it is sufficiently configurable to cover a wide varity of hosting needs and is written in a fairly safe language. The caddy-reverse-bin module enables the following:
+This module is my attempt to combine that old-school dev UX with Unix-style process composition and a modern reverse proxy:
 
-* On-demand servers that scale down when idle: e.g. spawn `npm run dev` (or some equivalent) when traffic hits your app, then kill it after some idle timeout
-* Dynamic detector to decouple app-shape detection from web-server core; see [`examples/reverse-proxy/`](examples/reverse-proxy/) and its [sample detector](examples/reverse-proxy/detector/README.md)
-* A process-spawning model that is great for delegating security to something like [landrun](https://github.com/zouuup/landrun) or VMs like [smolvm](https://github.com/smol-machines/smolvm)
-* Hosting on a shared SSH server for collaboration
-* SSH also enables CI/CD via the magic of `git config receive.denyCurrentBranch updateInstead`
+* On-demand servers that scale down when idle: spawn `npm run dev` when traffic hits your app, kill it after an idle timeout
+* A detector decouples app-shape detection from the web server
+* A process-spawning model that is great for delegating security to [landrun](https://github.com/zouuup/landrun) or VMs like [smolvm](https://github.com/smol-machines/smolvm)
+* Hosting on a shared SSH server for collaboration, with CI/CD via `git config receive.denyCurrentBranch updateInstead`
 
-For common app-server auto-detection and the more opinionated hosting setup, see https://github.com/tarasglek/reverse-bin-hosting.
+This project came out of nostalgia for the classic 2000s dev loop, brought on by trying https://www.smallweb.run/. Less is more: a simple process-based reverse proxy gets you surprisingly far.
 
-This project came out of feelings of nostalgia for the classic 2000s dev-loop brought on by trying https://www.smallweb.run/. Less is more: a simple process-based reverse proxy gets your surprisingly far; no need for hyperscale cargo culting.
-
-Note I used LLMs heavily in this project, it still took over 4-months of spare-time to develop this concept into code I can use for person projects.
+Note I used LLMs heavily in this project; it still took over 4 months of spare time to turn the concept into code I use for personal projects.
 
 ## Development
 
-Run the full local verification suite, including Go tests and the example HTTP smoke test:
-
 ```bash
-make check
+make check   # vet, gofmt, unit and real-Caddy integration tests
+make build   # ./caddy with this module
 ```
 
-Build a local Caddy binary with this plugin:
+[DESIGN.md](DESIGN.md) explains the internals; [AGENTS.md](AGENTS.md) has the test and commit rules.
 
-```bash
-make build
-./caddy list-modules | grep http.handlers.reverse-bin
-```
+To release `vX.Y.Z`: write `release-notes/vX.Y.Z.md` (at most 100 words), run `make release-notes TAG=vX.Y.Z` and `make deps-check` (commit any diff it makes), then push the tag. CI reruns both checks and GoReleaser publishes the notes.
 
 ## Related projects
 
-- https://github.com/tarasglek/reverse-bin-hosting
+- https://github.com/tarasglek/reverse-bin-hosting: packaged hosting with an app detector
 - https://www.smallweb.run/
 - https://github.com/sablierapp/sablier
 - https://github.com/losfair/zeroserve
