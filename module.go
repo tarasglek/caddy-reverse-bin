@@ -27,6 +27,7 @@ func init() { caddy.RegisterModule(new(ReverseBin)) }
 var stopGrace = 10 * time.Second
 
 const (
+	maxDetectorOutput   = 1 << 20     // bytes of detector stdout
 	killWait            = time.Second // SIGKILL to giving up
 	probeInterval       = 100 * time.Millisecond
 	probeTimeout        = 5 * time.Second // a first response can be slow

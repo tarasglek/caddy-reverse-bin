@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -147,6 +149,10 @@ func validate(a App) (appSpec, error) {
 		return appSpec{}, fmt.Errorf("health_method %q needs health_path", a.HealthMethod)
 	case a.HealthStatus < 0 || a.HealthStatus != 0 && (a.HealthPath == "" || a.HealthStatus > 5 && (a.HealthStatus < 100 || a.HealthStatus > 599)):
 		return appSpec{}, fmt.Errorf("health_status %d: want 1-5 or 100-599, with health_path", a.HealthStatus)
+	case strings.ContainsAny(a.ReverseProxyTo, "{}"):
+		// Caddy expands placeholders in the address we return, so it would
+		// dial something other than what was checked and probed.
+		return appSpec{}, fmt.Errorf("reverse_proxy_to %q: braces are not allowed", a.ReverseProxyTo)
 	case err != nil || !(na.Network == "unix" && na.Host != "" ||
 		na.Network == "tcp" && na.PortRangeSize() == 1 && na.StartPort != 0):
 		return appSpec{}, fmt.Errorf("reverse_proxy_to %q: want unix/<path> or host:port", a.ReverseProxyTo)
@@ -271,23 +277,49 @@ func claim(ctx context.Context, ids ...string) (release func(), err error) {
 	}
 }
 
+// capped keeps the first 32 KiB written to it and drops the rest.
+type capped struct{ bytes.Buffer }
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := 32<<10 - c.Len(); room > 0 {
+		c.Buffer.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
+}
+
 // detect runs the detector, with Caddy's environment, and decodes its output.
 func (c *ReverseBin) detect(ctx context.Context, argv []string) (App, error) {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = killWait
-	out, err := cmd.Output()
-	if ee, ok := err.(*exec.ExitError); ok { // Output captured stderr for us
-		return App{}, fmt.Errorf("detector: %w: %s", err, ee.Stderr)
-	} else if err != nil {
+	var stderr capped
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return App{}, err
+	}
+	if err := cmd.Start(); err != nil {
 		return App{}, fmt.Errorf("detector: %w", err)
+	}
+	// Bounded: a runaway detector must not exhaust Caddy's memory.
+	out, _ := io.ReadAll(io.LimitReader(stdout, maxDetectorOutput+1))
+	if len(out) > maxDetectorOutput {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		_ = cmd.Wait()
+		return App{}, fmt.Errorf("detector output over %d bytes", maxDetectorOutput)
+	}
+	if err := cmd.Wait(); err != nil {
+		return App{}, fmt.Errorf("detector: %w: %s", err, bytes.TrimSpace(stderr.Bytes()))
 	}
 	var a App
 	d := json.NewDecoder(bytes.NewReader(out))
 	d.DisallowUnknownFields()
 	if err := d.Decode(&a); err != nil {
 		return App{}, fmt.Errorf("detector output: %w", err)
+	}
+	if d.Decode(new(json.RawMessage)) != io.EOF {
+		return App{}, errors.New("detector output: data after the JSON object")
 	}
 	return a, nil
 }

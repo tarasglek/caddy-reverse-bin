@@ -169,6 +169,9 @@ func TestValidateDial(t *testing.T) {
 	for dial, ok := range map[string]bool{
 		"unix//run/a.sock": true, "unix/rel.sock": true, "127.0.0.1:9000": true, "localhost:9000": true, ":9000": true,
 		"localhost": false, "host:1-2": false, "host:http": false, "udp/host:1": false, "http://127.0.0.1:9000": false, "unix/": false, "h:0": false,
+		// Caddy expands placeholders in the returned address: it would dial
+		// something other than what was checked.
+		"unix//run/{http.request.header.X}.sock": false, "unix//run/a}.sock": false,
 	} {
 		if _, err := validate(App{Executable: []string{"x"}, ReverseProxyTo: dial}); (err == nil) != ok {
 			t.Errorf("%q: err = %v, want ok=%v", dial, err, ok)
@@ -301,8 +304,9 @@ func startErr(t *testing.T, c *ReverseBin) error {
 }
 
 // TestFailedStarts verifies starts that cannot succeed fail, with a reason
-// and within health_timeout_ms: the app exits, the address already answers, the
-// detector's output has an unknown field, the app never listens.
+// and within health_timeout_ms: the app exits, the address already answers,
+// the detector's output has an unknown field, trailing data or more than
+// 1 MiB, the app never listens, the address holds a brace.
 func TestFailedStarts(t *testing.T) {
 	squat, err := net.Listen("unix", filepath.Join(t.TempDir(), "squat.sock")) // not an app of ours
 	if err != nil {
@@ -314,8 +318,14 @@ func TestFailedStarts(t *testing.T) {
 	squatted.ReverseProxyTo = "unix/" + squat.Addr().String()
 	never.Executable, never.HealthTimeoutMS = []string{"sleep", "60"}, 200
 	detector := &ReverseBin{DynamicProxyDetector: []string{"cat", writeFile(t, `{"executable":["x"],"reverse_proxy_to":":1","bogus":1}`)}}
+	trailing := &ReverseBin{DynamicProxyDetector: []string{"cat", writeFile(t, `{"executable":["x"],"reverse_proxy_to":":1"} {}`)}}
+	// Endless output, so the limit, not the end of output, ends the read.
+	flood := &ReverseBin{DynamicProxyDetector: []string{"yes", `{"executable":["x"]}`}}
+	braces := testApp(t, "X={x}")
+	braces.ReverseProxyTo += "{x}" // a static block expanding to a brace
 	for want, c := range map[string]*ReverseBin{"exited before": exits, "already accepts": squatted,
-		"unknown field": detector, "deadline exceeded": never} {
+		"unknown field": detector, "data after the JSON object": trailing, "output over 1048576 bytes": flood,
+		"deadline exceeded": never, "braces are not allowed": braces} {
 		provision(t, c)
 		if err := startErr(t, c); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("err = %v, want %q", err, want)
