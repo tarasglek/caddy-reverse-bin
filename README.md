@@ -78,6 +78,8 @@ make build   # ./caddy with this module
 
 To release `vX.Y.Z`: write `release-notes/vX.Y.Z.md` (at most 100 words), run `make release-notes TAG=vX.Y.Z` and `make deps-check` (commit any diff it makes), then push the tag. CI reruns both checks and GoReleaser publishes the notes.
 
+Versions: this plugin's `0.MINOR` is the compatibility line for [reverse-bin-detector](https://github.com/tarasglek/reverse-bin-detector) and [reverse-bin-hosting](https://github.com/tarasglek/reverse-bin-hosting). A change to the detector JSON or the Caddyfile shape bumps it here, and both follow to the same `0.MINOR.0`; patch releases are independent.
+
 ## Related projects
 
 - https://github.com/tarasglek/reverse-bin-hosting: packaged hosting with an app detector
