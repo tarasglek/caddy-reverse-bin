@@ -23,15 +23,15 @@ Everything outside `dynamic reverse-bin { … }` is plain [`reverse_proxy`](http
 | `exec <cmd> [args…]` | App to start. |
 | `dir <path>` | Working directory; default: Caddy's. |
 | `env KEY=value…` | The app's **entire** environment; pass one of Caddy's with `env PATH={env.PATH}`. |
-| `reverse_proxy_to <address>` | Where the app listens: `unix/<path>` (relative to Caddy's working directory, not `dir`) or `host:port`. |
+| `reverse_proxy_to <address>` | Where the app listens: `unix/<path>` (relative to Caddy's working directory, not `dir`) or `host:port`. No braces: Caddy would expand them again before dialing. |
 | `health_check <METHOD> <PATH> [STATUS]` | Optional. The app is ready once `METHOD PATH`, with the waking request's `Host`, gets any HTTP response (an app behind auth answering 401 is up), or with `STATUS` (`200` or `2xx`) a matching one, for apps that answer 503 while warming up. Without it, ready means accepting a connection. Redirects are not followed. The waking client chooses the `Host`, so with `STATUS` an app that rejects unknown hosts needs a site that only accepts its own. |
 | `dynamic_proxy_detector <cmd> [args…]` | Instead of the five above: a command that prints them as JSON. |
 | `idle_timeout_ms <ms>` | Stop the app this long after its last request; default 300000. |
 | `health_timeout_ms <ms>` | Deadline for detector, launch and readiness together; default 15000. |
 
-**Placeholders.** Every value may hold placeholders, expanded per request; each distinct expansion is its own app, so `reverse_proxy_to unix//run/{http.request.host.labels.2}.sock` runs one app per subdomain. A known placeholder that expands to empty fails the request; unknown ones, such as a shell's `${PORT}`, are left as written. Values become argv elements and paths, never shell text, but path, query and header placeholders can contain `/` and `..`: prefer host labels (Caddy lower-cases them; `{host}` it does not), and let a detector validate anything else.
+**Placeholders.** Every value may hold placeholders, expanded per request; each distinct expansion is its own app, so `reverse_proxy_to unix//run/{http.request.host.labels.2}.sock` runs one app per subdomain. A known placeholder that expands to empty fails the request; unknown ones, such as a shell's `${PORT}`, are left as written. Values become argv elements and paths, never shell text, but path, query and header placeholders can contain `/` and `..`. Host labels are client bytes too: Caddy refuses `/` and braces in a host, but a label can still hold `%`, `;` and the like, so gate the site before `reverse_proxy` with a matcher such as `@app header_regexp Host (?i)^[a-z0-9-]+\.example\.com(:[0-9]+)?$`. Caddy lower-cases labels; `{host}` it does not.
 
-**Detector.** Runs with Caddy's environment at each start and prints one JSON object; unknown fields are an error. `health_status` is a number: `200`, or `2` for `2xx`.
+**Detector.** Runs with Caddy's environment at each start and prints one JSON object, at most 1 MiB; unknown fields or anything after the object are an error. `health_status` is a number: `200`, or `2` for `2xx`.
 
 ```json
 {"executable": ["./server"], "working_directory": "/srv/app", "envs": ["PORT=8001"], "reverse_proxy_to": "127.0.0.1:8001",
@@ -46,7 +46,7 @@ Everything outside `dynamic reverse-bin { … }` is plain [`reverse_proxy`](http
 
 Any server that runs in the foreground, listens where a flag or variable says, and stops on SIGTERM (the Docker contract) works:
 
-- Listen on `reverse_proxy_to`. A start fails if something already answers there. reverse-bin touches no files: a unix socket's directory must exist, and the app (or its launch command) must remove a stale socket. The hosting detector does both.
+- Listen on `reverse_proxy_to`. A start fails if something already answers there, but a process that takes a TCP port between that check and the app's own bind answers the readiness probe in its place: where untrusted processes share loopback, use a unix socket in a directory only the app can write. reverse-bin touches no files: a unix socket's directory must exist, and the app (or its launch command) must remove a stale socket. The hosting detector does both.
 - Exiting means "stop me"; the next request starts it again.
 - SIGTERM means stop; SIGKILL follows after 10s. Signals go to the whole process group.
 - reverse-bin stops apps when Caddy shuts down normally. If Caddy is killed hard, apps survive unless something else ends them. Under systemd the unit's cgroup kill does (the hosting package relies on this). Elsewhere, on Linux, wrap `exec` in `setpriv --pdeathsig KILL -- unshare --pid --fork --kill-child --`: the KILL takes the app's whole pid namespace down. Weigh the cost: the kernel sends that signal when the Caddy *thread* that started the app exits (golang/go#27505), which can kill a healthy app mid-write, so neither reverse-bin nor the hosting detector sets it. OpenBSD has no equivalent.
