@@ -19,7 +19,7 @@ test:
 check:
 	go vet ./...
 	@test -z "$$(gofmt -l .)" || { gofmt -l .; echo "error: run gofmt -w" >&2; exit 1; }
-	go test $(GO_TEST_FLAGS) ./...
+	$(MAKE) test
 
 # Fails only on vulnerabilities reachable from our code.
 vulncheck:
