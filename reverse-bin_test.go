@@ -482,3 +482,16 @@ func TestSingleInstance(t *testing.T) {
 		check(t, "dial", first, second)
 	})
 }
+
+// TestDetectorContract decodes reverse-bin-detector's contractJSON (its
+// TestContract pins that its App marshals to exactly this) through detect:
+// every field must land, so a field renamed on either side breaks one test.
+func TestDetectorContract(t *testing.T) {
+	const contractJSON = `{"executable":["unshare","--","sh","-c","./srv"],"working_directory":"/apps/a","envs":["HOME=/apps/a/data","REVERSE_BIN_PORT=9001"],"reverse_proxy_to":"127.0.0.1:9001","health_method":"GET","health_path":"/h","health_status":2}`
+	got, err := new(ReverseBin).detect(context.Background(), []string{"cat", writeFile(t, contractJSON)})
+	want := App{Executable: []string{"unshare", "--", "sh", "-c", "./srv"}, WorkingDirectory: "/apps/a", Envs: []string{"HOME=/apps/a/data", "REVERSE_BIN_PORT=9001"},
+		ReverseProxyTo: "127.0.0.1:9001", HealthMethod: "GET", HealthPath: "/h", HealthStatus: 2}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("detect = %+v, %v; want %+v", got, err, want)
+	}
+}
