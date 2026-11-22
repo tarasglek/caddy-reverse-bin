@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -24,6 +25,8 @@ import (
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/quic-go/quic-go/http3"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 
 	"github.com/tarasglek/caddy-reverse-bin/internal/testapp"
 )
@@ -36,6 +39,12 @@ func TestMain(m *testing.M) {
 // serve runs Caddy with one HTTPS site whose body is site and returns its
 // URL. The certificate is made here so it exists before the first request.
 func serve(t *testing.T, site string) string {
+	t.Helper()
+	return serveHost(t, "localhost", site)
+}
+
+// serveHost is serve for a site that answers host; "" answers every host.
+func serveHost(t *testing.T, host, site string) string {
 	t.Helper()
 	// Caddy listens on TCP and, for HTTP/3, UDP: the port must be free for both.
 	udp, err := net.ListenPacket("udp", ":0")
@@ -53,10 +62,10 @@ func serve(t *testing.T, site string) string {
 		storage file_system %s
 		auto_https off
 	}
-	https://localhost:%d {
+	https://%s:%d {
 		tls %s
 		%s
-	}`, t.TempDir(), port, certFiles(t), strings.ReplaceAll(site, "{tmp}", t.TempDir()))
+	}`, t.TempDir(), host, port, certFiles(t), strings.ReplaceAll(site, "{tmp}", t.TempDir()))
 	adapted, _, err := caddyconfig.GetAdapter("caddyfile").Adapt([]byte(cfg), nil)
 	if err == nil {
 		err = caddy.Load(adapted, true)
@@ -243,5 +252,83 @@ func TestWebSocketHoldsTheApp(t *testing.T) {
 	_ = conn.Close()
 	if err := dead(10 * time.Second); !errors.Is(err, io.EOF) {
 		t.Fatalf("app holder read = %v after the WebSocket closed, want EOF from an idle stop", err)
+	}
+}
+
+// h2Get sends one GET with the given :authority over raw HTTP/2 frames, as a
+// client that does not validate it would, and returns the response status.
+func h2Get(t *testing.T, addr, authority string) string {
+	t.Helper()
+	conn, err := tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, ServerName: "localhost", NextProtos: []string{"h2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	if _, err := io.WriteString(conn, http2.ClientPreface); err != nil {
+		t.Fatal(err)
+	}
+	fr := http2.NewFramer(conn, conn)
+	var block bytes.Buffer
+	enc := hpack.NewEncoder(&block)
+	for _, f := range [][2]string{{":method", "GET"}, {":scheme", "https"}, {":authority", authority}, {":path", "/"}} {
+		_ = enc.WriteField(hpack.HeaderField{Name: f[0], Value: f[1]})
+	}
+	if err := errors.Join(fr.WriteSettings(), fr.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: block.Bytes(), EndStream: true, EndHeaders: true})); err != nil {
+		t.Fatal(err)
+	}
+	dec := hpack.NewDecoder(4096, nil)
+	for {
+		f, err := fr.ReadFrame()
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch f := f.(type) {
+		case *http2.SettingsFrame:
+			if !f.IsAck() {
+				_ = fr.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			fields, err := dec.DecodeFull(f.HeaderBlockFragment())
+			if err != nil {
+				t.Fatal(err)
+			}
+			return fields[0].Value
+		case *http2.RSTStreamFrame:
+			return "RST " + f.ErrCode.String()
+		case *http2.GoAwayFrame:
+			return "GOAWAY " + f.ErrCode.String()
+		}
+	}
+}
+
+// TestHostLabelWithSlash verifies Caddy refuses a "/" or brace in the HTTP/2
+// :authority (Go itself validates Host only for HTTP/1), so a host label used
+// in dir cannot name a nested directory or carry a placeholder. Control: a
+// plain label on the same site does start the app in its directory.
+func TestHostLabelWithSlash(t *testing.T) {
+	apps, ran := t.TempDir(), filepath.Join(t.TempDir(), "ran")
+	if err := os.MkdirAll(filepath.Join(apps, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	addr := strings.TrimPrefix(serveHost(t, "", `reverse_proxy {
+		dynamic reverse-bin {
+			exec /bin/sh -c "pwd >> `+ran+`"
+			dir `+apps+`/{http.request.host.labels.1}
+			reverse_proxy_to unix/{tmp}/x.sock
+		}
+	}`), "https://")
+	for _, authority := range []string{"a/b.localhost", "a{b}.localhost"} {
+		// GET / over HTTP/2 with a "/" or brace in a host label: refused.
+		if got := h2Get(t, addr, authority); got != "400" {
+			t.Errorf("%q: status %s, want 400", authority, got)
+		}
+	}
+	// GET / with a plain label: the app starts in apps/a, exits, 503.
+	if got := h2Get(t, addr, "a.localhost"); got != "503" {
+		t.Errorf("control: status %s, want 503", got)
+	}
+	if got, _ := os.ReadFile(ran); string(got) != filepath.Join(apps, "a")+"\n" {
+		t.Fatalf("apps started in %q, want only %s", got, filepath.Join(apps, "a"))
 	}
 }
