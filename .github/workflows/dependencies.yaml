@@ -1,7 +1,5 @@
----
-# Replaces Dependabot. make deps-check updates Go modules, the Go toolchain
-# and GitHub Actions to latest, runs go fix, and fails if that changed a file
-# or govulncheck finds a reachable vulnerability. release.yml repeats it.
+# make deps-check fails if dependencies, Go or Actions are behind, go fix has
+# work, or govulncheck finds a reachable vulnerability.
 name: Dependencies
 
 on:  # yamllint disable-line rule:truthy

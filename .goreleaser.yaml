@@ -1,6 +1,6 @@
 version: 2
 
-# caddy-reverse-bin v* tags trigger GoReleaser. See CONTRIBUTING.md.
+# Run by .github/workflows/release.yml on v* tags.
 project_name: caddy-reverse-bin
 
 before:
@@ -38,8 +38,3 @@ archives:
 
 checksum:
   name_template: checksums.txt
-
-release:
-  github:
-    owner: tarasglek
-    name: caddy-reverse-bin
