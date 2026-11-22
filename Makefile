@@ -27,8 +27,12 @@ vulncheck:
 
 # deps-latest and modernize rewrite files; deps-check fails when they did.
 # Run it locally and commit the result.
+# Direct dependencies only: indirect ones (and quic-go, used directly by the
+# HTTP/3 test) follow Caddy's requirements; `go get -u ./...` pulls versions
+# Caddy does not build with.
 deps-latest:
-	go get -u -t ./... && go get toolchain@latest && go mod tidy
+	go get $$(go list -m -f '{{if and (not .Indirect) (not .Main)}}{{.Path}}@latest{{end}}' all | grep -v '^github.com/quic-go/quic-go@')
+	go get toolchain@latest && go mod tidy
 	$(PINACT) run -u
 
 modernize:
