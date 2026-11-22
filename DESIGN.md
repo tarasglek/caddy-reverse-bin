@@ -33,5 +33,6 @@ Limits:
 
 - Idling relies on the request context ending when Caddy is done with the request; integration tests check HTTP/1.1, HTTP/2, HTTP/3 and WebSockets.
 - A process that leaves the group (`setsid`, `watchexec`'s child) escapes signals and the claim; only a cgroup or `unshare --kill-child` catches it.
-- Pid reuse could make the reaper's group check see an unrelated group, delaying the release until that group exits.
+- Pid reuse could make the reaper's group check see an unrelated group, delaying the release until that group exits; if the reused pid leads a new group of ours within one 100ms poll, the old reaper's `Wait4` could take that app's exit status, and the app counts as exited.
+- No negative caching: every request for an app that cannot start (with a detector, any unknown host) starts it again, and a never-ready app holds a start slot for `health_timeout_ms`, so a client can delay other apps' cold starts. Rate limiting belongs to Caddy or the front proxy.
 - Single instance is per Caddy process; separate Caddy processes do not coordinate.
